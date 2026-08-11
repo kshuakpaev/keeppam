@@ -1,0 +1,209 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/keeppam/auth/internal/analytics"
+	"github.com/keeppam/auth/internal/appaccess"
+	"github.com/keeppam/auth/internal/assets"
+	"github.com/keeppam/auth/internal/attacksim"
+	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/compliance"
+	"github.com/keeppam/auth/internal/config"
+	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/dbephemeral"
+	"github.com/keeppam/auth/internal/dbproxy"
+	"github.com/keeppam/auth/internal/discovery"
+	"github.com/keeppam/auth/internal/dr"
+	httpapi "github.com/keeppam/auth/internal/http"
+	"github.com/keeppam/auth/internal/migrate"
+	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/session"
+	"github.com/keeppam/auth/internal/sessionsvc"
+	"github.com/keeppam/auth/internal/settings"
+	"github.com/keeppam/auth/internal/siem"
+	"github.com/keeppam/auth/internal/sshca"
+	"github.com/keeppam/auth/internal/sshgw"
+	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/users"
+)
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config", "err", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	migDir := os.Getenv("KEEPPAM_MIGRATIONS_DIR")
+	if migDir == "" {
+		migDir = filepath.Join("migrations")
+	}
+
+	runHTTP := cfg.Mode == "all" || cfg.Mode == "api"
+	runSSH := cfg.Mode == "all" || cfg.Mode == "ssh"
+	if cfg.SSHAddr == "" || cfg.SSHAddr == "off" {
+		runSSH = false
+	}
+
+	if runHTTP {
+		if err := migrate.Up(ctx, cfg.DatabaseURL, migDir); err != nil {
+			slog.Error("migrate", "err", err)
+			os.Exit(1)
+		}
+	}
+
+	db, err := store.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("db", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	sessions, err := session.Connect(cfg.RedisURL)
+	if err != nil {
+		slog.Error("redis", "err", err)
+		os.Exit(1)
+	}
+	defer sessions.Close()
+
+	env, err := crypto.NewEnvelope(cfg.DataKey)
+	if err != nil {
+		slog.Error("envelope", "err", err)
+		os.Exit(1)
+	}
+
+	auditSvc := audit.New(db)
+	settingsSvc := settings.New(db, auditSvc, env)
+	siemSvc := siem.New(db, auditSvc, env)
+	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
+	usersSvc := users.New(db, auditSvc)
+	assetsSvc := assets.New(db, env, auditSvc)
+	sshCASvc := sshca.New(db, env, auditSvc)
+	assetsSvc.SetSSHCA(sshCASvc)
+	policySvc := policy.New(db, auditSvc)
+	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
+	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
+	analyticsSvc := analytics.New(db)
+	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
+	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir)
+	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
+	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
+	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
+		if protocol == "postgres" || protocol == "mysql" {
+			dbEphSvc.Drop(ctx, id)
+		}
+	})
+	ensureEph := func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (assets.TargetCreds, string, error) {
+		creds, info, err := dbEphSvc.Ensure(ctx, sessionID, vault, privilege)
+		return creds, info.RoleName, err
+	}
+	attackSimSvc := attacksim.New(db, auditSvc, policySvc, cfg.HTTPAddr)
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+
+	live := sessionsvc.NewLiveHub(sessions.Redis())
+	go live.Listen(runCtx)
+
+	if runHTTP {
+		if err := authSvc.Bootstrap(ctx); err != nil {
+			slog.Error("bootstrap", "err", err)
+			os.Exit(1)
+		}
+	}
+
+	var srv *http.Server
+	if runHTTP {
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc)
+		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
+		go func() {
+			slog.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("http", "err", err)
+				os.Exit(1)
+			}
+		}()
+		go siemSvc.Run(runCtx)
+		go discoverySvc.Run(runCtx)
+		go complianceSvc.Run(runCtx)
+		if cfg.PostgresWireAddr != "" && cfg.PostgresWireAddr != "off" {
+			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph)
+			go func() {
+				if err := pgWire.ListenAndServe(runCtx); err != nil {
+					slog.Error("postgres wire", "err", err)
+				}
+			}()
+		}
+		if cfg.MySQLWireAddr != "" && cfg.MySQLWireAddr != "off" {
+			myWire := dbproxy.NewWireGateway(cfg.MySQLWireAddr, "mysql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph)
+			go func() {
+				if err := myWire.ListenAndServe(runCtx); err != nil {
+					slog.Error("mysql wire", "err", err)
+				}
+			}()
+		}
+		go func() {
+			t := time.NewTicker(time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case <-t.C:
+					n, err := sessSvc.CloseStale(runCtx, 2*time.Minute)
+					if err != nil {
+						slog.Warn("session reaper", "err", err)
+					} else if n > 0 {
+						slog.Info("session reaper closed stale", "count", n)
+					}
+					expired, err := policySvc.ExpirePending(runCtx, cfg.AccessRequestTTL)
+					if err != nil {
+						slog.Warn("access request reaper", "err", err)
+					} else if expired > 0 {
+						slog.Info("access request reaper expired", "count", expired)
+					}
+				}
+			}
+		}()
+	}
+
+	if runSSH {
+		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live)
+		go func() {
+			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode)
+			if err := gw.ListenAndServe(); err != nil {
+				slog.Error("ssh gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if !runHTTP && !runSSH {
+		slog.Error("nothing to run", "mode", cfg.Mode)
+		os.Exit(1)
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	runCancel()
+	if srv != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}
+}

@@ -1,0 +1,591 @@
+package assets
+
+import (
+	"context"
+	"crypto/subtle"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/store"
+)
+
+type Service struct {
+	db    *store.DB
+	env   *crypto.Envelope
+	aud   *audit.Service
+	sshCA SSHCertIssuer
+}
+
+// SSHCertIssuer signs ephemeral user certificates when ssh_auth_mode=ssh_cert.
+type SSHCertIssuer interface {
+	Mode(ctx context.Context) string
+	SignUser(ctx context.Context, principal string) (ssh.Signer, error)
+}
+
+func New(db *store.DB, env *crypto.Envelope, aud *audit.Service) *Service {
+	return &Service{db: db, env: env, aud: aud}
+}
+
+func (s *Service) SetSSHCA(ca SSHCertIssuer) {
+	s.sshCA = ca
+}
+
+type Asset struct {
+	ID                  uuid.UUID  `json:"id"`
+	Name                string     `json:"name"`
+	AssetType           string     `json:"asset_type"`
+	Hostname            string     `json:"hostname"`
+	Address             string     `json:"address"`
+	Port                int        `json:"port"`
+	Protocol            string     `json:"protocol"`
+	Description         string     `json:"description"`
+	Status              string     `json:"status"`
+	Tags                []string   `json:"tags"`
+	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
+	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
+	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
+	HostKeyBlob         []byte     `json:"-"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	CreatedBy           *uuid.UUID `json:"created_by,omitempty"`
+	Accounts            []Account  `json:"accounts,omitempty"`
+}
+
+type Account struct {
+	ID             uuid.UUID  `json:"id"`
+	AssetID        uuid.UUID  `json:"asset_id"`
+	Username       string     `json:"username"`
+	AuthMethod     string     `json:"auth_method"`
+	HasSecret      bool       `json:"has_secret"`
+	Description    string     `json:"description"`
+	Status         string     `json:"status"`
+	LastRotatedAt  *time.Time `json:"last_rotated_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	CreatedBy      *uuid.UUID `json:"created_by,omitempty"`
+}
+
+type CreateAssetInput struct {
+	Name        string   `json:"name"`
+	AssetType   string   `json:"asset_type"`
+	Hostname    string   `json:"hostname"`
+	Address     string   `json:"address"`
+	Port        int      `json:"port"`
+	Protocol    string   `json:"protocol"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+}
+
+type UpdateAssetInput struct {
+	Name        *string  `json:"name"`
+	AssetType   *string  `json:"asset_type"`
+	Hostname    *string  `json:"hostname"`
+	Address     *string  `json:"address"`
+	Port        *int     `json:"port"`
+	Protocol    *string  `json:"protocol"`
+	Description *string  `json:"description"`
+	Status      *string  `json:"status"`
+	Tags        *[]string `json:"tags"`
+}
+
+type CreateAccountInput struct {
+	Username    string `json:"username"`
+	AuthMethod  string `json:"auth_method"`
+	Secret      string `json:"secret"`
+	Description string `json:"description"`
+}
+
+type UpdateAccountInput struct {
+	Username    *string `json:"username"`
+	AuthMethod  *string `json:"auth_method"`
+	Secret      *string `json:"secret"`
+	Description *string `json:"description"`
+	Status      *string `json:"status"`
+}
+
+func (s *Service) List(ctx context.Context) ([]Asset, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, asset_type, hostname, address, port, protocol, description, status,
+			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
+			created_at, updated_at, created_by
+		FROM assets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Asset
+	for rows.Next() {
+		a, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		tags, err := s.tagsFor(ctx, a.ID)
+		if err != nil {
+			return nil, err
+		}
+		a.Tags = tags
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
+	row := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, asset_type, hostname, address, port, protocol, description, status,
+			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
+			created_at, updated_at, created_by
+		FROM assets WHERE id=$1`, id)
+	a, err := scanAsset(row)
+	if err != nil {
+		return Asset{}, err
+	}
+	a.Tags, err = s.tagsFor(ctx, a.ID)
+	if err != nil {
+		return Asset{}, err
+	}
+	a.Accounts, err = s.listAccounts(ctx, a.ID)
+	return a, err
+}
+
+func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetInput, ip, ua string) (Asset, error) {
+	if in.Name == "" || in.Address == "" {
+		return Asset{}, fmt.Errorf("name and address required")
+	}
+	if in.AssetType == "" {
+		in.AssetType = "host"
+	}
+	if in.Protocol == "" {
+		in.Protocol = "ssh"
+	}
+	if in.Port <= 0 {
+		in.Port = defaultPort(in.Protocol)
+	}
+	now := time.Now().UTC()
+	a := Asset{
+		ID: store.NewID(), Name: in.Name, AssetType: in.AssetType,
+		Hostname: in.Hostname, Address: in.Address, Port: in.Port,
+		Protocol: in.Protocol, Description: in.Description, Status: "active",
+		Tags: in.Tags, CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return Asset{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, description, status, created_at, updated_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy)
+	if err != nil {
+		return Asset{}, err
+	}
+	if err := setTagsTx(ctx, tx, a.ID, a.Tags); err != nil {
+		return Asset{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Asset{}, err
+	}
+	_ = s.aud.Record(ctx, &actorID, "asset.created", "asset", a.ID.String(), ip, ua, map[string]any{
+		"name": a.Name, "address": a.Address, "protocol": a.Protocol,
+	})
+	return s.Get(ctx, a.ID)
+}
+
+func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAssetInput, ip, ua string) (Asset, error) {
+	a, err := s.Get(ctx, id)
+	if err != nil {
+		return Asset{}, err
+	}
+	endpointChanged := false
+	if in.Name != nil {
+		a.Name = *in.Name
+	}
+	if in.AssetType != nil {
+		a.AssetType = *in.AssetType
+	}
+	if in.Hostname != nil {
+		a.Hostname = *in.Hostname
+	}
+	if in.Address != nil {
+		if *in.Address != a.Address {
+			endpointChanged = true
+		}
+		a.Address = *in.Address
+	}
+	if in.Port != nil {
+		if *in.Port != a.Port {
+			endpointChanged = true
+		}
+		a.Port = *in.Port
+	}
+	if in.Protocol != nil {
+		a.Protocol = *in.Protocol
+	}
+	if in.Description != nil {
+		a.Description = *in.Description
+	}
+	if in.Status != nil {
+		switch *in.Status {
+		case "active", "disabled":
+			a.Status = *in.Status
+		default:
+			return Asset{}, fmt.Errorf("invalid status")
+		}
+	}
+	a.UpdatedAt = time.Now().UTC()
+	if endpointChanged {
+		a.HostKeyAlgo = ""
+		a.HostKeyBlob = nil
+		a.HostKeyFingerprint = ""
+		a.HostKeyLearnedAt = nil
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return Asset{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
+		UPDATE assets SET name=$2, asset_type=$3, hostname=$4, address=$5, port=$6,
+			protocol=$7, description=$8, status=$9, updated_at=$10,
+			host_key_algo=$11, host_key_blob=$12, host_key_fp=$13, host_key_learned_at=$14
+		WHERE id=$1`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.Description, a.Status, a.UpdatedAt,
+		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt)
+	if err != nil {
+		return Asset{}, err
+	}
+	if in.Tags != nil {
+		if err := setTagsTx(ctx, tx, a.ID, *in.Tags); err != nil {
+			return Asset{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Asset{}, err
+	}
+	action := "asset.updated"
+	if in.Status != nil && *in.Status == "disabled" {
+		action = "asset.disabled"
+	}
+	payload := map[string]any{"name": a.Name, "status": a.Status}
+	if endpointChanged {
+		payload["host_key_cleared"] = true
+	}
+	_ = s.aud.Record(ctx, &actorID, action, "asset", id.String(), ip, ua, payload)
+	return s.Get(ctx, id)
+}
+
+func (s *Service) Delete(ctx context.Context, actorID, id uuid.UUID, ip, ua string) error {
+	a, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `DELETE FROM assets WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	return s.aud.Record(ctx, &actorID, "asset.deleted", "asset", id.String(), ip, ua, map[string]any{"name": a.Name})
+}
+
+func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID, in CreateAccountInput, ip, ua string) (Account, error) {
+	if _, err := s.Get(ctx, assetID); err != nil {
+		return Account{}, err
+	}
+	if in.Username == "" {
+		return Account{}, fmt.Errorf("username required")
+	}
+	if in.AuthMethod == "" {
+		in.AuthMethod = "password"
+	}
+	var secretEnc []byte
+	if in.Secret != "" {
+		enc, err := s.env.Encrypt([]byte(in.Secret))
+		if err != nil {
+			return Account{}, err
+		}
+		secretEnc = enc
+	}
+	now := time.Now().UTC()
+	id := store.NewID()
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO asset_accounts (id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9)`,
+		id, assetID, in.Username, in.AuthMethod, secretEnc, in.Description, now, now, actorID)
+	if err != nil {
+		return Account{}, err
+	}
+	_ = s.aud.Record(ctx, &actorID, "asset.account.created", "asset_account", id.String(), ip, ua, map[string]any{
+		"asset_id": assetID.String(), "username": in.Username, "auth_method": in.AuthMethod,
+	})
+	return s.getAccount(ctx, id)
+}
+
+func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUID, in UpdateAccountInput, ip, ua string) (Account, error) {
+	acc, err := s.getAccount(ctx, accountID)
+	if err != nil {
+		return Account{}, err
+	}
+	username := acc.Username
+	authMethod := acc.AuthMethod
+	description := acc.Description
+	status := acc.Status
+	if in.Username != nil {
+		username = *in.Username
+	}
+	if in.AuthMethod != nil {
+		authMethod = *in.AuthMethod
+	}
+	if in.Description != nil {
+		description = *in.Description
+	}
+	if in.Status != nil {
+		switch *in.Status {
+		case "active", "disabled":
+			status = *in.Status
+		default:
+			return Account{}, fmt.Errorf("invalid status")
+		}
+	}
+	now := time.Now().UTC()
+	if in.Secret != nil && *in.Secret != "" {
+		enc, err := s.env.Encrypt([]byte(*in.Secret))
+		if err != nil {
+			return Account{}, err
+		}
+		_, err = s.db.Pool.Exec(ctx, `
+			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6, updated_at=$7
+			WHERE id=$1`, accountID, username, authMethod, enc, description, status, now)
+		if err != nil {
+			return Account{}, err
+		}
+	} else {
+		_, err = s.db.Pool.Exec(ctx, `
+			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5, updated_at=$6
+			WHERE id=$1`, accountID, username, authMethod, description, status, now)
+		if err != nil {
+			return Account{}, err
+		}
+	}
+	_ = s.aud.Record(ctx, &actorID, "asset.account.updated", "asset_account", accountID.String(), ip, ua, map[string]any{
+		"username": username, "status": status,
+	})
+	return s.getAccount(ctx, accountID)
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, actorID, accountID uuid.UUID, ip, ua string) error {
+	acc, err := s.getAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `DELETE FROM asset_accounts WHERE id=$1`, accountID)
+	if err != nil {
+		return err
+	}
+	return s.aud.Record(ctx, &actorID, "asset.account.deleted", "asset_account", accountID.String(), ip, ua, map[string]any{
+		"asset_id": acc.AssetID.String(), "username": acc.Username,
+	})
+}
+
+func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Account, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, asset_id, username, auth_method, secret_enc IS NOT NULL AND length(secret_enc)>0,
+			description, status, last_rotated_at, created_at, updated_at, created_by
+		FROM asset_accounts WHERE asset_id=$1 ORDER BY username`, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Account
+	for rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.ID, &a.AssetID, &a.Username, &a.AuthMethod, &a.HasSecret,
+			&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error) {
+	var a Account
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, asset_id, username, auth_method, secret_enc IS NOT NULL AND length(secret_enc)>0,
+			description, status, last_rotated_at, created_at, updated_at, created_by
+		FROM asset_accounts WHERE id=$1`, id).Scan(
+		&a.ID, &a.AssetID, &a.Username, &a.AuthMethod, &a.HasSecret,
+		&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy)
+	return a, err
+}
+
+// TargetCreds returns decrypted credentials for a session proxy (never expose via HTTP).
+type TargetCreds struct {
+	Account    Account
+	Asset      Asset
+	Secret     string
+	AuthMethod string
+}
+
+func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UUID) (TargetCreds, error) {
+	asset, err := s.Get(ctx, assetID)
+	if err != nil {
+		return TargetCreds{}, err
+	}
+	if asset.Status != "active" {
+		return TargetCreds{}, fmt.Errorf("asset disabled")
+	}
+	var secretEnc []byte
+	var acc Account
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by
+		FROM asset_accounts WHERE id=$1 AND asset_id=$2`, accountID, assetID).Scan(
+		&acc.ID, &acc.AssetID, &acc.Username, &acc.AuthMethod, &secretEnc,
+		&acc.Description, &acc.Status, &acc.CreatedAt, &acc.UpdatedAt, &acc.CreatedBy)
+	if err != nil {
+		return TargetCreds{}, err
+	}
+	if acc.Status != "active" {
+		return TargetCreds{}, fmt.Errorf("account disabled")
+	}
+	acc.HasSecret = len(secretEnc) > 0
+	certMode := asset.Protocol == "ssh" && s.sshCA != nil && s.sshCA.Mode(ctx) == "ssh_cert"
+	if len(secretEnc) == 0 {
+		if !certMode {
+			return TargetCreds{}, fmt.Errorf("account has no secret")
+		}
+		return TargetCreds{Account: acc, Asset: asset, AuthMethod: acc.AuthMethod}, nil
+	}
+	plain, err := s.env.Decrypt(secretEnc)
+	if err != nil {
+		return TargetCreds{}, err
+	}
+	return TargetCreds{Account: acc, Asset: asset, Secret: string(plain), AuthMethod: acc.AuthMethod}, nil
+}
+
+// LearnHostKey stores the first-seen SSH host key (TOFU). If a key is already stored, it must match.
+func (s *Service) LearnHostKey(ctx context.Context, assetID uuid.UUID, algo string, key []byte, fp string) error {
+	if len(key) == 0 {
+		return fmt.Errorf("empty host key")
+	}
+	now := time.Now().UTC()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE assets SET host_key_algo=$2, host_key_blob=$3, host_key_fp=$4, host_key_learned_at=$5, updated_at=$5
+		WHERE id=$1 AND host_key_blob IS NULL`,
+		assetID, algo, key, fp, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		_ = s.aud.Record(ctx, nil, "asset.host_key.learned", "asset", assetID.String(), "", "ssh", map[string]any{
+			"algo": algo, "fingerprint": fp,
+		})
+		return nil
+	}
+	a, err := s.Get(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if len(a.HostKeyBlob) == 0 {
+		return fmt.Errorf("failed to store host key")
+	}
+	if subtle.ConstantTimeCompare(a.HostKeyBlob, key) != 1 {
+		return fmt.Errorf("host key mismatch for asset (stored %s, got %s)", a.HostKeyFingerprint, fp)
+	}
+	return nil
+}
+
+// ClearHostKey removes the trusted host key so the next connect re-learns (admin reset).
+func (s *Service) ClearHostKey(ctx context.Context, actorID, assetID uuid.UUID, ip, ua string) (Asset, error) {
+	a, err := s.Get(ctx, assetID)
+	if err != nil {
+		return Asset{}, err
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE assets SET host_key_algo='', host_key_blob=NULL, host_key_fp='', host_key_learned_at=NULL, updated_at=$2
+		WHERE id=$1`, assetID, time.Now().UTC())
+	if err != nil {
+		return Asset{}, err
+	}
+	_ = s.aud.Record(ctx, &actorID, "asset.host_key.cleared", "asset", assetID.String(), ip, ua, map[string]any{
+		"previous_fingerprint": a.HostKeyFingerprint,
+	})
+	return s.Get(ctx, assetID)
+}
+
+func (s *Service) tagsFor(ctx context.Context, assetID uuid.UUID) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx, `SELECT tag FROM asset_tags WHERE asset_id=$1 ORDER BY tag`, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+	return tags, rows.Err()
+}
+
+func setTagsTx(ctx context.Context, tx pgx.Tx, assetID uuid.UUID, tags []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM asset_tags WHERE asset_id=$1`, assetID); err != nil {
+		return err
+	}
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO asset_tags (asset_id, tag) VALUES ($1,$2) ON CONFLICT DO NOTHING`, assetID, tag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+func scanAsset(row scannable) (Asset, error) {
+	var a Asset
+	err := row.Scan(&a.ID, &a.Name, &a.AssetType, &a.Hostname, &a.Address, &a.Port,
+		&a.Protocol, &a.Description, &a.Status,
+		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
+		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy)
+	if a.Tags == nil {
+		a.Tags = []string{}
+	}
+	return a, err
+}
+
+func defaultPort(protocol string) int {
+	switch protocol {
+	case "rdp":
+		return 3389
+	case "vnc":
+		return 5900
+	case "https":
+		return 443
+	case "postgres":
+		return 5432
+	case "mysql":
+		return 3306
+	default:
+		return 22
+	}
+}
+
+func IsNotFound(err error) bool {
+	return err == pgx.ErrNoRows
+}

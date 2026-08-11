@@ -1,0 +1,222 @@
+package httpapi
+
+import (
+	"bytes"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/wwt/guac"
+
+	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/sessionsvc"
+)
+
+var guacUpgrader = websocket.Upgrader{
+	ReadBufferSize:  guac.MaxGuacMessage,
+	WriteBufferSize: guac.MaxGuacMessage * 2,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+	Subprotocols: []string{"guacamole"},
+}
+
+// handleSessionGuac tunnels browser Guacamole WebSocket ↔ guacd for RDP/VNC.
+func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	authSess, err := s.sessions.Get(r.Context(), c.Value)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !rbac.HasPermission(authSess.Permissions, "sessions.connect") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	row, err := s.sessionsvc.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if row.UserID != authSess.UserID && !rbac.HasPermission(authSess.Permissions, "sessions.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if row.Protocol != "rdp" && row.Protocol != "vnc" {
+		http.Error(w, "not a graphical session", http.StatusBadRequest)
+		return
+	}
+
+	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	width, _ := strconv.Atoi(r.URL.Query().Get("width"))
+	height, _ := strconv.Atoi(r.URL.Query().Get("height"))
+	if width <= 0 {
+		width = 1280
+	}
+	if height <= 0 {
+		height = 800
+	}
+
+	tunnel, err := s.openGuacTunnel(row.Protocol, creds.Asset.Address, creds.Asset.Port,
+		creds.Account.Username, creds.Secret, width, height, id)
+	if err != nil {
+		slog.Error("guac tunnel", "err", err, "session", id.String())
+		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer tunnel.Close()
+
+	hdr := http.Header{}
+	if p := r.Header.Get("Sec-Websocket-Protocol"); p != "" {
+		hdr.Set("Sec-Websocket-Protocol", p)
+	} else {
+		hdr.Set("Sec-Websocket-Protocol", "guacamole")
+	}
+	ws, err := guacUpgrader.Upgrade(w, r, hdr)
+	if err != nil {
+		return
+	}
+	defer ws.Close()
+
+	// Guacamole WebSocket tunnel requires an internal UUID instruction first.
+	uuidIns := guac.NewInstruction(guac.InternalDataOpcode, tunnel.GetUUID())
+	if err := ws.WriteMessage(websocket.TextMessage, uuidIns.Byte()); err != nil {
+		return
+	}
+
+	_ = s.sessionsvc.MarkActive(r.Context(), id)
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+		"asset": creds.Asset.Name, "account": creds.Account.Username, "protocol": row.Protocol, "via": "guac",
+	})
+
+	unregister := s.live.Register(id, func() {
+		_ = tunnel.Close()
+		_ = ws.Close()
+	})
+	defer unregister()
+
+	hbStop := make(chan struct{})
+	go sessionsvc.Heartbeat(r.Context(), s.sessionsvc, id, 30*time.Second, hbStop)
+	defer close(hbStop)
+
+	writer := tunnel.AcquireWriter()
+	reader := tunnel.AcquireReader()
+	defer tunnel.ReleaseWriter()
+	defer tunnel.ReleaseReader()
+
+	var wsWriteMu sync.Mutex
+	ioDone := make(chan struct{})
+	go func() {
+		defer close(ioDone)
+		for {
+			_, data, err := ws.ReadMessage()
+			if err != nil {
+				_ = tunnel.Close()
+				return
+			}
+			// Internal opcode messages are never forwarded to guacd.
+			if bytes.HasPrefix(data, []byte("0.")) {
+				continue
+			}
+			if _, err := writer.Write(data); err != nil {
+				return
+			}
+		}
+	}()
+
+	buf := bytes.NewBuffer(make([]byte, 0, guac.MaxGuacMessage*2))
+	for {
+		ins, err := reader.ReadSome()
+		if err != nil {
+			break
+		}
+		if bytes.HasPrefix(ins, []byte("0.")) {
+			continue
+		}
+		_, _ = buf.Write(ins)
+		if !reader.Available() || buf.Len() >= guac.MaxGuacMessage {
+			wsWriteMu.Lock()
+			werr := ws.WriteMessage(websocket.TextMessage, append([]byte(nil), buf.Bytes()...))
+			wsWriteMu.Unlock()
+			if werr != nil {
+				break
+			}
+			buf.Reset()
+		}
+	}
+	<-ioDone
+
+	_ = s.sessionsvc.MarkEnded(r.Context(), id, "")
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"via": "guac"})
+}
+
+func (s *Server) openGuacTunnel(protocol, address string, port int, username, password string, width, height int, sessID uuid.UUID) (guac.Tunnel, error) {
+	if s.cfg.GuacdAddr == "" || s.cfg.GuacdAddr == "off" {
+		return nil, fmt.Errorf("guacd is not configured")
+	}
+	conn, err := net.DialTimeout("tcp", s.cfg.GuacdAddr, 15*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("guacd dial: %w", err)
+	}
+	stream := guac.NewStream(conn, guac.SocketTimeout)
+	cfg := guac.NewGuacamoleConfiguration()
+	cfg.Protocol = protocol
+	cfg.OptimalScreenWidth = width
+	cfg.OptimalScreenHeight = height
+	cfg.AudioMimetypes = []string{"audio/L16", "rate=44100", "channels=2"}
+	cfg.Parameters = map[string]string{
+		"hostname":   address,
+		"port":       strconv.Itoa(port),
+		"username":   username,
+		"password":   password,
+		"width":      strconv.Itoa(width),
+		"height":     strconv.Itoa(height),
+		"dpi":        "96",
+		"color-depth": "24",
+	}
+	switch protocol {
+	case "rdp":
+		cfg.Parameters["security"] = "any"
+		cfg.Parameters["ignore-cert"] = "true"
+		cfg.Parameters["resize-method"] = "display-update"
+		cfg.Parameters["enable-wallpaper"] = "false"
+		cfg.Parameters["enable-font-smoothing"] = "true"
+		cfg.Parameters["disable-audio"] = "true"
+	}
+	if s.cfg.RecordingsDir != "" {
+		recDir := filepath.Join(s.cfg.RecordingsDir, "guac")
+		cfg.Parameters["recording-path"] = recDir
+		cfg.Parameters["create-recording-path"] = "true"
+		cfg.Parameters["recording-name"] = sessID.String()
+	}
+	if err := stream.Handshake(cfg); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("guacd handshake: %w", err)
+	}
+	return guac.NewSimpleTunnel(stream), nil
+}

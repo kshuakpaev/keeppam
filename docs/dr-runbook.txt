@@ -1,0 +1,53 @@
+# KeepPAM DR runbook (on-prem MVP)
+
+## Цели
+
+- RPO / RTO задаются в UI Compliance → DR (по умолчанию RPO 60 мин, RTO 240 мин).
+- Primary + опциональная async-реплика PostgreSQL (DSN в `replica_dsn_hint` для health-check).
+- Регулярные backup и quarterly fire-drill.
+
+## Компоненты
+
+1. PostgreSQL (metadata, audit, policies)
+2. Recordings volume (`deploy_recordings`)
+3. Redis (эфемерные сессии — при failover пользователи перелогиниваются)
+4. API + session-worker + web + guacd
+
+## Backup (ежедневно / по RPO)
+
+```bash
+./scripts/backup.sh /var/backups/keeppam
+```
+
+Либо из UI: Compliance → DR → «Снять backup» (нужен `pg_dump`/`tar` в API-контейнере; иначе используйте host-скрипт).
+
+Артефакты: `keeppam-<ts>-db.sql`, `keeppam-<ts>-recordings.tar.gz`, `.meta`.
+
+Хранить копию backup вне primary-площадки.
+
+## Restore (DR / disaster)
+
+1. Поднять инфраструктуру на DR-площадке (compose / k8s).
+2. `./scripts/restore.sh /path/to/keeppam-<ts>`
+3. Проверить: `curl :8080/healthz`, логин admin, выборка audit, открытие recording.
+4. Переключить DNS/VIP на DR.
+5. Зафиксировать drill в UI (ok + notes).
+
+Порядок восстановления control → secrets connectivity → data plane → audit sample.
+
+## Failover с репликой
+
+1. Promote standby PostgreSQL (Patroni/repmgr/manual).
+2. Обновить `KEEPPAM_DATABASE_URL` API на новый primary.
+3. Подключить/синхронизировать object storage recordings (rsync/S3 replication).
+4. Сбросить Redis или принять потерю live sessions.
+5. Старт API/workers; smoke-тест.
+
+## Проверки после drill
+
+- [ ] healthz ok
+- [ ] MFA login
+- [ ] audit_events не пуст
+- [ ] session recording читается
+- [ ] SIEM cursor не отстал критично
+- [ ] запись в UI: last_drill_ok

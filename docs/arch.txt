@@ -1,0 +1,251 @@
+Отлично, ниже сразу две версии под **on-prem**:  
+1) короткая для руководства,  
+2) подробная для архитекторов.
+
+---
+
+## Короткая версия для руководства (on-prem)
+
+### Цель
+Внедрить on-prem PAM-платформу для контроля привилегированного доступа без раскрытия постоянных паролей, с полной записью и аудитом действий.
+
+### Что получаем
+- Централизованный контроль SSH/RDP/VNC/DB-доступа.
+- Временные (JIT) привилегии вместо постоянных секретов.
+- Полный аудит: кто, когда, куда подключался и что делал.
+- Снижение риска компрометации инфраструктуры и соответствие требованиям ИБ/аудита.
+
+### Ключевая модель (упрощенно)
+- **Control Plane:** аутентификация, политики доступа, согласования.
+- **Data Plane:** проксирование и запись пользовательских сессий.
+- **Secret Plane:** безопасное хранение и ротация секретов через KMS/HSM.
+- **Audit Plane:** неизменяемые логи (WORM), интеграция с SIEM.
+
+### On-prem особенности
+- Развертывание в собственном Kubernetes-кластере (multi-AZ/стойки).
+- Хранение данных и ключей внутри периметра.
+- Интеграция с локальными AD/LDAP, SIEM, ITSM, PKI.
+- Без зависимости от публичного облака.
+
+### Этапы внедрения
+1. **MVP (8–12 недель):** SSH proxy, Vault, базовый аудит, replay.
+2. **Phase 2:** RDP/VNC через Guacamole, JIT, workflow согласования.
+3. **Phase 3:** ABAC, риск-ориентированные политики, discovery, SIEM-аналитика.
+
+### KPI успеха
+- 100% привилегированных сессий через PAM.
+- 0 выдачи постоянных паролей администраторам.
+- Время предоставления согласованного доступа < 5 минут.
+- Полнота аудита и воспроизводимость инцидентов.
+
+### Риски и меры
+- **Сложность эксплуатации:** выделенная команда платформы.
+- **Единая точка отказа:** HA + DR + регулярные тесты восстановления.
+- **Компрометация PAM:** сегментация, mTLS, HSM, immutable audit.
+
+---
+
+## Подробная версия для архитекторов (on-prem)
+
+### 1) Контекст и границы
+PAM — Tier-0 система. Требуется отдельный security domain, жесткая сегментация и Zero Trust между всеми сервисами.
+
+**Trust boundaries:**
+- User endpoint
+- PAM Edge (ingress/bastion)
+- PAM Control
+- PAM Data Plane
+- Secret/KMS/HSM
+- Target systems
+
+---
+
+### 2) Целевая on-prem архитектура
+
+#### 2.1 Control Plane
+Сервисы:
+- `api-gateway`
+- `authn/authz-service` (OIDC/SAML + MFA)
+- `policy-engine` (RBAC+ABAC, deny-by-default)
+- `workflow-service` (approval, 4-eyes)
+- `session-broker`
+- `audit-ingest`
+
+Назначение:
+- Идентификация пользователя
+- Проверка политики и контекста
+- Выдача временного разрешения на сессию
+- Регистрация всех событий в неизменяемый журнал
+
+#### 2.2 Data Plane
+Сервисы:
+- `ssh-session-worker` (Go)
+- `rdp/vnc-gateway` (Guacamole/guacd)
+- `recording-worker`
+
+Принципы:
+- Stateless workers
+- Session affinity по `session_id`
+- Контроль входящих/исходящих потоков
+- Устойчивость к перегрузке (backpressure, rate limits)
+
+#### 2.3 Secret Plane
+- Vault abstraction layer.
+- Интеграция с **on-prem HSM/KMS** (Thales, Entrust, Utimaco, HashiCorp Vault + HSM).
+- Envelope encryption (KEK в HSM, DEK на уровне приложения).
+- Dynamic credential rotation и/или SSH short-lived certs.
+
+#### 2.4 Audit Plane
+- Append-only event store + hash-chain по батчам.
+- WORM для критичных аудиторских данных.
+- Отдельные forensic и operational логи.
+- Экспорт в SIEM (CEF/LEEF/syslog/Kafka).
+
+---
+
+### 3) On-prem Kubernetes размещение
+
+#### 3.1 Кластеры и неймспейсы
+Рекомендуется отдельный кластер PAM (или отдельный security segment):
+- `pam-system`
+- `pam-data-plane`
+- `pam-observability`
+- `pam-security`
+
+#### 3.2 Сетевой контур
+- `default deny` NetworkPolicy.
+- mTLS service-to-service (service mesh или встроенно).
+- Egress allow-list только к IdP, HSM/KMS, SIEM, target-сетям.
+- Ingress через WAF/Ingress Controller + жесткий ACL.
+
+#### 3.3 Безопасность рантайма
+- Pod Security: restricted.
+- `readOnlyRootFilesystem`, `runAsNonRoot`, `seccomp`, drop capabilities.
+- Подпись и верификация образов (cosign/notary).
+- Admission policies (OPA/Gatekeeper/Kyverno).
+
+#### 3.4 Масштабирование и отказоустойчивость
+- HPA для stateless control-сервисов.
+- Отдельный autoscaling data-plane по:
+  - active sessions
+  - CPU/RAM
+  - network throughput
+- PDB + anti-affinity + topology spread.
+- Минимум 3 control-plane узла.
+
+---
+
+### 4) База данных и хранение (on-prem)
+
+#### 4.1 PostgreSQL (system of record)
+Схемы:
+- identity/access (`users`, `roles`, `group_bindings`)
+- sessions (`sessions`, `session_events`, `access_requests`, `approvals`)
+- audit (`audit_events`, `audit_batches`)
+- config (`policies`, `integrations`, `connectors`)
+
+Ключевые требования:
+- Партиционирование `audit_events` по времени.
+- Репликация + PITR (WAL archive).
+- Read replicas для отчетов.
+
+#### 4.2 Redis
+- Только эфемерные данные: session cache, locks, rate-limit counters.
+- Не хранить долговременные секреты.
+
+#### 4.3 Object Storage
+- On-prem S3-compatible (MinIO/Ceph RGW).
+- Object Lock/WORM для аудиторских артефактов.
+- Версионирование + lifecycle + legal hold.
+
+---
+
+### 5) IAM и политики доступа
+
+#### 5.1 Идентификация
+- Интеграция с AD/LDAP + OIDC/SAML bridge.
+- MFA обязательно (TOTP/WebAuthn).
+- Device/Context checks по возможности.
+
+#### 5.2 Авторизация
+- RBAC + ABAC:
+  - user attributes
+  - asset tags
+  - time window
+  - ticket/change id
+  - risk score
+
+#### 5.3 JIT/JEA
+- TTL для доступа (например 15–60 мин).
+- Approval workflow для критичных систем.
+- JEA: ограничение набора допустимых действий/команд.
+
+---
+
+### 6) Запись, аудит и расследования
+
+- SSH: stdin/stdout + таймлайн + команды.
+- RDP/VNC: native recording (Guac) + конвертация для удобного replay.
+- Единая мета-модель записей:
+  - actor, target, protocol, ticket, risk, labels
+- Поиск:
+  - по пользователю/хосту/команде/времени/сигнатурам риска
+
+---
+
+### 7) Наблюдаемость и SLO
+
+Метрики:
+- auth latency p95/p99
+- session setup latency
+- active sessions
+- audit ingest lag
+- recorder failure rate
+
+SLO (пример):
+- Доступность control plane: 99.95%
+- Успешный старт сессии: 99.9%
+- Доставка audit events в SIEM: < 60 сек p95
+
+---
+
+### 8) DR и непрерывность бизнеса (on-prem)
+
+- Второй ЦОД/площадка для DR.
+- Асинхронная реплика PostgreSQL и object storage.
+- Регулярные restore/fire-drill тесты (не реже 1 раза в квартал).
+- Runbook:
+  1) восстановление control plane
+  2) восстановление secret connectivity
+  3) восстановление data plane
+  4) верификация целостности аудита
+
+---
+
+### 9) Дорожная карта реализации (архитекторская)
+
+**Wave 1 (MVP):**
+- SSH proxy, IdP, MFA, базовый RBAC, аудит, replay.
+
+**Wave 2:**
+- Guacamole для RDP/VNC, JIT approvals, immutable audit pipeline.
+
+**Wave 3:**
+- ABAC/risk-based access, discovery, SIEM correlation, DR automation.
+
+**Wave 4:**
+- JEA, command policy packs, compliance bundles, attack simulation program (control-plane suite).
+
+---
+
+### 10) Definition of Done (production)
+
+- Нет прямого админ-доступа в target в обход PAM.
+- Нет выдачи постоянных privileged secrets пользователю.
+- Все привилегированные сессии записаны и поисковы.
+- Аудит неизменяем, проверяем и интегрирован с SIEM.
+- DR тесты успешны и подтверждены документально.
+
+---
+
+Если хотите, следующим сообщением подготовлю это в формате **трех готовых документов** (`concept1-exec`, `data-arch`, `kuber-arch`) с единым стилем и без дублирования между ними.

@@ -1,0 +1,166 @@
+# Улучшенная модель PAM-платформы (аналог Fudo PAM)
+
+## 1. Цели системы
+
+Система предназначена для безопасного, контролируемого и аудируемого предоставления привилегированного доступа к инфраструктуре (SSH, RDP, VNC, HTTP/S, DB) без раскрытия постоянных секретов пользователям.
+
+Ключевые цели:
+1) Zero Trust доступ и полная трассируемость действий.
+2) Минимизация времени жизни и области действия привилегий.
+3) Сильная отказоустойчивость и воспроизводимость операций.
+4) Соответствие требованиям аудита и комплаенса.
+
+## 2. Обновленная логическая архитектура
+
+Модули:
+1) Control Plane
+   - API Gateway + AuthN/AuthZ
+   - Policy Engine (RBAC/ABAC/JIT)
+   - Workflow Engine (аппрув, 4-eyes)
+   - Session Orchestrator
+2) Data Plane
+   - SSH Proxy cluster
+   - RDP/VNC gateway (Guacamole/guacd)
+   - Protocol adapters (DB proxy при необходимости)
+3) Secret Plane
+   - Vault abstraction layer
+   - KMS/HSM integration
+   - Dynamic credential rotator
+4) Audit Plane
+   - Immutable event log (WORM)
+   - Session recorder (text/video)
+   - Search/index + SIEM exporter
+5) Discovery Plane
+   - Asset discovery
+   - Account discovery
+   - Risk scoring
+
+Принцип: жёсткое разделение control-plane и data-plane. Компрометация одного компонента не должна автоматически давать доступ к секретам и журналам.
+
+## 3. Изменения относительно исходной концепции
+
+### Изменение A: Ввод явной модели доверия
+Было: Zero Trust упомянут декларативно.
+Стало:
+- Определены trust boundaries: User, PAM Edge, PAM Core, Secret Store, Target.
+- mTLS между сервисами.
+- Mandatory service identity (SPIFFE/SPIRE или эквивалент).
+
+Почему: без формальных границ невозможно доказуемо ограничить lateral movement.
+
+### Изменение B: Двухконтурная обработка сессий
+Было: session proxy описан как единый блок.
+Стало:
+- Session Broker (управление жизненным циклом) отдельно.
+- Session Worker (терминация и проксирование протокола) отдельно.
+- Stateless workers + sticky routing via session id.
+
+Почему: горизонтальное масштабирование и контролируемая деградация.
+
+### Изменение C: Политики доступа расширены до ABAC + контекст
+Было: RBAC + пример временного ограничения.
+Стало:
+- RBAC + ABAC (атрибуты пользователя, ресурса, окружения, риска).
+- Контекстные условия: geoip, managed-device, ticket-id, time-window, break-glass.
+- Deny-by-default и explicit allow.
+
+Почему: RBAC недостаточен для enterprise-кейсов и SoD.
+
+### Изменение D: Формализация JIT/JEA
+Было: JIT и ротация паролей на 1 час.
+Стало:
+- JIT для доступа + JEA (Just Enough Access) для ограниченного набора команд.
+- Эфемерные SSH certs (CA mode) предпочтительнее раздачи паролей.
+- Авто-ревокация по TTL и по событию риска.
+
+Почему: минимизация blast radius.
+
+### Изменение E: Аудит как неизменяемый “ledger”
+Было: WORM упомянут.
+Стало:
+- Append-only event schema с hash-chain.
+- Подпись батчей audit events.
+- Разделение operational logs и forensic logs.
+
+Почему: юридическая и техническая доказуемость целостности.
+
+### Изменение F: Сессионные записи как first-class data
+Было: хранение guac/mp4 описано как постобработка.
+Стало:
+- Единая модель метаданных записи: actor, target, protocol, risk, labels.
+- Индексация команд/событий/таймлайна.
+- Политики retention + legal hold.
+
+Почему: быстрый расследовательский поиск и соответствие регуляторике.
+
+### Изменение G: Threat model и secure SDLC
+Было: перечень must-have controls.
+Стало:
+- STRIDE по каждому модулю.
+- Secrets scanning, SAST/DAST, dependency policy, SBOM.
+- Регулярный tabletop на сценарии компрометации PAM.
+
+Почему: снижение системных рисков до внедрения.
+
+### Изменение H: Эксплуатационные SLO/SLA
+Было: не определены.
+Стало:
+- SLO auth latency, session setup latency, audit ingest delay.
+- RTO/RPO по модулям.
+- Chaos drills и game days.
+
+Почему: эксплуатационная готовность.
+
+## 4. Нефункциональные требования (обязательные)
+
+1) Безопасность:
+- FIPS-совместимые криптопримитивы (где требуется).
+- Envelope encryption для всех секретов.
+- Memory hardening для чувствительных данных.
+2) Доступность:
+- Нет single point of failure.
+- Active-active для control-plane.
+3) Наблюдаемость:
+- Метрики, логи, трассировки, security events.
+4) Производительность:
+- Предсказуемая задержка запуска сессии.
+5) Соответствие:
+- Retention, data residency, deletion workflows.
+
+## 5. Рекомендуемый целевой стек (уточненный)
+
+- Core services: Go.
+- Policy engine: OPA/Rego (или эквивалент с верифицируемыми политиками).
+- Identity: OIDC/SAML + WebAuthn.
+- Secrets: HashiCorp Vault / cloud KMS + HSM.
+- Messaging: Kafka/NATS (audit/event bus).
+- Storage: PostgreSQL + Object Storage (S3-compatible) + Redis (ephemeral cache only).
+
+## 6. Дорожная карта (обновленная)
+
+Фаза 1 (MVP+):
+- SSH proxy + central auth + audit trail + replay.
+- Базовый policy engine (RBAC + time window).
+- Эфемерные учетные данные/сертификаты.
+
+Фаза 2:
+- RDP/VNC через Guacamole.
+- Полноценный JIT workflow + approvals.
+- Immutable logging pipeline.
+
+Фаза 3:
+- ABAC, risk-based access.
+- Discovery/scoring.
+- SIEM/ITSM интеграции.
+
+Фаза 4:
+- Multi-region DR.
+- Advanced detection (anomaly/session analytics).
+- Compliance automation packs.
+
+## 7. Критерии готовности
+
+- Ни один пользователь не видит постоянный пароль цели.
+- Любое действие в сессии имеет неизменяемый аудит-след.
+- Время отзыва доступа < установленного SLA.
+- Компрометация отдельного сервиса не раскрывает мастер-ключ и не ломает целостность аудита.

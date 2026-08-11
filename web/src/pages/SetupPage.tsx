@@ -1,0 +1,143 @@
+import QRCode from "qrcode";
+import { useEffect, useState, type FormEvent } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
+import { api } from "../api";
+import { useAuth } from "../auth";
+
+export function SetupPage() {
+  const { user, refresh, loading } = useAuth();
+  const nav = useNavigate();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [code, setCode] = useState("");
+  const [secret, setSecret] = useState("");
+  const [qr, setQr] = useState("");
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [step, setStep] = useState<"password" | "mfa">("password");
+
+  useEffect(() => {
+    if (!loading && user) {
+      if (!user.must_change_password && user.mfa_enabled) {
+        nav("/", { replace: true });
+      } else if (!user.must_change_password && !user.mfa_enabled) {
+        setStep("mfa");
+      }
+    }
+  }, [user, loading, nav]);
+
+  if (loading) return <div className="auth-page muted">Загрузка…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  async function onPassword(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (next !== confirm) {
+      setError("Пароли не совпадают");
+      return;
+    }
+    try {
+      await api.changePassword(current, next);
+      setMsg("Пароль обновлён");
+      await refresh();
+      setStep("mfa");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка");
+    }
+  }
+
+  async function startMfa() {
+    setError("");
+    try {
+      const setup = await api.mfaSetup();
+      setSecret(setup.secret);
+      setQr(await QRCode.toDataURL(setup.url, { width: 200, margin: 1 }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка MFA");
+    }
+  }
+
+  async function confirmMfa(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api.mfaConfirm(code);
+      await refresh();
+      nav("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Неверный код");
+    }
+  }
+
+  return (
+    <div className="auth-page">
+      <div className="card auth-card">
+        <div className="brand">KeepPAM</div>
+        <h1>Первичная настройка</h1>
+        <p className="muted">Смена пароля и подключение TOTP обязательны</p>
+        {error && <p className="error">{error}</p>}
+        {msg && <p className="ok">{msg}</p>}
+        {step === "password" ? (
+          <form onSubmit={onPassword}>
+            <label htmlFor="current">Текущий пароль</label>
+            <input
+              id="current"
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              required
+            />
+            <label htmlFor="next">Новый пароль (мин. 10 символов)</label>
+            <input
+              id="next"
+              type="password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              minLength={10}
+              required
+            />
+            <label htmlFor="confirm">Повтор пароля</label>
+            <input
+              id="confirm"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              minLength={10}
+              required
+            />
+            <button className="btn" type="submit">
+              Сохранить пароль
+            </button>
+          </form>
+        ) : (
+          <div>
+            {!qr ? (
+              <button className="btn" type="button" onClick={() => void startMfa()}>
+                Сгенерировать MFA
+              </button>
+            ) : (
+              <form onSubmit={confirmMfa}>
+                <p className="muted">Отсканируйте QR в приложении-аутентификаторе</p>
+                <div className="qr">
+                  <img src={qr} alt="MFA QR" width={200} height={200} />
+                </div>
+                <p className="mono muted">Секрет: {secret}</p>
+                <label htmlFor="totp">Код подтверждения</label>
+                <input
+                  id="totp"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  required
+                />
+                <button className="btn" type="submit">
+                  Включить MFA
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

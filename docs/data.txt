@@ -1,0 +1,88 @@
+# База данных PAM-системы: проектное описание
+
+## 1. Принципы
+
+1) PostgreSQL — источник истины для метаданных.
+2) Redis — только эфемерные данные (сессии/кэш), без долговременных секретов.
+3) Object Storage (S3/MinIO) — записи сессий и тяжелые артефакты.
+4) Секреты в “чистом виде” в БД не храним.
+
+## 2. Логическое разделение данных
+
+A) Identity and Access
+- users
+- groups
+- roles
+- permissions
+- user_role_bindings
+- policy_bindings
+
+B) Asset Inventory
+- assets (host/db/k8s/api)
+- asset_tags
+- asset_accounts (ссылка на тип секрета, но не сам секрет)
+
+C) Session Management
+- access_requests
+- approvals
+- sessions
+- session_events (команды, блокировки, риски)
+- session_artifacts (ссылки на объекты в S3)
+
+D) Audit and Compliance
+- audit_events (append-only)
+- audit_batches (подписанные батчи, hash-chain)
+- retention_policies
+- legal_holds
+
+E) Ops/Control
+- connectors
+- integration_configs (шифрованные поля)
+- job_runs (ротации, discovery, экспорт)
+
+## 3. Минимальные требования к схеме
+
+- Везде UUIDv7/ULID для масштабируемых ключей.
+- created_at/updated_at + actor_id/source для трассируемости.
+- Версионирование политик (policy_version, effective_from/to).
+- Soft-delete только там, где разрешено регуляторикой; аудит — только append-only.
+
+## 4. Шифрование и ключи
+
+1) На диске:
+- TDE (если доступно) + шифрование томов.
+2) На уровне приложения:
+- Envelope encryption для чувствительных колонок.
+- DEK храним зашифрованным KEK из KMS/HSM.
+3) Ротация:
+- Плановая и событийная ротация KEK/DEK.
+- Пере-шифрование без простоя через фоновый migrator.
+
+## 5. Индексация и производительность
+
+- sessions: индекс (user_id, started_at desc), (asset_id, started_at desc), (status).
+- audit_events: партиционирование по дате (месяц/неделя), индекс по (event_type, ts), GIN по jsonb-полям.
+- access_requests: индекс по (state, created_at).
+- Вынести “горячие” аналитические запросы в read-replica.
+
+## 6. Retention и жизненный цикл данных
+
+- Session metadata: 1-3 года (по политике).
+- Raw recordings: в зависимости от compliance; поддержка tiering (hot/warm/cold).
+- Audit logs: WORM и фиксированный retention.
+- Legal hold переопределяет автоудаление.
+
+## 7. Репликация и DR
+
+- Primary + synchronous replica (критичные транзакции).
+- Асинхронная реплика в DR-регион.
+- PITR через WAL-архив.
+- RPO/RTO документируются по средам (prod/stage).
+
+## 8. Пример технологических решений
+
+- PostgreSQL 16+
+- PgBouncer для пула соединений
+- Patroni/Cloud managed HA
+- Redis Sentinel/Cluster только для non-critical cache/session
+- S3 Object Lock для immutable-режима артефактов

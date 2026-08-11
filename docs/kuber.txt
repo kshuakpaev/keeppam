@@ -1,0 +1,108 @@
+# Размещение PAM в Kubernetes
+
+## 1. Общая топология
+
+Namespaces:
+- pam-system (control plane)
+- pam-data-plane (session workers/proxies)
+- pam-observability
+- pam-security
+
+Кластеры:
+- Рекомендуется отдельный production-кластер для PAM.
+- Разделение node pools:
+  1) system/control workloads
+  2) data-plane high-throughput workloads
+
+## 2. Компоненты и типы workload
+
+Deployments:
+- api-gateway
+- auth-service
+- policy-service
+- session-broker
+- audit-ingest
+- ui-frontend
+
+StatefulSets (или managed outside cluster):
+- postgres (если не managed)
+- redis (если не managed)
+- kafka/nats (если не managed)
+
+DaemonSet (опционально):
+- node-level telemetry/security agents
+
+Jobs/CronJobs:
+- credential rotation jobs
+- recording conversion jobs
+- retention/cleanup jobs
+- discovery scans
+
+## 3. Сеть и безопасность
+
+- Service Mesh (mTLS, policy enforcement) желателен.
+- NetworkPolicy deny-all by default.
+- ingress только через WAF/ingress-controller с жесткими правилами.
+- Egress контроль (доступ только к KMS/Vault/IdP/SIEM/target ranges).
+- Pod Security Standards: restricted.
+- Runtime security (seccomp, readOnlyRootFilesystem, drop capabilities).
+
+## 4. Секреты и ключи в k8s
+
+- Не хранить master keys в Kubernetes Secrets как источник истины.
+- Использовать External Secrets Operator + KMS/Vault.
+- Ключевые операции — только через KMS/HSM API.
+- Регулярная ротация service account credentials и certs.
+
+## 5. Масштабирование и отказоустойчивость
+
+- HPA для stateless control-plane.
+- Session workers масштабируются отдельно по метрикам:
+  - active sessions
+  - cpu/memory
+  - network throughput
+- PodDisruptionBudgets для критичных сервисов.
+- TopologySpreadConstraints + anti-affinity.
+- Multi-AZ обязательно для production.
+
+## 6. Хранение данных
+
+- DB и object storage предпочтительно managed вне кластера.
+- Если внутри:
+  - отдельные StorageClass
+  - снапшоты + шифрование
+  - регулярные restore-тесты
+
+## 7. CI/CD и поставка
+
+- GitOps (Argo CD/Flux).
+- Раздельные окружения: dev/stage/prod.
+- Progressive delivery (canary/blue-green) для control-plane.
+- Для data-plane: безопасный rolling update с drain active sessions.
+
+## 8. Наблюдаемость и аудит
+
+- Metrics: Prometheus + Alertmanager.
+- Logs: централизованный сбор (ELK/OpenSearch/Splunk).
+- Tracing: OpenTelemetry.
+- Security events в SIEM в near-real-time.
+- Отдельные алерты на:
+  - anomalous session spikes
+  - auth failures
+  - policy bypass attempts
+  - recorder failures
+
+## 9. Backup/DR в Kubernetes-контексте
+
+- DB PITR + регулярные проверочные восстановления.
+- Object storage replication + object lock.
+- Backup manifests и конфигураций (Git source of truth + encrypted backups).
+- DR-runbook: пошаговое восстановление control-plane и data-plane.
+
+## 10. Минимальный production checklist
+
+1) mTLS между всеми сервисами.
+2) deny-all NetworkPolicy + явно разрешенные потоки.
+3) HPA + PDB + anti-affinity.
+4) WORM/immutable аудит-хранилище.
+5) Проверенный процесс key rotation и incident response.

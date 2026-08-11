@@ -1,0 +1,50 @@
+# KeepPAM: PAM для БД и приложений
+
+## Решения
+
+- БД: сессия к инстансу через DB proxy + аудит SQL; без table/schema ACL и без masking/rewrite.
+- Приложения: поэтапно — сначала SSO/OIDC broker + JIT credential lease, затем HTTPS reverse-proxy с записью для критичных apps.
+
+Таблицы БД не являются first-class ресурсами ACL. Гранулярность: инстанс + account + time/JIT/ABAC tags/ticket.
+
+## Модель объектов
+
+- Asset `db` + protocol `postgres|mysql` — инстанс БД.
+- Asset account — vault-логин (ротация уже есть).
+- Session `postgres|mysql` — проксированная DB-сессия (Web SQL + native wire).
+- Asset `api`/`https` — приложение.
+- `app_integrations` — OIDC / vault_password / header_inject + recording_mode.
+- `credential_leases` — кратковременная выдача секрета приложения.
+- Session `https` — Phase B записанный proxy session (recording_mode=full).
+
+## Database PAM
+
+1. Пользователь создаёт сессию (policy/JIT/ABAC).
+2. Web SQL console (WebSocket) или native wire на :5433/:3307.
+3. Proxy аутентифицируется vault-секретом; пользователь пароль не видит.
+4. Каждый statement → session_events + recording NDJSON + audit `session.sql`.
+5. Force-kill через Redis LiveHub (как SSH).
+6. Ephemeral DB role: при старте SQL/wire CREATE ROLE (readonly|readwrite), запросы под ним; DROP на MarkEnded/stale.
+
+Parse failure: allow + raw audit (strict_sql_parse не требуется в MVP).
+
+## Application access
+
+### Phase A — SSO / JIT credentials
+
+- `auth_mode=vault_password`: policy check → credential_lease (TTL) → one-time reveal в UI; аудит без тела пароля.
+- `auth_mode=oidc_broker`: redirect через PAM OIDC start к issuer приложения; аудит `app.access.granted`.
+- `auth_mode=header_inject`: подготовка к Phase B (токен/заголовок для proxy).
+
+### Phase B — HTTPS session proxy
+
+Только активы с `recording_mode=full`:
+- Пользователь открывает `/sessions/{id}/app` через reverse proxy.
+- Credentials из vault; запись request metadata (HAR-like, тела форм redacted).
+
+## Дорожная карта
+
+- DB-1: Web SQL console + statement audit — реализовано (`/sessions/{id}/sql`)
+- DB-2: native wire proxy — реализовано (`:15432` postgres, `:13306` mysql; user=session UUID, password=wire_token)
+- App-A: app_integrations + credential lease / OIDC broker — реализовано
+- App-B: HTTPS reverse-proxy + metadata recording — реализовано (`recording_mode=full`)
