@@ -180,7 +180,9 @@ func (g *WireGateway) loadGuard(ctx context.Context, sessionID uuid.UUID) *SQLGu
 }
 
 func (g *WireGateway) denySQL(ctx context.Context, sessionID, userID uuid.UUID, stmt, reason string) {
-	_ = g.sessions.AddEvent(ctx, sessionID, "sql_denied", map[string]any{"statement": truncateStmt(stmt), "reason": reason, "via": "wire"})
+	payload := map[string]any{"statement": truncateStmt(stmt), "reason": reason, "via": "wire", "denied": true}
+	_ = g.sessions.AddEvent(ctx, sessionID, "sql_denied", payload)
+	g.live.FanoutSQL(ctx, sessionID, payload)
 	_ = g.audit.Record(ctx, &userID, "session.sql.denied", "session", sessionID.String(), "", "dbwire", map[string]any{
 		"statement": truncateStmt(stmt), "reason": reason,
 	})
@@ -277,7 +279,9 @@ func (g *WireGateway) execAndRecord(ctx context.Context, sessionID, userID uuid.
 		errMsg = err.Error()
 	}
 	rec.Record(stmt, ms, 0, errMsg)
-	_ = g.sessions.AddEvent(ctx, sessionID, "sql", map[string]any{"statement": truncateStmt(stmt), "via": "wire", "error": errMsg, "duration_ms": ms})
+	sqlEv := map[string]any{"statement": truncateStmt(stmt), "via": "wire", "error": errMsg, "duration_ms": ms}
+	_ = g.sessions.AddEvent(ctx, sessionID, "sql", sqlEv)
+	g.live.FanoutSQL(ctx, sessionID, sqlEv)
 	_ = g.audit.Record(ctx, &userID, "session.sql", "session", sessionID.String(), "", "dbwire", map[string]any{
 		"statement": truncateStmt(stmt), "via": "wire", "error": errMsg,
 	})

@@ -10,6 +10,7 @@ import { AssetsPage } from "./pages/AssetsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SessionReplayPage } from "./pages/SessionReplayPage";
+import { WatchPage } from "./pages/WatchPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { TerminalPage } from "./pages/TerminalPage";
@@ -50,6 +51,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/sessions/:id/app" element={<AppSessionPage />} />
               <Route path="/sessions/:id/desktop" element={<DesktopPage />} />
               <Route path="/sessions/:id/replay" element={<SessionReplayPage />} />
+              <Route path="/sessions/:id/watch" element={<WatchPage />} />
               <Route path="/users" element={<UsersPage />} />
               <Route path="/users/:id" element={<UserEditPage />} />
               <Route path="/audit" element={<AuditPage />} />

@@ -138,9 +138,11 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			if hasSQLPack {
 				ok, reason := policy.MatchSQL(sqlPack, msg.Statement)
 				if !ok {
-					_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", map[string]any{
-						"statement": truncateStr(msg.Statement, 8000), "reason": reason, "pack": sqlPack.Name,
-					})
+					denied := map[string]any{
+						"statement": truncateStr(msg.Statement, 8000), "reason": reason, "pack": sqlPack.Name, "denied": true,
+					}
+					_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", denied)
+					s.live.FanoutSQL(r.Context(), id, denied)
 					_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
 						"statement": truncateStr(msg.Statement, 2000), "reason": reason, "pack": sqlPack.Name,
 					})
@@ -156,10 +158,12 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 				res.Columns, res.Rows = policy.MaskSQLResult(sqlPack, res.Columns, res.Rows)
 			}
 			rec.Record(msg.Statement, res.Duration, res.RowCount, errMsg)
-			_ = s.sessionsvc.AddEvent(r.Context(), id, "sql", map[string]any{
+			sqlEv := map[string]any{
 				"statement": truncateStr(msg.Statement, 8000), "duration_ms": res.Duration,
 				"row_count": res.RowCount, "error": errMsg, "via": "sql-ws",
-			})
+			}
+			_ = s.sessionsvc.AddEvent(r.Context(), id, "sql", sqlEv)
+			s.live.FanoutSQL(r.Context(), id, sqlEv)
 			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
 				"statement": truncateStr(msg.Statement, 2000), "error": errMsg, "row_count": res.RowCount,
 			})

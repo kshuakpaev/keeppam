@@ -1,0 +1,20 @@
+# KeepPAM: live-мониторинг сессий
+
+## Что есть
+
+- Read-only WebSocket `GET /api/v1/sessions/{id}/watch` (cookie, `sessions.read` + владелец либо `users.write`/`audit.read`).
+- UI `/sessions/:id/watch` — отдельная страница, не вкладка оператора. Закрытие watch не завершает сессию.
+- SSH: xterm только на чтение (последние ~48KB буфера + live fan-out через Redis).
+- SQL (console и wire): журнал statement / deny / error.
+- RDP/VNC/isolated/HTTPS: статус + kill; live-видео и coach/inject нет.
+
+## Kill
+
+- Своя сессия: `POST /sessions/{id}/end` при `sessions.connect`.
+- Чужая: `users.write` или `audit.read`.
+- Redis канал `keeppam:session:kill` рвёт SSH/SQL/Guac/wire на API и session-worker.
+
+## Аудит
+
+- `session.watched` при подключении наблюдателя.
+- `session.ended` с `forced: true` при kill из API.

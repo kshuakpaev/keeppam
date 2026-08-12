@@ -117,6 +117,7 @@ func main() {
 	policySvc := policy.New(db, auditSvc)
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	live := sessionsvc.NewLiveHub(sessions.Redis())
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
@@ -124,6 +125,8 @@ func main() {
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
+		live.Fanout(ctx, id, "end", "")
+		live.Clear(ctx, id)
 		if protocol == "postgres" || protocol == "mysql" {
 			dbEphSvc.Drop(ctx, id)
 		}
@@ -160,7 +163,6 @@ func main() {
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
 
-	live := sessionsvc.NewLiveHub(sessions.Redis())
 	go live.Listen(runCtx)
 
 	if runHTTP {

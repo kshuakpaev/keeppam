@@ -213,7 +213,11 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if row.UserID != sess.UserID && !rbac.HasPermission(sess.Permissions, "users.write") {
+	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if row.UserID == sess.UserID && !rbac.HasPermission(sess.Permissions, "sessions.connect") {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -400,6 +404,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(done)
 		_ = bridge.CopyOutput(writerFunc(func(p []byte) (int, error) {
+			s.live.FanoutOutput(r.Context(), id, p)
 			if err := safeWrite(websocket.BinaryMessage, p); err != nil {
 				return 0, err
 			}

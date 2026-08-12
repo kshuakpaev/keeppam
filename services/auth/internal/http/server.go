@@ -80,6 +80,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 	r.Route("/api/v1", func(r chi.Router) {
 		// WebSocket without request timeout (long-lived).
 		r.Get("/sessions/{id}/ws", s.handleSessionWS)
+		r.Get("/sessions/{id}/watch", s.handleSessionWatch)
 		r.Get("/sessions/{id}/guac", s.handleSessionGuac)
 		r.Get("/sessions/{id}/sql", s.handleSessionSQL)
 		r.Handle("/sessions/{id}/app", http.HandlerFunc(s.handleSessionApp))
@@ -208,7 +209,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("access.breakglass")).Get("/break-glass", s.handleListBreakGlass)
 
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions", s.handleCreateSession)
-				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/end", s.handleEndSession)
+				r.Post("/sessions/{id}/end", s.handleEndSession)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)

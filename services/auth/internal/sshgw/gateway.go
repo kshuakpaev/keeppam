@@ -368,7 +368,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	outDone := make(chan struct{})
 	go func() {
 		defer close(outDone)
-		_ = bridge.CopyOutput(ch)
+		_ = bridge.CopyOutput(liveCopy{live: g.live, id: pamSess.ID, dst: ch, ctx: ctx})
 	}()
 
 	go func() {
@@ -692,4 +692,18 @@ func loadOrCreateHostKey(path string) (ssh.Signer, error) {
 		return nil, err
 	}
 	return ssh.ParsePrivateKey(pemBytes)
+}
+
+type liveCopy struct {
+	live *sessionsvc.LiveHub
+	id   uuid.UUID
+	dst  io.Writer
+	ctx  context.Context
+}
+
+func (w liveCopy) Write(p []byte) (int, error) {
+	if w.live != nil && len(p) > 0 {
+		w.live.FanoutOutput(w.ctx, w.id, p)
+	}
+	return w.dst.Write(p)
 }

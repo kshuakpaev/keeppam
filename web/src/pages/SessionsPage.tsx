@@ -21,6 +21,7 @@ export function SessionsPage() {
   const [appliedQ, setAppliedQ] = useState("");
   const [offset, setOffset] = useState(0);
   const canRead = hasPerm(user, "sessions.read");
+  const canWatch = hasPerm(user, "sessions.read");
 
   const effectiveStatus = tab === "live" ? "active" : status;
 
@@ -231,6 +232,11 @@ export function SessionsPage() {
                                 ? "App"
                                 : "Terminal"}
                         </button>
+                        {canWatch && (
+                          <Link className="btn secondary" to={`/sessions/${s.id}/watch`}>
+                            Наблюдать
+                          </Link>
+                        )}
                         <button
                           className="btn danger"
                           type="button"

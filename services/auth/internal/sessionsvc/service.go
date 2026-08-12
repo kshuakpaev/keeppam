@@ -240,6 +240,42 @@ func (s *Service) AddEvent(ctx context.Context, sessionID uuid.UUID, eventType s
 	return err
 }
 
+type SessionEvent struct {
+	Type    string         `json:"type"`
+	Payload map[string]any `json:"payload"`
+	TS      time.Time      `json:"ts"`
+}
+
+func (s *Service) ListEvents(ctx context.Context, sessionID uuid.UUID, limit int) ([]SessionEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT event_type, payload, ts FROM session_events
+		WHERE session_id=$1 ORDER BY ts DESC LIMIT $2`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionEvent
+	for rows.Next() {
+		var e SessionEvent
+		var raw []byte
+		if err := rows.Scan(&e.Type, &raw, &e.TS); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(raw, &e.Payload)
+		if e.Payload == nil {
+			e.Payload = map[string]any{}
+		}
+		out = append(out, e)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, rows.Err()
+}
+
 const sessionSelect = `
 		SELECT s.id, s.user_id, s.asset_id, s.account_id, s.protocol, s.status, s.client_ip,
 			s.recording_path, s.error_message, s.started_at, s.ended_at, s.last_seen_at, s.created_at,
