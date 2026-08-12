@@ -101,6 +101,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
 				r.Post("/mfa/verify", s.handleMFAVerify)
+				r.Post("/mfa/webauthn/begin", s.handleWebAuthnLoginBegin)
+				r.Post("/mfa/webauthn/finish", s.handleWebAuthnLoginFinish)
 				r.Get("/methods", s.handleAuthMethods)
 				r.Get("/oidc/start", s.handleOIDCStart)
 				r.Get("/oidc/callback", s.handleOIDCCallback)
@@ -112,6 +114,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 					r.Post("/password", s.handleChangePassword)
 					r.Post("/mfa/setup", s.handleMFASetup)
 					r.Post("/mfa/confirm", s.handleMFAConfirm)
+					r.Post("/webauthn/register/begin", s.handleWebAuthnRegisterBegin)
+					r.Post("/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
+					r.Get("/webauthn/credentials", s.handleListMyWebAuthn)
+					r.Delete("/webauthn/credentials/{id}", s.handleDeleteMyWebAuthn)
 				})
 			})
 
@@ -143,6 +149,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("users.read")).Get("/users/{id}/ssh-keys", s.handleListUserSSHKeys)
 				r.With(s.requirePerm("users.write")).Post("/users/{id}/ssh-keys", s.handleAddUserSSHKey)
 				r.With(s.requirePerm("users.write")).Delete("/users/{id}/ssh-keys/{keyId}", s.handleDeleteUserSSHKey)
+				r.With(s.requirePerm("users.read")).Get("/users/{id}/webauthn", s.handleListUserWebAuthn)
 				r.With(s.requirePerm("users.read")).Get("/roles", s.handleListRoles)
 				r.With(s.requirePerm("audit.read")).Get("/audit-events", s.handleListAudit)
 				r.With(s.requirePerm("audit.read")).Get("/analytics/overview", s.handleAnalyticsOverview)
@@ -166,6 +173,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("apps.read")).Get("/assets/{id}/app", s.handleGetAppIntegration)
 				r.With(s.requirePerm("apps.write")).Put("/assets/{id}/app", s.handlePutAppIntegration)
 				r.With(s.requirePerm("sessions.connect")).Post("/assets/{id}/app/access", s.handleAppAccess)
+				r.With(s.requirePerm("sessions.connect")).Post("/assets/{id}/k8s/access", s.handleK8sAccess)
+				r.With(s.requirePerm("sessions.connect")).Post("/k8s/leases/{leaseId}/consume", s.handleConsumeK8sLease)
 
 				r.With(s.requirePerm("assets.read")).Get("/assets", s.handleListAssets)
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)

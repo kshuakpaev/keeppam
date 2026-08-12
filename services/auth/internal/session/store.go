@@ -132,6 +132,26 @@ func CSRFToken() (string, error) {
 	return newToken()
 }
 
+func (s *Store) PutJSON(ctx context.Context, key string, v any, ttl time.Duration) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return s.rdb.Set(ctx, key, data, ttl).Err()
+}
+
+func (s *Store) GetJSON(ctx context.Context, key string, dest any) error {
+	data, err := s.rdb.Get(ctx, key).Bytes()
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dest)
+}
+
+func (s *Store) DeleteKey(ctx context.Context, key string) error {
+	return s.rdb.Del(ctx, key).Err()
+}
+
 func RateKey(ip, username string) string {
 	return fmt.Sprintf("%s:%s", ip, username)
 }

@@ -60,18 +60,22 @@ type UpsertInput struct {
 }
 
 type Lease struct {
-	ID         uuid.UUID `json:"id"`
-	AssetID    uuid.UUID `json:"asset_id"`
-	AccountID  uuid.UUID `json:"account_id"`
-	UserID     uuid.UUID `json:"user_id"`
-	Status     string    `json:"status"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
-	Secret     string    `json:"secret,omitempty"`
-	Username   string    `json:"username,omitempty"`
-	LoginURL   string    `json:"login_url,omitempty"`
-	AuthMode   string    `json:"auth_mode,omitempty"`
-	OpenURL    string    `json:"open_url,omitempty"`
+	ID             uuid.UUID `json:"id"`
+	AssetID        uuid.UUID `json:"asset_id"`
+	AccountID      uuid.UUID `json:"account_id"`
+	UserID         uuid.UUID `json:"user_id"`
+	Status         string    `json:"status"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	CreatedAt      time.Time `json:"created_at"`
+	Secret         string    `json:"secret,omitempty"`
+	Username       string    `json:"username,omitempty"`
+	LoginURL       string    `json:"login_url,omitempty"`
+	AuthMode       string    `json:"auth_mode,omitempty"`
+	AuthMethod     string    `json:"auth_method,omitempty"`
+	OpenURL        string    `json:"open_url,omitempty"`
+	Kind           string    `json:"kind,omitempty"` // app | k8s
+	ClusterAddress string    `json:"cluster_address,omitempty"`
+	ClusterPort    int       `json:"cluster_port,omitempty"`
 }
 
 func (s *Service) GetIntegration(ctx context.Context, assetID uuid.UUID) (Integration, error) {
@@ -145,13 +149,14 @@ func (s *Service) UpsertIntegration(ctx context.Context, actorID, assetID uuid.U
 	return s.GetIntegration(ctx, assetID)
 }
 
-func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, ip, ua string) (Lease, error) {
+func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string) (Lease, error) {
 	integ, err := s.GetIntegration(ctx, assetID)
 	if err != nil {
 		return Lease{}, err
 	}
 	ok, err := s.policy.Allowed(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(), TicketID: ticketID,
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
+		TicketID: ticketID, Reason: reason, ClientIP: ip,
 	})
 	if err != nil {
 		return Lease{}, err
@@ -169,6 +174,68 @@ func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID 
 	default:
 		return s.createLease(ctx, userID, assetID, accountID, integ, ip, ua)
 	}
+}
+
+// RequestK8sAccess issues a short-lived kubeconfig/SA token lease for a k8s asset.
+func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string) (Lease, error) {
+	asset, err := s.assets.Get(ctx, assetID)
+	if err != nil {
+		return Lease{}, err
+	}
+	if asset.AssetType != "k8s" && asset.Protocol != "kubectl" {
+		return Lease{}, fmt.Errorf("asset is not a kubernetes cluster (asset_type=k8s or protocol=kubectl)")
+	}
+	if asset.Status != "active" {
+		return Lease{}, fmt.Errorf("asset disabled")
+	}
+	ok, err := s.policy.Allowed(ctx, policy.AccessCheck{
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
+		TicketID: ticketID, Reason: reason, ClientIP: ip,
+	})
+	if err != nil {
+		return Lease{}, err
+	}
+	if !ok {
+		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, map[string]any{
+			"reason": "policy", "ticket_id": ticketID,
+		})
+		return Lease{}, fmt.Errorf("access denied by policy")
+	}
+	if accountID == uuid.Nil {
+		return Lease{}, fmt.Errorf("account_id required")
+	}
+	creds, err := s.assets.GetTargetCreds(ctx, assetID, accountID)
+	if err != nil {
+		return Lease{}, err
+	}
+	if strings.TrimSpace(creds.Secret) == "" {
+		return Lease{}, fmt.Errorf("account has no kubeconfig/token secret")
+	}
+	id := store.NewID()
+	now := time.Now().UTC()
+	exp := now.Add(15 * time.Minute)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO credential_leases (id, asset_id, account_id, user_id, status, expires_at, created_at)
+		VALUES ($1,$2,$3,$4,'active',$5,$6)`, id, assetID, accountID, userID, exp, now)
+	if err != nil {
+		return Lease{}, err
+	}
+	_ = s.aud.Record(ctx, &userID, "k8s.access.granted", "asset", assetID.String(), ip, ua, map[string]any{
+		"lease_id": id.String(), "account_id": accountID.String(), "auth_method": creds.AuthMethod,
+		"username": creds.Account.Username, "ticket_id": ticketID,
+	})
+	apiURL := fmt.Sprintf("https://%s", asset.Address)
+	if asset.Port > 0 && asset.Port != 443 {
+		apiURL = fmt.Sprintf("https://%s:%d", asset.Address, asset.Port)
+	}
+	return Lease{
+		ID: id, AssetID: assetID, AccountID: accountID, UserID: userID,
+		Status: "active", ExpiresAt: exp, CreatedAt: now,
+		Secret: creds.Secret, Username: creds.Account.Username,
+		AuthMode: "vault_kubeconfig", AuthMethod: creds.AuthMethod,
+		Kind: "k8s", ClusterAddress: asset.Address, ClusterPort: asset.Port,
+		LoginURL: apiURL, OpenURL: apiURL,
+	}, nil
 }
 
 func (s *Service) createLease(ctx context.Context, userID, assetID, accountID uuid.UUID, integ Integration, ip, ua string) (Lease, error) {
@@ -202,7 +269,8 @@ func (s *Service) createLease(ctx context.Context, userID, assetID, accountID uu
 		ID: id, AssetID: assetID, AccountID: accountID, UserID: userID,
 		Status: "active", ExpiresAt: exp, CreatedAt: now,
 		Secret: creds.Secret, Username: creds.Account.Username,
-		LoginURL: open, AuthMode: integ.AuthMode, OpenURL: open,
+		LoginURL: open, AuthMode: integ.AuthMode, AuthMethod: creds.AuthMethod,
+		OpenURL: open, Kind: "app",
 	}, nil
 }
 

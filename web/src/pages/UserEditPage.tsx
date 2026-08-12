@@ -10,6 +10,7 @@ export function UserEditPage() {
   const [target, setTarget] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [sshKeys, setSshKeys] = useState<UserSSHKey[]>([]);
+  const [passkeys, setPasskeys] = useState<{ id: string; name: string; created_at: string }[]>([]);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState("active");
@@ -30,11 +31,16 @@ export function UserEditPage() {
     setSshKeys(res.keys || []);
   }
 
+  async function loadPasskeys(userId: string) {
+    const res = await api.listUserWebAuthn(userId);
+    setPasskeys(res.credentials || []);
+  }
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([api.getUser(id), api.listRoles(), api.listUserSSHKeys(id)])
-      .then(([u, r, keys]) => {
+    Promise.all([api.getUser(id), api.listRoles(), api.listUserSSHKeys(id), api.listUserWebAuthn(id)])
+      .then(([u, r, keys, wa]) => {
         setTarget(u);
         setEmail(u.email);
         setDisplayName(u.display_name || "");
@@ -43,6 +49,7 @@ export function UserEditPage() {
         setTags((u.tags || []).join(", "));
         setRoles(r.roles || []);
         setSshKeys(keys.keys || []);
+        setPasskeys(wa.credentials || []);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Ошибка загрузки"))
       .finally(() => setLoading(false));
@@ -91,9 +98,10 @@ export function UserEditPage() {
     setError("");
     try {
       await api.resetMfa(id);
-      setMsg("MFA сброшен");
+      setMsg("MFA сброшен (TOTP + Passkeys)");
       const u = await api.getUser(id);
       setTarget(u);
+      await loadPasskeys(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сброса MFA");
     }
@@ -255,6 +263,31 @@ export function UserEditPage() {
           )}
         </div>
       </form>
+
+      <div className="card" style={{ maxWidth: 640, marginTop: "1.25rem" }}>
+        <h2>Passkeys (WebAuthn)</h2>
+        <p className="muted">Сброс MFA удаляет все ключи вместе с TOTP.</p>
+        {passkeys.length === 0 ? (
+          <p className="muted">Ключей нет</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Создан</th>
+              </tr>
+            </thead>
+            <tbody>
+              {passkeys.map((k) => (
+                <tr key={k.id}>
+                  <td>{k.name}</td>
+                  <td className="mono">{new Date(k.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       <div className="card" style={{ maxWidth: 640, marginTop: "1.25rem" }}>
         <h2>SSH-ключи (gateway :2222)</h2>

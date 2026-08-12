@@ -389,6 +389,33 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ challenge_token, code }),
     }),
+  webauthnLoginBegin: (challenge_token: string) =>
+    request<unknown>("/api/v1/auth/mfa/webauthn/begin", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token }),
+    }),
+  webauthnLoginFinish: (challenge_token: string, credential: unknown) =>
+    request<{ status: string; user?: User }>("/api/v1/auth/mfa/webauthn/finish", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, credential }),
+    }),
+  webauthnRegisterBegin: () =>
+    request<unknown>("/api/v1/auth/webauthn/register/begin", { method: "POST" }),
+  webauthnRegisterFinish: (credential: unknown, name?: string) =>
+    request<{ id: string; name: string }>("/api/v1/auth/webauthn/register/finish", {
+      method: "POST",
+      body: JSON.stringify({ credential, name }),
+    }),
+  listMyWebAuthn: () =>
+    request<{ credentials: { id: string; name: string; created_at: string }[] }>(
+      "/api/v1/auth/webauthn/credentials",
+    ),
+  deleteMyWebAuthn: (id: string) =>
+    request<{ status: string }>(`/api/v1/auth/webauthn/credentials/${id}`, { method: "DELETE" }),
+  listUserWebAuthn: (userId: string) =>
+    request<{ credentials: { id: string; name: string; created_at: string }[] }>(
+      `/api/v1/admin/users/${userId}/webauthn`,
+    ),
   logout: () => request<{ status: string }>("/api/v1/auth/logout", { method: "POST" }),
   me: () => request<User>("/api/v1/auth/me"),
   authMethods: () =>
@@ -774,11 +801,18 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  requestAppAccess: (assetId: string, body: { account_id?: string; ticket_id?: string }) =>
+  requestAppAccess: (assetId: string, body: { account_id?: string; ticket_id?: string; reason?: string }) =>
     request<AppLease>(`/api/v1/admin/assets/${assetId}/app/access`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  requestK8sAccess: (assetId: string, body: { account_id: string; ticket_id?: string; reason?: string }) =>
+    request<AppLease>(`/api/v1/admin/assets/${assetId}/k8s/access`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  consumeK8sLease: (leaseId: string) =>
+    request<{ status: string }>(`/api/v1/admin/k8s/leases/${leaseId}/consume`, { method: "POST" }),
   getComplianceStatus: () => request<ComplianceStatus>("/api/v1/admin/compliance/status"),
   listCompliancePacks: () => request<{ packs: CompliancePack[] }>("/api/v1/admin/compliance/packs"),
   applyCompliancePack: (id: string) =>
@@ -984,7 +1018,11 @@ export type AppLease = {
   username?: string;
   login_url?: string;
   auth_mode?: string;
+  auth_method?: string;
   open_url?: string;
+  kind?: string;
+  cluster_address?: string;
+  cluster_port?: number;
 };
 
 export type RetentionPolicy = {

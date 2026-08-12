@@ -1,0 +1,40 @@
+# KeepPAM: WebAuthn / Passkeys
+
+## Что есть
+
+WebAuthn/FIDO2 как второй фактор рядом с TOTP.
+
+1. Таблица `user_webauthn_credentials` (миграция `030`).
+2. Регистрация (сессия + CSRF):
+   - `POST /api/v1/auth/webauthn/register/begin`
+   - `POST /api/v1/auth/webauthn/register/finish` `{ name, credential }`
+3. Логин MFA (после `mfa_required`):
+   - `POST /api/v1/auth/mfa/webauthn/begin` `{ challenge_token }`
+   - `POST /api/v1/auth/mfa/webauthn/finish` `{ challenge_token, credential }`
+4. Список: `GET /auth/webauthn/credentials`, admin `GET /admin/users/{id}/webauthn`
+5. `Сброс MFA` чистит TOTP **и** все passkeys.
+
+`users.mfa_enabled=true` при первом Passkey или подтверждённом TOTP. На логине доступны оба метода.
+
+## Конфиг
+
+| Env | Default |
+|---|---|
+| `KEEPPAM_WEBAUTHN_RP_ID` | host из `KEEPPAM_CORS_ORIGIN` (`localhost`) |
+| `KEEPPAM_WEBAUTHN_ORIGINS` | `KEEPPAM_CORS_ORIGIN` |
+| `KEEPPAM_WEBAUTHN_RP_NAME` | `KeepPAM` |
+
+RP ID и Origin должны совпадать с URL UI (для стенда: `localhost` + `http://localhost:5173`).
+
+## UI
+
+- Setup: выбрать TOTP или Passkey
+- Login MFA: TOTP и/или «Ключ безопасности»
+- User edit: список passkeys
+
+## Вне scope
+
+- Discoverable login без username
+- Attestation policy / MDS
+- WebAuthn для SSH gateway
+- Recovery codes

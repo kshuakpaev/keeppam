@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, hasPerm, type Asset } from "../api";
 import { useAuth } from "../auth";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
 const TYPES = ["host", "db", "k8s", "api"];
 
 export function AssetsPage() {
@@ -101,7 +101,18 @@ export function AssetsPage() {
           <label>Тип</label>
           <select
             value={form.asset_type}
-            onChange={(e) => setForm({ ...form, asset_type: e.target.value })}
+            onChange={(e) => {
+              const asset_type = e.target.value;
+              if (asset_type === "k8s") {
+                setForm({ ...form, asset_type, protocol: "kubectl", port: 6443 });
+              } else if (asset_type === "db") {
+                setForm({ ...form, asset_type, protocol: "postgres", port: 5432, database_name: form.database_name || "postgres" });
+              } else if (asset_type === "api") {
+                setForm({ ...form, asset_type, protocol: "https", port: 443 });
+              } else {
+                setForm({ ...form, asset_type });
+              }
+            }}
           >
             {TYPES.map((t) => (
               <option key={t} value={t}>
@@ -134,6 +145,7 @@ export function AssetsPage() {
                     https: 443,
                     postgres: 5432,
                     mysql: 3306,
+                    kubectl: 6443,
                   };
                   setForm({
                     ...form,

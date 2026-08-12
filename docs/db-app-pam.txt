@@ -13,8 +13,9 @@
 - Asset account — vault-логин (ротация уже есть).
 - Session `postgres|mysql` — проксированная DB-сессия (Web SQL + native wire).
 - Asset `api`/`https` — приложение.
+- Asset `k8s` + protocol `kubectl` — кластер; lease kubeconfig/SA token (см. `docs/k8s-pam.txt`).
 - `app_integrations` — OIDC / vault_password / header_inject + recording_mode.
-- `credential_leases` — кратковременная выдача секрета приложения.
+- `credential_leases` — кратковременная выдача секрета приложения / kubeconfig.
 - Session `https` — Phase B записанный proxy session (recording_mode=full).
 
 ## Database PAM

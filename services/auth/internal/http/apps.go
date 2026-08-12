@@ -59,6 +59,7 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AccountID string `json:"account_id"`
 		TicketID  string `json:"ticket_id"`
+		Reason    string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -79,7 +80,7 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, clientIP(r), r.UserAgent())
+	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, body.Reason, clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return

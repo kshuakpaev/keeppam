@@ -329,6 +329,11 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 	if in.AuthMethod == "" {
 		in.AuthMethod = "password"
 	}
+	switch in.AuthMethod {
+	case "password", "ssh_key", "kubeconfig", "sa_token":
+	default:
+		return Account{}, fmt.Errorf("invalid auth_method")
+	}
 	var secretEnc []byte
 	if in.Secret != "" {
 		enc, err := s.env.Encrypt([]byte(in.Secret))
@@ -702,6 +707,8 @@ func defaultPort(protocol string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "kubectl":
+		return 6443
 	default:
 		return 22
 	}

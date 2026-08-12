@@ -190,6 +190,7 @@ func (s *Service) ResetMFA(ctx context.Context, actorID, id uuid.UUID, ip, ua st
 	if err != nil {
 		return err
 	}
+	_ = s.db.DeleteWebAuthnCredentialsByUser(ctx, id)
 	return s.audit.Record(ctx, &actorID, "user.mfa.reset", "user", id.String(), ip, ua, nil)
 }
 

@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, hasPerm, type AccessBinding, type AppIntegration, type Asset, type AssetAccount, type CommandPolicyPack, type Role, type SQLPolicyPack, type User } from "../api";
+import { api, hasPerm, type AccessBinding, type AppIntegration, type AppLease, type Asset, type AssetAccount, type CommandPolicyPack, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
 import { kindForProtocol, useSessionTabs } from "../sessionTabs";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
 const TYPES = ["host", "db", "k8s", "api"];
 const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 
@@ -23,6 +23,7 @@ export function AssetEditPage() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [k8sLease, setK8sLease] = useState<AppLease | null>(null);
   const [rotating, setRotating] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
@@ -208,6 +209,49 @@ export function AssetEditPage() {
       setConnecting(null);
     }
   }
+
+  async function onK8sAccess(acc: AssetAccount) {
+    if (!id || !asset) return;
+    setError("");
+    setMsg("");
+    setConnecting(acc.id);
+    try {
+      const lease = await api.requestK8sAccess(id, {
+        account_id: acc.id,
+        ticket_id: connectTicket.trim() || undefined,
+        reason: connectReason.trim() || undefined,
+      });
+      setK8sLease(lease);
+      setMsg(`K8s lease до ${new Date(lease.expires_at).toLocaleString()}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка K8s access");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  function downloadK8sSecret(lease: AppLease) {
+    const text = lease.secret || "";
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const ext = lease.auth_method === "sa_token" ? "token" : "kubeconfig";
+    a.download = `keeppam-${lease.username || "k8s"}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function onConsumeK8sLease() {
+    if (!k8sLease) return;
+    try {
+      await api.consumeK8sLease(k8sLease.id);
+      setMsg("Lease помечен как consumed");
+      setK8sLease(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка consume");
+    }
+  }
+
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -983,7 +1027,8 @@ export function AssetEditPage() {
                         asset.protocol === "vnc" ||
                         asset.protocol === "postgres" ||
                         asset.protocol === "mysql" ||
-                        asset.protocol === "https") &&
+                        asset.protocol === "https" ||
+                        asset.protocol === "kubectl") &&
                       asset.status === "active" &&
                       acc.status === "active" &&
                       (acc.has_secret ||
@@ -997,6 +1042,15 @@ export function AssetEditPage() {
                               onClick={() => void onAppAccess(acc)}
                             >
                               {connecting === acc.id ? "…" : "Получить доступ"}
+                            </button>
+                          ) : asset.protocol === "kubectl" ? (
+                            <button
+                              className="btn"
+                              type="button"
+                              disabled={connecting === acc.id}
+                              onClick={() => void onK8sAccess(acc)}
+                            >
+                              {connecting === acc.id ? "…" : "Получить kubeconfig"}
                             </button>
                           ) : (
                             <button
@@ -1092,7 +1146,7 @@ export function AssetEditPage() {
             {(asset.accounts || []).length === 0 && (
               <tr>
                 <td colSpan={6} className="muted">
-                  Нет учёток — добавьте ниже (для RDP/VNC нужен пароль).
+                  Нет учёток — добавьте ниже (для RDP/VNC нужен пароль; для k8s — kubeconfig/sa_token).
                 </td>
               </tr>
             )}
@@ -1116,14 +1170,35 @@ export function AssetEditPage() {
           >
             <option value="password">password</option>
             <option value="ssh_key">ssh_key</option>
+            <option value="kubeconfig">kubeconfig</option>
+            <option value="sa_token">sa_token</option>
           </select>
-          <label>{accForm.auth_method === "ssh_key" ? "Приватный ключ" : "Пароль"}</label>
-          <input
-            type={accForm.auth_method === "ssh_key" ? "text" : "password"}
-            value={accForm.secret}
-            onChange={(e) => setAccForm({ ...accForm, secret: e.target.value })}
-            autoComplete="off"
-          />
+          <label>
+            {accForm.auth_method === "ssh_key"
+              ? "Приватный ключ"
+              : accForm.auth_method === "kubeconfig"
+                ? "Kubeconfig YAML"
+                : accForm.auth_method === "sa_token"
+                  ? "ServiceAccount token"
+                  : "Пароль"}
+          </label>
+          {accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token" ? (
+            <textarea
+              rows={8}
+              value={accForm.secret}
+              onChange={(e) => setAccForm({ ...accForm, secret: e.target.value })}
+              placeholder={accForm.auth_method === "kubeconfig" ? "apiVersion: v1\nkind: Config\n..." : "eyJhbGciOi..."}
+              autoComplete="off"
+              style={{ fontFamily: "var(--mono)", width: "100%" }}
+            />
+          ) : (
+            <input
+              type={accForm.auth_method === "ssh_key" ? "text" : "password"}
+              value={accForm.secret}
+              onChange={(e) => setAccForm({ ...accForm, secret: e.target.value })}
+              autoComplete="off"
+            />
+          )}
           <label>Описание</label>
           <input
             value={accForm.description}
@@ -1133,6 +1208,45 @@ export function AssetEditPage() {
             Добавить
           </button>
         </form>
+      )}
+
+      {k8sLease && (
+        <div className="card" style={{ maxWidth: 720, marginBottom: "1.25rem" }}>
+          <h2>K8s credential lease</h2>
+          <p className="muted">
+            {k8sLease.username} · {k8sLease.auth_method || "secret"} · API{" "}
+            <span className="mono">
+              {k8sLease.cluster_address}
+              {k8sLease.cluster_port ? `:${k8sLease.cluster_port}` : ""}
+            </span>{" "}
+            · до {new Date(k8sLease.expires_at).toLocaleString()}
+          </p>
+          <p className="muted">Секрет показывается один раз. Аудит не сохраняет тело.</p>
+          <textarea
+            readOnly
+            rows={12}
+            value={k8sLease.secret || ""}
+            style={{ fontFamily: "var(--mono)", width: "100%", fontSize: "0.85rem" }}
+          />
+          <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+            <button className="btn" type="button" onClick={() => downloadK8sSecret(k8sLease)}>
+              Скачать
+            </button>
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(k8sLease.secret || "")}
+            >
+              Copy
+            </button>
+            <button className="btn secondary" type="button" onClick={() => void onConsumeK8sLease()}>
+              Consume
+            </button>
+            <button className="btn secondary" type="button" onClick={() => setK8sLease(null)}>
+              Закрыть
+            </button>
+          </div>
+        </div>
       )}
 
       {canRequest && (

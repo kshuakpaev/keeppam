@@ -264,6 +264,9 @@ func (s *Service) VerifyMFA(ctx context.Context, challengeToken, code, ip, ua st
 	if err != nil {
 		return LoginResult{}, err
 	}
+	if len(u.MFASecretEnc) == 0 {
+		return LoginResult{}, fmt.Errorf("totp not configured")
+	}
 	secret, err := s.env.Decrypt(u.MFASecretEnc)
 	if err != nil {
 		return LoginResult{}, err
@@ -281,7 +284,7 @@ func (s *Service) VerifyMFA(ctx context.Context, challengeToken, code, ip, ua st
 	u.LastLoginAt = &now
 	u.UpdatedAt = now
 	u, _ = s.db.UpdateUser(ctx, u, nil)
-	_ = s.audit.Record(ctx, &u.ID, "user.login.success", "user", u.ID.String(), ip, ua, map[string]any{"mfa": true})
+	_ = s.audit.Record(ctx, &u.ID, "user.login.success", "user", u.ID.String(), ip, ua, map[string]any{"mfa": true, "method": "totp"})
 	status := "ok"
 	if u.MustChangePassword {
 		status = "must_setup"

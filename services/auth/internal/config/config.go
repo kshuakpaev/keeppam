@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,6 +43,9 @@ type Config struct {
 	TLSKeyFile             string
 	TLSClientCAFile        string
 	TLSRequireClientCert   bool
+	WebAuthnRPID           string
+	WebAuthnRPDisplayName  string
+	WebAuthnOrigins        []string
 }
 
 func Load() (Config, error) {
@@ -78,7 +82,10 @@ func Load() (Config, error) {
 		TLSKeyFile:             env("KEEPPAM_TLS_KEY_FILE", ""),
 		TLSClientCAFile:        env("KEEPPAM_TLS_CLIENT_CA_FILE", ""),
 		TLSRequireClientCert:   boolEnv("KEEPPAM_TLS_REQUIRE_CLIENT_CERT", false),
+		WebAuthnRPDisplayName:  env("KEEPPAM_WEBAUTHN_RP_NAME", "KeepPAM"),
 	}
+	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
+	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
 	switch cfg.Mode {
 	case "all", "api", "ssh":
 	default:
@@ -172,4 +179,24 @@ func durationEnv(k string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func hostFromURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return "localhost"
+	}
+	return u.Hostname()
 }

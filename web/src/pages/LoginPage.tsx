@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { webauthnAssert, webauthnSupported } from "../webauthn";
 
 export function LoginPage() {
   const { user, setUser, loading } = useAuth();
@@ -72,6 +73,24 @@ export function LoginPage() {
     }
   }
 
+  async function onPasskey() {
+    if (!challenge) return;
+    setBusy(true);
+    setError("");
+    try {
+      const options = await api.webauthnLoginBegin(challenge);
+      const credential = await webauthnAssert(options);
+      const res = await api.webauthnLoginFinish(challenge, credential);
+      if (res.user) setUser(res.user);
+      else setUser(await api.me());
+      nav(res.status === "must_setup" ? "/setup" : "/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка WebAuthn");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const showPasswordForm =
     mode === "local" || mode === "ldap" || !!challenge || (mode === "oidc" && !oidcReady);
 
@@ -122,20 +141,32 @@ export function LoginPage() {
           </form>
         )}
         {challenge && (
-          <form onSubmit={onMfa}>
-            <label htmlFor="code">Код TOTP</label>
-            <input
-              id="code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              required
-            />
-            <button className="btn" type="submit" disabled={busy}>
-              Подтвердить
-            </button>
-          </form>
+          <div>
+            <form onSubmit={onMfa}>
+              <label htmlFor="code">Код TOTP</label>
+              <input
+                id="code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+              />
+              <button className="btn" type="submit" disabled={busy || !code.trim()}>
+                Подтвердить TOTP
+              </button>
+            </form>
+            {webauthnSupported() && (
+              <button
+                className="btn"
+                type="button"
+                style={{ marginTop: "0.75rem" }}
+                disabled={busy}
+                onClick={() => void onPasskey()}
+              >
+                Ключ безопасности / Passkey
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
