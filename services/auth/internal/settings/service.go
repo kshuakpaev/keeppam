@@ -2,7 +2,13 @@ package settings
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -18,29 +24,45 @@ type AuthSettings struct {
 	Mode          string `json:"mode"`
 	PublicBaseURL string `json:"public_base_url"`
 
-	OIDCIssuer         string `json:"oidc_issuer"`
-	OIDCClientID       string `json:"oidc_client_id"`
-	OIDCClientSecret   string `json:"oidc_client_secret,omitempty"` // write-only; never returned filled from DB
-	HasOIDCSecret      bool   `json:"has_oidc_secret"`
-	OIDCScopes         string `json:"oidc_scopes"`
-	OIDCAutoProvision  bool   `json:"oidc_auto_provision"`
-	OIDCSkipMFA        bool   `json:"oidc_skip_mfa"`
-	OIDCDefaultRole    string `json:"oidc_default_role"`
+	OIDCIssuer        string `json:"oidc_issuer"`
+	OIDCClientID      string `json:"oidc_client_id"`
+	OIDCClientSecret  string `json:"oidc_client_secret,omitempty"` // write-only; never returned filled from DB
+	HasOIDCSecret     bool   `json:"has_oidc_secret"`
+	OIDCScopes        string `json:"oidc_scopes"`
+	OIDCAutoProvision bool   `json:"oidc_auto_provision"`
+	OIDCSkipMFA       bool   `json:"oidc_skip_mfa"`
+	OIDCDefaultRole   string `json:"oidc_default_role"`
 
-	LDAPURL              string `json:"ldap_url"`
-	LDAPBindDN           string `json:"ldap_bind_dn"`
-	LDAPBindPassword     string `json:"ldap_bind_password,omitempty"`
-	HasLDAPBindPassword  bool   `json:"has_ldap_bind_password"`
-	LDAPUserBaseDN       string `json:"ldap_user_base_dn"`
-	LDAPUserFilter       string `json:"ldap_user_filter"`
-	LDAPAttrUsername     string `json:"ldap_attr_username"`
-	LDAPAttrEmail        string `json:"ldap_attr_email"`
-	LDAPAttrDisplayName  string `json:"ldap_attr_display_name"`
-	LDAPStartTLS         bool   `json:"ldap_start_tls"`
-	LDAPInsecureTLS      bool   `json:"ldap_insecure_tls"`
-	LDAPAutoProvision    bool   `json:"ldap_auto_provision"`
-	LDAPSkipMFA          bool   `json:"ldap_skip_mfa"`
-	LDAPDefaultRole      string `json:"ldap_default_role"`
+	LDAPURL             string `json:"ldap_url"`
+	LDAPBindDN          string `json:"ldap_bind_dn"`
+	LDAPBindPassword    string `json:"ldap_bind_password,omitempty"`
+	HasLDAPBindPassword bool   `json:"has_ldap_bind_password"`
+	LDAPUserBaseDN      string `json:"ldap_user_base_dn"`
+	LDAPUserFilter      string `json:"ldap_user_filter"`
+	LDAPAttrUsername    string `json:"ldap_attr_username"`
+	LDAPAttrEmail       string `json:"ldap_attr_email"`
+	LDAPAttrDisplayName string `json:"ldap_attr_display_name"`
+	LDAPStartTLS        bool   `json:"ldap_start_tls"`
+	LDAPInsecureTLS     bool   `json:"ldap_insecure_tls"`
+	LDAPAutoProvision   bool   `json:"ldap_auto_provision"`
+	LDAPSkipMFA         bool   `json:"ldap_skip_mfa"`
+	LDAPDefaultRole     string `json:"ldap_default_role"`
+
+	SAMLIdPMetadataURL  string `json:"saml_idp_metadata_url"`
+	SAMLIdPEntityID     string `json:"saml_idp_entity_id"`
+	SAMLIdPSSOURL       string `json:"saml_idp_sso_url"`
+	SAMLIdPCertPEM      string `json:"saml_idp_cert_pem"`
+	SAMLSPEntityID      string `json:"saml_sp_entity_id"`
+	HasSAMLSPKey        bool   `json:"has_saml_sp_key"`
+	RotateSAMLSPKey     bool   `json:"rotate_saml_sp_key,omitempty"`
+	SAMLAttrUsername    string `json:"saml_attr_username"`
+	SAMLAttrEmail       string `json:"saml_attr_email"`
+	SAMLAttrDisplayName string `json:"saml_attr_display_name"`
+	SAMLAutoProvision   bool   `json:"saml_auto_provision"`
+	SAMLSkipMFA         bool   `json:"saml_skip_mfa"`
+	SAMLDefaultRole     string `json:"saml_default_role"`
+	SAMLACSURL          string `json:"saml_acs_url,omitempty"`
+	SAMLMetadataURL     string `json:"saml_metadata_url,omitempty"`
 
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
@@ -49,6 +71,7 @@ type PublicAuthMethods struct {
 	Mode      string `json:"mode"`
 	OIDCReady bool   `json:"oidc_ready"`
 	LDAPReady bool   `json:"ldap_ready"`
+	SAMLReady bool   `json:"saml_ready"`
 }
 
 type Service struct {
@@ -63,7 +86,7 @@ func New(db *store.DB, aud *audit.Service, env *crypto.Envelope) *Service {
 
 func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error) {
 	var out AuthSettings
-	var oidcSec, ldapSec []byte
+	var oidcSec, ldapSec, samlKey []byte
 	var updatedAt time.Time
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT mode, public_base_url,
@@ -72,6 +95,10 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			ldap_url, ldap_bind_dn, ldap_bind_password_enc, ldap_user_base_dn, ldap_user_filter,
 			ldap_attr_username, ldap_attr_email, ldap_attr_display_name,
 			ldap_start_tls, ldap_insecure_tls, ldap_auto_provision, ldap_skip_mfa, ldap_default_role,
+			saml_idp_metadata_url, saml_idp_entity_id, saml_idp_sso_url, saml_idp_cert_pem,
+			saml_sp_entity_id, saml_sp_key_enc,
+			saml_attr_username, saml_attr_email, saml_attr_display_name,
+			saml_auto_provision, saml_skip_mfa, saml_default_role,
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -80,6 +107,10 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.LDAPURL, &out.LDAPBindDN, &ldapSec, &out.LDAPUserBaseDN, &out.LDAPUserFilter,
 		&out.LDAPAttrUsername, &out.LDAPAttrEmail, &out.LDAPAttrDisplayName,
 		&out.LDAPStartTLS, &out.LDAPInsecureTLS, &out.LDAPAutoProvision, &out.LDAPSkipMFA, &out.LDAPDefaultRole,
+		&out.SAMLIdPMetadataURL, &out.SAMLIdPEntityID, &out.SAMLIdPSSOURL, &out.SAMLIdPCertPEM,
+		&out.SAMLSPEntityID, &samlKey,
+		&out.SAMLAttrUsername, &out.SAMLAttrEmail, &out.SAMLAttrDisplayName,
+		&out.SAMLAutoProvision, &out.SAMLSkipMFA, &out.SAMLDefaultRole,
 		&updatedAt,
 	)
 	if err != nil {
@@ -87,8 +118,27 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 	}
 	out.HasOIDCSecret = len(oidcSec) > 0
 	out.HasLDAPBindPassword = len(ldapSec) > 0
+	out.HasSAMLSPKey = len(samlKey) > 0
 	out.UpdatedAt = &updatedAt
+	s.fillSAMLDerived(&out)
 	return out, oidcSec, ldapSec, nil
+}
+
+func (s *Service) GetSAMLSPKeyEnc(ctx context.Context) ([]byte, error) {
+	var enc []byte
+	err := s.db.Pool.QueryRow(ctx, `SELECT saml_sp_key_enc FROM auth_settings WHERE id=1`).Scan(&enc)
+	return enc, err
+}
+
+func (s *Service) fillSAMLDerived(out *AuthSettings) {
+	base := strings.TrimRight(out.PublicBaseURL, "/")
+	if base != "" {
+		out.SAMLACSURL = base + "/api/v1/auth/saml/acs"
+		out.SAMLMetadataURL = base + "/api/v1/auth/saml/metadata"
+		if out.SAMLSPEntityID == "" {
+			out.SAMLSPEntityID = out.SAMLMetadataURL
+		}
+	}
 }
 
 func (s *Service) PublicMethods(ctx context.Context) (PublicAuthMethods, error) {
@@ -96,21 +146,37 @@ func (s *Service) PublicMethods(ctx context.Context) (PublicAuthMethods, error) 
 	if err != nil {
 		return PublicAuthMethods{}, err
 	}
-	ldapReady := cfg.Mode == "ldap" && cfg.LDAPURL != "" && cfg.LDAPUserBaseDN != ""
 	_ = ldapSec
 	return PublicAuthMethods{
 		Mode:      cfg.Mode,
 		OIDCReady: cfg.Mode == "oidc" && cfg.OIDCIssuer != "" && cfg.OIDCClientID != "" && len(oidcSec) > 0,
-		LDAPReady: ldapReady,
+		LDAPReady: cfg.Mode == "ldap" && cfg.LDAPURL != "" && cfg.LDAPUserBaseDN != "",
+		SAMLReady: cfg.Mode == "saml" && SAMLConfigured(cfg),
 	}, nil
+}
+
+func SAMLConfigured(cfg AuthSettings) bool {
+	if cfg.PublicBaseURL == "" || !cfg.HasSAMLSPKey {
+		return false
+	}
+	if strings.TrimSpace(cfg.SAMLIdPMetadataURL) != "" {
+		return true
+	}
+	return strings.TrimSpace(cfg.SAMLIdPEntityID) != "" &&
+		strings.TrimSpace(cfg.SAMLIdPSSOURL) != "" &&
+		strings.TrimSpace(cfg.SAMLIdPCertPEM) != ""
 }
 
 func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings, ip, ua string) (AuthSettings, error) {
 	mode := strings.TrimSpace(in.Mode)
-	if mode != "local" && mode != "oidc" && mode != "ldap" {
-		return AuthSettings{}, fmt.Errorf("mode must be local|oidc|ldap")
+	if mode != "local" && mode != "oidc" && mode != "ldap" && mode != "saml" {
+		return AuthSettings{}, fmt.Errorf("mode must be local|oidc|ldap|saml")
 	}
 	cur, oidcSec, ldapSec, err := s.Get(ctx)
+	if err != nil {
+		return AuthSettings{}, err
+	}
+	samlKeyEnc, err := s.GetSAMLSPKeyEnc(ctx)
 	if err != nil {
 		return AuthSettings{}, err
 	}
@@ -149,9 +215,37 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 	if in.LDAPDefaultRole == "" {
 		in.LDAPDefaultRole = "operator"
 	}
+	if in.SAMLAttrUsername == "" {
+		in.SAMLAttrUsername = "uid"
+	}
+	if in.SAMLAttrEmail == "" {
+		in.SAMLAttrEmail = "email"
+	}
+	if in.SAMLAttrDisplayName == "" {
+		in.SAMLAttrDisplayName = "displayName"
+	}
+	if in.SAMLDefaultRole == "" {
+		in.SAMLDefaultRole = "operator"
+	}
 	publicURL := strings.TrimRight(strings.TrimSpace(in.PublicBaseURL), "/")
 	if publicURL == "" {
 		publicURL = cur.PublicBaseURL
+	}
+	spEntity := strings.TrimSpace(in.SAMLSPEntityID)
+	if spEntity == "" && publicURL != "" {
+		spEntity = publicURL + "/api/v1/auth/saml/metadata"
+	}
+
+	if mode == "saml" && (len(samlKeyEnc) == 0 || in.RotateSAMLSPKey) {
+		pemBlob, err := generateSAMLSPKeyPEM(spEntity)
+		if err != nil {
+			return AuthSettings{}, err
+		}
+		enc, err := s.env.Encrypt(pemBlob)
+		if err != nil {
+			return AuthSettings{}, err
+		}
+		samlKeyEnc = enc
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
@@ -162,7 +256,11 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			ldap_url=$11, ldap_bind_dn=$12, ldap_bind_password_enc=$13, ldap_user_base_dn=$14, ldap_user_filter=$15,
 			ldap_attr_username=$16, ldap_attr_email=$17, ldap_attr_display_name=$18,
 			ldap_start_tls=$19, ldap_insecure_tls=$20, ldap_auto_provision=$21, ldap_skip_mfa=$22, ldap_default_role=$23,
-			updated_at=NOW(), updated_by=$24
+			saml_idp_metadata_url=$24, saml_idp_entity_id=$25, saml_idp_sso_url=$26, saml_idp_cert_pem=$27,
+			saml_sp_entity_id=$28, saml_sp_key_enc=$29,
+			saml_attr_username=$30, saml_attr_email=$31, saml_attr_display_name=$32,
+			saml_auto_provision=$33, saml_skip_mfa=$34, saml_default_role=$35,
+			updated_at=NOW(), updated_by=$36
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -170,6 +268,10 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		strings.TrimSpace(in.LDAPURL), strings.TrimSpace(in.LDAPBindDN), ldapSec, strings.TrimSpace(in.LDAPUserBaseDN), strings.TrimSpace(in.LDAPUserFilter),
 		strings.TrimSpace(in.LDAPAttrUsername), strings.TrimSpace(in.LDAPAttrEmail), strings.TrimSpace(in.LDAPAttrDisplayName),
 		in.LDAPStartTLS, in.LDAPInsecureTLS, in.LDAPAutoProvision, in.LDAPSkipMFA, strings.TrimSpace(in.LDAPDefaultRole),
+		strings.TrimSpace(in.SAMLIdPMetadataURL), strings.TrimSpace(in.SAMLIdPEntityID), strings.TrimSpace(in.SAMLIdPSSOURL), strings.TrimSpace(in.SAMLIdPCertPEM),
+		spEntity, samlKeyEnc,
+		strings.TrimSpace(in.SAMLAttrUsername), strings.TrimSpace(in.SAMLAttrEmail), strings.TrimSpace(in.SAMLAttrDisplayName),
+		in.SAMLAutoProvision, in.SAMLSkipMFA, strings.TrimSpace(in.SAMLDefaultRole),
 		actorID,
 	)
 	if err != nil {
@@ -189,6 +291,36 @@ func (s *Service) DecryptSecret(enc []byte) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+func generateSAMLSPKeyPEM(commonName string) ([]byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	if commonName == "" {
+		commonName = "keeppam-saml-sp"
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: commonName, Organization: []string{"KeepPAM"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	var out strings.Builder
+	_ = pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	_ = pem.Encode(&out, &pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
+	return []byte(out.String()), nil
 }
 
 func IsNotFound(err error) bool { return err == pgx.ErrNoRows }

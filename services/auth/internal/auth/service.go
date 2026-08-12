@@ -83,7 +83,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 	}
 	_ = oidcSec
 	switch authCfg.Mode {
-	case "oidc":
+	case "oidc", "saml":
 		return LoginResult{}, fmt.Errorf("use SSO login")
 	case "ldap":
 		return s.loginLDAP(ctx, authCfg, ldapSec, username, password, ip, ua)
@@ -182,6 +182,24 @@ func (s *Service) LoginOIDC(ctx context.Context, claims settings.OIDCClaims, ip,
 		return LoginResult{}, fmt.Errorf("account disabled")
 	}
 	return s.finishLogin(ctx, u, ip, ua, authCfg.OIDCSkipMFA, "oidc")
+}
+
+func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip, ua string) (LoginResult, error) {
+	authCfg, _, _, err := s.settings.Get(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if authCfg.Mode != "saml" {
+		return LoginResult{}, fmt.Errorf("saml is not enabled")
+	}
+	u, err := s.findOrProvisionExternal(ctx, claims.Username, claims.Email, claims.Name, "saml", authCfg.SAMLAutoProvision, authCfg.SAMLDefaultRole)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if u.Status == "disabled" {
+		return LoginResult{}, fmt.Errorf("account disabled")
+	}
+	return s.finishLogin(ctx, u, ip, ua, authCfg.SAMLSkipMFA, "saml")
 }
 
 func (s *Service) findOrProvisionExternal(ctx context.Context, username, email, displayName, source string, autoProvision bool, defaultRole string) (store.User, error) {

@@ -230,3 +230,79 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, dest, http.StatusFound)
 }
+
+func (s *Server) handleSAMLMetadata(w http.ResponseWriter, r *http.Request) {
+	cfg, _, _, err := s.settings.Get(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !cfg.HasSAMLSPKey {
+		writeErr(w, http.StatusBadRequest, "saml sp key not generated; save mode=saml in settings first")
+		return
+	}
+	xmlBytes, err := s.settings.SAMLMetadataXML(r.Context(), cfg)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/samlmetadata+xml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(xmlBytes)
+}
+
+func (s *Server) handleSAMLStart(w http.ResponseWriter, r *http.Request) {
+	cfg, _, _, err := s.settings.Get(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Mode != "saml" {
+		writeErr(w, http.StatusBadRequest, "saml is not enabled")
+		return
+	}
+	u, err := s.settings.SAMLAuthRedirect(r.Context(), s.sessions.Redis(), cfg)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
+func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
+	cfg, _, _, err := s.settings.Get(r.Context())
+	base := cfg.PublicBaseURL
+	if base == "" {
+		base = s.cfg.CORSOrigin
+	}
+	if err != nil {
+		http.Redirect(w, r, settings.SAMLErrorRedirect(base, "settings error"), http.StatusFound)
+		return
+	}
+	if cfg.Mode != "saml" {
+		http.Redirect(w, r, settings.SAMLErrorRedirect(base, "saml is not enabled"), http.StatusFound)
+		return
+	}
+	claims, err := s.settings.SAMLParseACS(r.Context(), s.sessions.Redis(), cfg, r)
+	if err != nil {
+		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
+		return
+	}
+	res, err := s.auth.LoginSAML(r.Context(), claims, clientIP(r), r.UserAgent())
+	if err != nil {
+		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
+		return
+	}
+	if res.SessionToken != "" {
+		_ = s.setSessionCookies(w, res.SessionToken)
+	}
+	if res.Status == "mfa_required" && res.ChallengeToken != "" {
+		http.Redirect(w, r, base+"/login?mfa="+res.ChallengeToken, http.StatusFound)
+		return
+	}
+	dest := settings.SAMLSuccessRedirect(base)
+	if res.Status == "must_setup" {
+		dest = base + "/setup"
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
+}

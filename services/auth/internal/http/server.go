@@ -106,6 +106,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Get("/methods", s.handleAuthMethods)
 				r.Get("/oidc/start", s.handleOIDCStart)
 				r.Get("/oidc/callback", s.handleOIDCCallback)
+				r.Get("/saml/metadata", s.handleSAMLMetadata)
+				r.Get("/saml/start", s.handleSAMLStart)
+				r.Post("/saml/acs", s.handleSAMLACS)
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireSession)
 					r.Use(s.requireCSRF)

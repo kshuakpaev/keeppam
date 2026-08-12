@@ -1,0 +1,30 @@
+# KeepPAM: SAML 2.0 SSO
+
+## Что есть
+
+SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисключающий: `local|oidc|ldap|saml`).
+
+1. Миграция `031_saml_settings.sql` — поля IdP/SP + encrypted SP signing key.
+2. `GET /api/v1/auth/saml/metadata` — SP metadata XML.
+3. `GET /api/v1/auth/saml/start` — AuthnRequest → redirect на IdP.
+4. `POST /api/v1/auth/saml/acs` — assertion → provision/login → cookies / MFA / setup.
+5. Config UI: metadata URL или ручные entity/SSO/cert, attr mapping, auto-provision, skip MFA.
+6. Login: кнопка «Войти через SAML SSO» при `saml_ready`.
+
+При первом сохранении `mode=saml` генерируется RSA SP key (можно rotate).
+
+## Настройка
+
+1. Public Base URL = URL UI (стенд: `http://localhost:5173`).
+2. В IdP зарегистрировать SP:
+   - Entity ID / metadata: `{base}/api/v1/auth/saml/metadata`
+   - ACS: `{base}/api/v1/auth/saml/acs` (HTTP-POST)
+3. В KeepPAM: IdP Metadata URL **или** Entity ID + SSO URL + signing cert PEM.
+4. Сохранить → открыть Login.
+
+## Вне scope
+
+- SLO / IdP-initiated
+- Group→role mapping
+- Assertion encryption policy UI
+- Несколько IdP одновременно

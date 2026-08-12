@@ -16,6 +16,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("local");
   const [oidcReady, setOidcReady] = useState(false);
+  const [samlReady, setSamlReady] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -23,6 +24,7 @@ export function LoginPage() {
         const m = await api.authMethods();
         setMode(m.mode);
         setOidcReady(m.oidc_ready);
+        setSamlReady(!!m.saml_ready);
       } catch {
         /* default local */
       }
@@ -92,7 +94,11 @@ export function LoginPage() {
   }
 
   const showPasswordForm =
-    mode === "local" || mode === "ldap" || !!challenge || (mode === "oidc" && !oidcReady);
+    mode === "local" ||
+    mode === "ldap" ||
+    !!challenge ||
+    (mode === "oidc" && !oidcReady) ||
+    (mode === "saml" && !samlReady);
 
   return (
     <div className="auth-page">
@@ -101,6 +107,7 @@ export function LoginPage() {
         <h1>{challenge ? "Подтверждение MFA" : "Вход"}</h1>
         <p className="muted">
           {mode === "oidc" && "SSO (OIDC)"}
+          {mode === "saml" && "SSO (SAML 2.0)"}
           {mode === "ldap" && "LDAP / Active Directory"}
           {mode === "local" && "Контроль привилегированного доступа"}
         </p>
@@ -113,6 +120,17 @@ export function LoginPage() {
               </a>
             ) : (
               <p className="error">OIDC включён, но не настроен (issuer / client / secret)</p>
+            )}
+          </div>
+        )}
+        {!challenge && mode === "saml" && (
+          <div style={{ marginBottom: "1rem" }}>
+            {samlReady ? (
+              <a className="btn" href="/api/v1/auth/saml/start" style={{ display: "inline-block" }}>
+                Войти через SAML SSO
+              </a>
+            ) : (
+              <p className="error">SAML включён, но не настроен (IdP metadata / cert + SP key)</p>
             )}
           </div>
         )}

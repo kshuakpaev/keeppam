@@ -33,6 +33,18 @@ const empty: AuthSettings = {
   ldap_auto_provision: true,
   ldap_skip_mfa: false,
   ldap_default_role: "operator",
+  saml_idp_metadata_url: "",
+  saml_idp_entity_id: "",
+  saml_idp_sso_url: "",
+  saml_idp_cert_pem: "",
+  saml_sp_entity_id: "",
+  has_saml_sp_key: false,
+  saml_attr_username: "uid",
+  saml_attr_email: "email",
+  saml_attr_display_name: "displayName",
+  saml_auto_provision: true,
+  saml_skip_mfa: true,
+  saml_default_role: "operator",
 };
 
 const emptySSH: SSHSettings = {
@@ -129,8 +141,11 @@ export function ConfigPage() {
       if (ldapPass.trim()) body.ldap_bind_password = ldapPass.trim();
       delete body.has_oidc_secret;
       delete body.has_ldap_bind_password;
+      delete body.has_saml_sp_key;
+      delete body.saml_acs_url;
+      delete body.saml_metadata_url;
       const saved = await api.putAuthSettings(body);
-      setForm({ ...empty, ...saved });
+      setForm({ ...empty, ...saved, rotate_saml_sp_key: false });
       setSecret("");
       setLdapPass("");
       setMsg("Авторизация сохранена");
@@ -323,17 +338,21 @@ export function ConfigPage() {
         >
           <option value="local">Локальный (логин/пароль + MFA)</option>
           <option value="oidc">OIDC / SSO</option>
+          <option value="saml">SAML 2.0 / SSO</option>
           <option value="ldap">LDAP / Active Directory</option>
         </select>
 
-        <label>Public Base URL (для OIDC redirect)</label>
+        <label>Public Base URL (для SSO redirect / ACS)</label>
         <input
           value={form.public_base_url}
           onChange={(e) => setForm({ ...form, public_base_url: e.target.value })}
           placeholder="http://localhost:5173"
         />
         <p className="muted" style={{ marginTop: 0 }}>
-          Redirect URI: <span className="mono">{form.public_base_url || "…"}/api/v1/auth/oidc/callback</span>
+          OIDC callback:{" "}
+          <span className="mono">{form.public_base_url || "…"}/api/v1/auth/oidc/callback</span>
+          <br />
+          SAML ACS: <span className="mono">{form.public_base_url || "…"}/api/v1/auth/saml/acs</span>
         </p>
 
         {form.mode === "oidc" && (
@@ -385,6 +404,104 @@ export function ConfigPage() {
                 onChange={(e) => setForm({ ...form, oidc_skip_mfa: e.target.checked })}
               />
               Не требовать локальный MFA после SSO
+            </label>
+          </>
+        )}
+
+        {form.mode === "saml" && (
+          <>
+            <h2>SAML 2.0</h2>
+            <p className="muted">
+              SP metadata:{" "}
+              <a className="mono" href="/api/v1/auth/saml/metadata" target="_blank" rel="noreferrer">
+                {form.saml_metadata_url || `${form.public_base_url || "…"}/api/v1/auth/saml/metadata`}
+              </a>
+              <br />
+              ACS URL: <span className="mono">{form.saml_acs_url || `${form.public_base_url || "…"}/api/v1/auth/saml/acs`}</span>
+              <br />
+              SP key: {form.has_saml_sp_key ? "сгенерирован" : "будет создан при сохранении"}
+            </p>
+            <label>IdP Metadata URL (предпочтительно)</label>
+            <input
+              value={form.saml_idp_metadata_url}
+              onChange={(e) => setForm({ ...form, saml_idp_metadata_url: e.target.value })}
+              placeholder="https://idp.example/metadata"
+            />
+            <label>IdP Entity ID (ручной fallback)</label>
+            <input
+              value={form.saml_idp_entity_id}
+              onChange={(e) => setForm({ ...form, saml_idp_entity_id: e.target.value })}
+            />
+            <label>IdP SSO URL</label>
+            <input
+              value={form.saml_idp_sso_url}
+              onChange={(e) => setForm({ ...form, saml_idp_sso_url: e.target.value })}
+              placeholder="https://idp.example/sso"
+            />
+            <label>IdP signing certificate (PEM)</label>
+            <textarea
+              value={form.saml_idp_cert_pem}
+              onChange={(e) => setForm({ ...form, saml_idp_cert_pem: e.target.value })}
+              rows={4}
+              placeholder="-----BEGIN CERTIFICATE-----"
+            />
+            <label>SP Entity ID</label>
+            <input
+              value={form.saml_sp_entity_id}
+              onChange={(e) => setForm({ ...form, saml_sp_entity_id: e.target.value })}
+              placeholder="по умолчанию = metadata URL"
+            />
+            <div className="row" style={{ gap: "0.75rem" }}>
+              <div style={{ flex: 1 }}>
+                <label>Attr username</label>
+                <input
+                  value={form.saml_attr_username}
+                  onChange={(e) => setForm({ ...form, saml_attr_username: e.target.value })}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Attr email</label>
+                <input
+                  value={form.saml_attr_email}
+                  onChange={(e) => setForm({ ...form, saml_attr_email: e.target.value })}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Attr display name</label>
+                <input
+                  value={form.saml_attr_display_name}
+                  onChange={(e) => setForm({ ...form, saml_attr_display_name: e.target.value })}
+                />
+              </div>
+            </div>
+            <label>Роль по умолчанию при auto-provision</label>
+            <input
+              value={form.saml_default_role}
+              onChange={(e) => setForm({ ...form, saml_default_role: e.target.value })}
+            />
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.saml_auto_provision}
+                onChange={(e) => setForm({ ...form, saml_auto_provision: e.target.checked })}
+              />
+              Автосоздание пользователей
+            </label>
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.saml_skip_mfa}
+                onChange={(e) => setForm({ ...form, saml_skip_mfa: e.target.checked })}
+              />
+              Не требовать локальный MFA после SSO
+            </label>
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={!!form.rotate_saml_sp_key}
+                onChange={(e) => setForm({ ...form, rotate_saml_sp_key: e.target.checked })}
+              />
+              Пересоздать SP signing key
             </label>
           </>
         )}

@@ -159,7 +159,7 @@ export type AccessRequest = {
 };
 
 export type AuthSettings = {
-  mode: "local" | "oidc" | "ldap" | string;
+  mode: "local" | "oidc" | "ldap" | "saml" | string;
   public_base_url: string;
   oidc_issuer: string;
   oidc_client_id: string;
@@ -183,6 +183,21 @@ export type AuthSettings = {
   ldap_auto_provision: boolean;
   ldap_skip_mfa: boolean;
   ldap_default_role: string;
+  saml_idp_metadata_url: string;
+  saml_idp_entity_id: string;
+  saml_idp_sso_url: string;
+  saml_idp_cert_pem: string;
+  saml_sp_entity_id: string;
+  has_saml_sp_key: boolean;
+  rotate_saml_sp_key?: boolean;
+  saml_attr_username: string;
+  saml_attr_email: string;
+  saml_attr_display_name: string;
+  saml_auto_provision: boolean;
+  saml_skip_mfa: boolean;
+  saml_default_role: string;
+  saml_acs_url?: string;
+  saml_metadata_url?: string;
   updated_at?: string;
 };
 
@@ -419,7 +434,9 @@ export const api = {
   logout: () => request<{ status: string }>("/api/v1/auth/logout", { method: "POST" }),
   me: () => request<User>("/api/v1/auth/me"),
   authMethods: () =>
-    request<{ mode: string; oidc_ready: boolean; ldap_ready: boolean }>("/api/v1/auth/methods"),
+    request<{ mode: string; oidc_ready: boolean; ldap_ready: boolean; saml_ready: boolean }>(
+      "/api/v1/auth/methods",
+    ),
   getAuthSettings: () => request<AuthSettings>("/api/v1/admin/settings/auth"),
   putAuthSettings: (body: Partial<AuthSettings>) =>
     request<AuthSettings>("/api/v1/admin/settings/auth", {
