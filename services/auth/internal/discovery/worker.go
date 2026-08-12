@@ -27,12 +27,18 @@ func (s *Service) Run(ctx context.Context) {
 		if err != nil {
 			slog.Warn("discovery claim", "err", err)
 		} else if job != nil {
-			slog.Info("discovery job start", "job", job.ID, "cidr", job.CIDR)
-			if err := s.runJob(ctx, *job); err != nil {
-				slog.Warn("discovery job failed", "job", job.ID, "err", err)
+			slog.Info("discovery job start", "job", job.ID, "kind", job.Kind, "cidr", job.CIDR)
+			var runErr error
+			if job.Kind == "accounts" {
+				runErr = s.runAccountsJob(ctx, *job)
+			} else {
+				runErr = s.runJob(ctx, *job)
+			}
+			if runErr != nil {
+				slog.Warn("discovery job failed", "job", job.ID, "err", runErr)
 				_, _ = s.db.Pool.Exec(ctx, `
 					UPDATE discovery_jobs SET status='failed', error=$2, finished_at=NOW() WHERE id=$1`,
-					job.ID, truncateErr(err.Error()))
+					job.ID, truncateErr(runErr.Error()))
 			} else {
 				slog.Info("discovery job done", "job", job.ID)
 			}
@@ -55,14 +61,14 @@ func (s *Service) claimPending(ctx context.Context) (*Job, error) {
 
 	var j Job
 	err = tx.QueryRow(ctx, `
-		SELECT id, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
+		SELECT id, kind, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
 			created_at, started_at, finished_at, created_by
 		FROM discovery_jobs
 		WHERE status='pending'
 		ORDER BY created_at ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`).Scan(
-		&j.ID, &j.CIDR, &j.Ports, &j.Status, &j.TotalHosts, &j.ScannedHosts, &j.OpenPorts, &j.Error,
+		&j.ID, &j.Kind, &j.CIDR, &j.Ports, &j.Status, &j.TotalHosts, &j.ScannedHosts, &j.OpenPorts, &j.Error,
 		&j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CreatedBy)
 	if err != nil {
 		if err == pgx.ErrNoRows {

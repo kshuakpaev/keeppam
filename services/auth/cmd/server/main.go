@@ -26,6 +26,7 @@ import (
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	httpapi "github.com/keeppam/auth/internal/http"
+	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
@@ -109,6 +110,7 @@ func main() {
 	auditSvc := audit.New(db)
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
+	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
 	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
 	usersSvc := users.New(db, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
@@ -121,7 +123,7 @@ func main() {
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
-	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir)
+	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
@@ -174,7 +176,7 @@ func main() {
 
 	var srv *http.Server
 	if runHTTP {
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -259,7 +261,7 @@ func main() {
 	}
 
 	if runSSH {
-		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live)
+		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := gw.ListenAndServe(); err != nil {

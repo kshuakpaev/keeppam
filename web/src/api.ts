@@ -214,10 +214,40 @@ export type SIEMSettings = {
   updated_at?: string;
 };
 
+export type ITSMSettings = {
+  enabled: boolean;
+  provider: "mock" | "generic" | "jira" | "servicenow" | string;
+  base_url: string;
+  auth_header?: string;
+  has_auth_header: boolean;
+  ticket_path_template: string;
+  status_json_path: string;
+  ok_statuses: string[];
+  require_on_request: boolean;
+  require_on_approve: boolean;
+  require_on_connect: boolean;
+  cache_ttl_sec: number;
+  timeout_sec: number;
+  last_error?: string;
+  last_check_at?: string;
+  updated_at?: string;
+};
+
+export type ITSMTicketInfo = {
+  id: string;
+  status: string;
+  ok: boolean;
+  cached?: boolean;
+  title?: string;
+};
+
 export type InfraStatus = {
   data_key_source: string;
   recordings_backend: string;
   recordings_dir: string;
+  object_lock_mode?: string;
+  object_lock_days?: number;
+  worm_recordings?: boolean;
   tls_enabled: boolean;
   mtls: "off" | "optional" | "required" | string;
   s3_endpoint?: string;
@@ -230,6 +260,7 @@ export type InfraStatus = {
 
 export type DiscoveryJob = {
   id: string;
+  kind?: string;
   cidr: string;
   ports: string;
   status: string;
@@ -248,9 +279,20 @@ export type DiscoveryCandidate = {
   address: string;
   port: number;
   protocol: string;
+  username?: string;
+  source_asset_id?: string;
   imported_asset_id?: string;
+  imported_account_id?: string;
+  details?: Record<string, unknown>;
+  privileged?: boolean;
   created_at: string;
   already_known: boolean;
+};
+
+export type DiscoveryImportResult = {
+  kind: "asset" | "account" | string;
+  asset?: Asset;
+  account?: AssetAccount;
 };
 
 export type AnalyticsOverview = {
@@ -363,6 +405,17 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getITSMSettings: () => request<ITSMSettings>("/api/v1/admin/settings/itsm"),
+  putITSMSettings: (body: Partial<ITSMSettings>) =>
+    request<ITSMSettings>("/api/v1/admin/settings/itsm", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  validateITSMTicket: (ticket_id: string) =>
+    request<ITSMTicketInfo>("/api/v1/admin/itsm/validate", {
+      method: "POST",
+      body: JSON.stringify({ ticket_id }),
+    }),
   getInfraStatus: () => request<InfraStatus>("/api/v1/admin/settings/infra"),
   getSSHSettings: () => request<SSHSettings>("/api/v1/admin/settings/ssh"),
   putSSHSettings: (body: Partial<SSHSettings>) =>
@@ -371,7 +424,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   listDiscoveryJobs: () => request<{ jobs: DiscoveryJob[] }>("/api/v1/admin/discovery/jobs"),
-  createDiscoveryJob: (body: { cidr: string; ports?: string }) =>
+  createDiscoveryJob: (body: { kind?: string; cidr?: string; ports?: string; asset_ids?: string[] }) =>
     request<DiscoveryJob>("/api/v1/admin/discovery/jobs", {
       method: "POST",
       body: JSON.stringify(body),
@@ -382,7 +435,7 @@ export const api = {
       `/api/v1/admin/discovery/jobs/${jobId}/candidates`,
     ),
   importDiscoveryCandidate: (id: string) =>
-    request<Asset>(`/api/v1/admin/discovery/candidates/${id}/import`, { method: "POST" }),
+    request<DiscoveryImportResult>(`/api/v1/admin/discovery/candidates/${id}/import`, { method: "POST" }),
   getAnalyticsOverview: (hours?: number, opts?: { severity?: string; code?: string }) => {
     const qs = new URLSearchParams();
     if (hours) qs.set("hours", String(hours));

@@ -103,6 +103,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "access denied by policy")
 		return
 	}
+	if s.itsm != nil && !usedBreakGlass && !bypassAdmin {
+		if err := s.itsm.Enforce(r.Context(), "connect", body.TicketID); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
 	var sqlPackID *uuid.UUID
 	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
 		if ev.OK && ev.SQLPolicyPackID != nil {

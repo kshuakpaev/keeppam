@@ -1,0 +1,35 @@
+# KeepPAM: Account discovery
+
+## Что делает
+
+Скан `kind=accounts` обходит активные SSH-активы, у которых есть vault-учётка с секретом, подключается и читает локальных пользователей:
+
+```
+getent passwd || cat /etc/passwd
+```
+
+В кандидаты попадают:
+
+- `root` / uid 0
+- uid ≥ 1000
+- низкие uid с интерактивным shell (не nologin/false)
+
+Privileged: uid 0 или имена root/admin/administrator.
+
+## API
+
+- `POST /api/v1/admin/discovery/jobs` `{ "kind": "accounts" }` или `{ "kind": "accounts", "asset_ids": ["…"] }`
+- Кандидаты: `username`, `source_asset_id`, `privileged`, `details` (uid/shell/…)
+- Импорт: создаёт `asset_accounts` **без секрета** (описание «Discovered…»); секрет потом через rotate/checkout.
+
+Сеть (`kind=network` / по умолчанию) — прежний TCP CIDR-скан.
+
+## UI
+
+Discovery → тип «Учётки (SSH account discovery)» → Запустить → Импорт новых.
+
+## Ограничения MVP
+
+- Только Linux/passwd по SSH (нет WinRM / AD enumeration).
+- Нужен уже заведённый vault-аккаунт на активе для dial.
+- Импорт не копирует пароль с цели.

@@ -23,6 +23,12 @@ func (s *Server) handleCreateAccessRequest(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if s.itsm != nil {
+		if err := s.itsm.Enforce(r.Context(), "request", in.TicketID); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	req, err := s.policy.CreateRequest(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -68,6 +74,15 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
+	}
+	if s.itsm != nil {
+		pending, gerr := s.policy.GetRequest(r.Context(), id)
+		if gerr == nil {
+			if err := s.itsm.Enforce(r.Context(), "approve", pending.TicketID); err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 	}
 	req, err := s.policy.ApproveRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
 	if err != nil {

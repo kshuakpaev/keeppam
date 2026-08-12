@@ -482,6 +482,28 @@ func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Accoun
 	return out, rows.Err()
 }
 
+func (s *Service) GetAccount(ctx context.Context, id uuid.UUID) (Account, error) {
+	return s.getAccount(ctx, id)
+}
+
+func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username string) (Account, error) {
+	row := s.db.Pool.QueryRow(ctx, `
+		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
+			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
+			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
+			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+		FROM asset_accounts a
+		LEFT JOIN users u ON u.id=a.checkout_user_id
+		WHERE a.asset_id=$1 AND a.username=$2`, assetID, username)
+	a, err := scanAccountRow(row)
+	if err != nil {
+		return Account{}, err
+	}
+	s.expireCheckoutIfNeeded(ctx, &a)
+	return a, nil
+}
+
 func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error) {
 	row := s.db.Pool.QueryRow(ctx, `
 		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,

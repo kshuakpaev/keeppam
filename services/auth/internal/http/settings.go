@@ -6,6 +6,7 @@ import (
 
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
+	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/sshca"
 )
 
@@ -102,6 +103,60 @@ func (s *Server) handlePutSIEMSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	out.WebhookAuthHeader = ""
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetITSMSettings(w http.ResponseWriter, r *http.Request) {
+	if s.itsm == nil {
+		writeErr(w, http.StatusInternalServerError, "itsm not configured")
+		return
+	}
+	cfg, _, err := s.itsm.Get(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg.AuthHeader = ""
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handlePutITSMSettings(w http.ResponseWriter, r *http.Request) {
+	if s.itsm == nil {
+		writeErr(w, http.StatusInternalServerError, "itsm not configured")
+		return
+	}
+	sess := mustSess(r)
+	var in itsm.Settings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	out, err := s.itsm.Update(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	out.AuthHeader = ""
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleITSMValidate(w http.ResponseWriter, r *http.Request) {
+	if s.itsm == nil {
+		writeErr(w, http.StatusInternalServerError, "itsm not configured")
+		return
+	}
+	var body struct {
+		TicketID string `json:"ticket_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	info, err := s.itsm.Validate(r.Context(), body.TicketID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {

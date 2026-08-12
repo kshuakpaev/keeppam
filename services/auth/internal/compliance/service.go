@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -23,10 +24,15 @@ type Service struct {
 	db            *store.DB
 	aud           *audit.Service
 	recordingsDir string
+	store         recstore.Store
+	dataKeySource string
 }
 
-func New(db *store.DB, aud *audit.Service, recordingsDir string) *Service {
-	return &Service{db: db, aud: aud, recordingsDir: recordingsDir}
+func New(db *store.DB, aud *audit.Service, recordingsDir string, store recstore.Store, dataKeySource string) *Service {
+	if store == nil {
+		store = &recstore.Local{Root: recordingsDir}
+	}
+	return &Service{db: db, aud: aud, recordingsDir: recordingsDir, store: store, dataKeySource: dataKeySource}
 }
 
 type RetentionPolicy struct {
@@ -244,6 +250,9 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, in CreateHo
 	_ = s.aud.Record(ctx, &actorID, "compliance.legal_hold.created", "legal_hold", id.String(), ip, ua, map[string]any{
 		"resource_type": in.ResourceType, "resource_id": in.ResourceID,
 	})
+	if in.ResourceType == "session" {
+		s.applySessionLegalHold(ctx, strings.TrimSpace(in.ResourceID), true)
+	}
 	return s.getHold(ctx, id)
 }
 
@@ -257,8 +266,15 @@ func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID, ip
 	if tag.RowsAffected() == 0 {
 		return LegalHold{}, ErrNotFound
 	}
+	hold, err := s.getHold(ctx, holdID)
+	if err != nil {
+		return LegalHold{}, err
+	}
+	if hold.ResourceType == "session" {
+		s.applySessionLegalHold(ctx, hold.ResourceID, false)
+	}
 	_ = s.aud.Record(ctx, &actorID, "compliance.legal_hold.released", "legal_hold", holdID.String(), ip, ua, nil)
-	return s.getHold(ctx, holdID)
+	return hold, nil
 }
 
 func (s *Service) getHold(ctx context.Context, id uuid.UUID) (LegalHold, error) {
@@ -307,6 +323,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Detail: fmt.Sprintf("активных holds: %d", st.LegalHoldCount),
 	})
 	st.Controls = append(st.Controls, s.checkAudit(ctx))
+	st.Controls = append(st.Controls, s.checkWORM())
+	st.Controls = append(st.Controls, s.checkKMSHSM())
 	return st, nil
 }
 
@@ -389,6 +407,42 @@ func (s *Service) checkAudit(ctx context.Context) ControlResult {
 	return ControlResult{ID: "audit_trail", Title: "Audit trail", Status: "pass", Detail: fmt.Sprintf("events: %d", n)}
 }
 
+func (s *Service) checkWORM() ControlResult {
+	backend := "local"
+	mode := ""
+	days := 0
+	if s.store != nil {
+		backend = s.store.Backend()
+		mode = s.store.ObjectLockMode()
+		days = s.store.ObjectLockDays()
+	}
+	if backend != "s3" {
+		return ControlResult{ID: "worm_recordings", Title: "WORM recordings (S3 Object Lock)", Status: "warn",
+			Detail: "backend=local — Object Lock недоступен"}
+	}
+	if mode == "" {
+		return ControlResult{ID: "worm_recordings", Title: "WORM recordings (S3 Object Lock)", Status: "fail",
+			Detail: "S3 без Object Lock (KEEPPAM_S3_OBJECT_LOCK_MODE)"}
+	}
+	return ControlResult{ID: "worm_recordings", Title: "WORM recordings (S3 Object Lock)", Status: "pass",
+		Detail: fmt.Sprintf("%s · %d days", mode, days)}
+}
+
+func (s *Service) checkKMSHSM() ControlResult {
+	src := strings.ToLower(strings.TrimSpace(s.dataKeySource))
+	switch src {
+	case "vault":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
+			Detail: "Vault Transit (HSM-backed Vault снаружи)"}
+	case "file":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "warn",
+			Detail: "file provider — лучше Vault/HSM"}
+	default:
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "fail",
+			Detail: "env data key — не для prod"}
+	}
+}
+
 func ternary(ok bool, a, b string) string {
 	if ok {
 		return a
@@ -397,9 +451,10 @@ func ternary(ok bool, a, b string) string {
 }
 
 type PurgeStats struct {
-	RecordingsRemoved int `json:"recordings_removed"`
-	SessionsPurged    int `json:"sessions_purged"`
-	SkippedHolds      int `json:"skipped_holds"`
+	RecordingsRemoved int    `json:"recordings_removed"`
+	SessionsPurged    int    `json:"sessions_purged"`
+	SkippedHolds      int    `json:"skipped_holds"`
+	SkippedWORM       int    `json:"skipped_worm"`
 	AuditNote         string `json:"audit_note"`
 }
 
@@ -468,7 +523,12 @@ func (s *Service) Purge(ctx context.Context) (PurgeStats, error) {
 				stats.SkippedHolds++
 				continue
 			}
-			if err := removeRecording(r.path); err == nil {
+			deleted, worm, err := s.store.TryDelete(ctx, r.path)
+			if worm {
+				stats.SkippedWORM++
+				continue
+			}
+			if err == nil && deleted {
 				_, _ = s.db.Pool.Exec(ctx, `UPDATE sessions SET recording_path='' WHERE id=$1`, r.id)
 				stats.RecordingsRemoved++
 			}
@@ -527,20 +587,30 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
+func (s *Service) applySessionLegalHold(ctx context.Context, sessionID string, on bool) {
+	id, err := uuid.Parse(sessionID)
+	if err != nil || s.store == nil {
+		return
+	}
+	var path string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT COALESCE(recording_path,'') FROM sessions WHERE id=$1`, id).Scan(&path); err != nil || path == "" {
+		return
+	}
+	_ = s.store.SetLegalHold(ctx, path, on)
+}
+
 func removeRecording(path string) error {
 	if path == "" {
 		return nil
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		// try as directory (guac)
 		return os.RemoveAll(path)
 	}
 	if fi.IsDir() {
 		return os.RemoveAll(path)
 	}
 	_ = os.Remove(path)
-	// also remove sibling .jsonl if cast
 	_ = os.Remove(strings.TrimSuffix(path, filepath.Ext(path)) + ".jsonl")
 	return nil
 }

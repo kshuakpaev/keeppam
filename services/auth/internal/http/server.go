@@ -26,6 +26,7 @@ import (
 	"github.com/keeppam/auth/internal/dbephemeral"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/session"
@@ -63,10 +64,11 @@ type Server struct {
 	dbEph      *dbephemeral.Service
 	attacksim  *attacksim.Service
 	sshca      *sshca.Service
+	itsm       *itsm.Service
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -120,6 +122,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Put("/settings/auth", s.handlePutAuthSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/siem", s.handleGetSIEMSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/siem", s.handlePutSIEMSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/itsm", s.handleGetITSMSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/itsm", s.handlePutITSMSettings)
+				r.With(s.requirePerm("settings.write")).Post("/itsm/validate", s.handleITSMValidate)
 				r.With(s.requirePerm("settings.write")).Get("/settings/ssh", s.handleGetSSHSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)

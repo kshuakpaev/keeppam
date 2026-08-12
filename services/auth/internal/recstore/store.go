@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,20 +23,25 @@ import (
 type Store interface {
 	Backend() string
 	LocalRoot() string
-	// EnsureLocal makes sure path exists locally (download from S3 if needed).
+	ObjectLockMode() string
+	ObjectLockDays() int
 	EnsureLocal(ctx context.Context, absPath string) error
-	// Sync uploads a local file (or guac base + suffixes) to S3 when enabled.
 	Sync(ctx context.Context, absPath string) error
-	// Exists reports whether recording is available locally or remotely.
 	Exists(ctx context.Context, absPath string) bool
+	// TryDelete removes local + remote recording. wormProtected=true if S3 Object Lock blocked delete.
+	TryDelete(ctx context.Context, absPath string) (deleted bool, wormProtected bool, err error)
+	// SetLegalHold toggles S3 Object Lock legal hold (no-op for local).
+	SetLegalHold(ctx context.Context, absPath string, on bool) error
 }
 
 type Local struct {
 	Root string
 }
 
-func (l *Local) Backend() string   { return "local" }
-func (l *Local) LocalRoot() string { return l.Root }
+func (l *Local) Backend() string         { return "local" }
+func (l *Local) LocalRoot() string       { return l.Root }
+func (l *Local) ObjectLockMode() string  { return "" }
+func (l *Local) ObjectLockDays() int     { return 0 }
 
 func (l *Local) EnsureLocal(ctx context.Context, absPath string) error {
 	_ = ctx
@@ -54,6 +61,21 @@ func (l *Local) Exists(ctx context.Context, absPath string) bool {
 	return err == nil
 }
 
+func (l *Local) TryDelete(ctx context.Context, absPath string) (bool, bool, error) {
+	_ = ctx
+	if err := removeLocalRecording(absPath); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
+}
+
+func (l *Local) SetLegalHold(ctx context.Context, absPath string, on bool) error {
+	_ = ctx
+	_ = absPath
+	_ = on
+	return nil
+}
+
 // Hybrid keeps local FS for guacd and mirrors to S3.
 type Hybrid struct {
 	Local *Local
@@ -67,6 +89,18 @@ func (h *Hybrid) Backend() string {
 	return "s3"
 }
 func (h *Hybrid) LocalRoot() string { return h.Local.Root }
+func (h *Hybrid) ObjectLockMode() string {
+	if h.S3 == nil {
+		return ""
+	}
+	return h.S3.LockMode
+}
+func (h *Hybrid) ObjectLockDays() int {
+	if h.S3 == nil {
+		return 0
+	}
+	return h.S3.LockDays
+}
 
 func (h *Hybrid) EnsureLocal(ctx context.Context, absPath string) error {
 	for _, p := range guacCandidates(absPath) {
@@ -139,6 +173,57 @@ func (h *Hybrid) Exists(ctx context.Context, absPath string) bool {
 	return ok
 }
 
+func (h *Hybrid) TryDelete(ctx context.Context, absPath string) (bool, bool, error) {
+	_ = removeLocalRecording(absPath)
+	if h.S3 == nil {
+		return true, false, nil
+	}
+	worm := false
+	deletedRemote := false
+	for _, p := range guacCandidates(absPath) {
+		key, err := h.relKey(p)
+		if err != nil {
+			continue
+		}
+		ok, _ := h.S3.Head(ctx, key)
+		if !ok {
+			continue
+		}
+		if err := h.S3.Delete(ctx, key); err != nil {
+			if isWORMBlocked(err) {
+				worm = true
+			}
+			continue
+		}
+		deletedRemote = true
+	}
+	if worm {
+		return false, true, nil
+	}
+	return deletedRemote || true, false, nil
+}
+
+func (h *Hybrid) SetLegalHold(ctx context.Context, absPath string, on bool) error {
+	if h.S3 == nil {
+		return nil
+	}
+	var last error
+	for _, p := range guacCandidates(absPath) {
+		key, err := h.relKey(p)
+		if err != nil {
+			continue
+		}
+		ok, _ := h.S3.Head(ctx, key)
+		if !ok {
+			continue
+		}
+		if err := h.S3.PutLegalHold(ctx, key, on); err != nil {
+			last = err
+		}
+	}
+	return last
+}
+
 func (h *Hybrid) relKey(absPath string) (string, error) {
 	root := filepath.Clean(h.Local.Root)
 	p := filepath.Clean(absPath)
@@ -157,6 +242,38 @@ func guacCandidates(base string) []string {
 	return out
 }
 
+func removeLocalRecording(path string) error {
+	if path == "" {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		_ = os.RemoveAll(path)
+		return nil
+	}
+	if fi.IsDir() {
+		return os.RemoveAll(path)
+	}
+	_ = os.Remove(path)
+	_ = os.Remove(strings.TrimSuffix(path, filepath.Ext(path)) + ".jsonl")
+	for i := 1; i <= 32; i++ {
+		_ = os.Remove(fmt.Sprintf("%s.%d", path, i))
+	}
+	return nil
+}
+
+func isWORMBlocked(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "accessdenied") ||
+		strings.Contains(msg, "403") ||
+		strings.Contains(msg, "409") ||
+		strings.Contains(msg, "object locked") ||
+		strings.Contains(msg, "access denied")
+}
+
 type S3 struct {
 	Endpoint  string
 	Region    string
@@ -165,6 +282,8 @@ type S3 struct {
 	SecretKey string
 	Prefix    string
 	PathStyle bool
+	LockMode  string // GOVERNANCE | COMPLIANCE | ""
+	LockDays  int
 	Client    *http.Client
 }
 
@@ -178,7 +297,6 @@ func (s *S3) objectURL(key string) string {
 	if s.PathStyle {
 		return fmt.Sprintf("%s/%s/%s", ep, s.Bucket, key)
 	}
-	// virtual-hosted
 	u, err := url.Parse(ep)
 	if err != nil {
 		return fmt.Sprintf("%s/%s/%s", ep, s.Bucket, key)
@@ -197,6 +315,15 @@ func (s *S3) PutFile(ctx context.Context, key, path string) error {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = int64(len(b))
+	if mode := strings.ToUpper(strings.TrimSpace(s.LockMode)); mode == "GOVERNANCE" || mode == "COMPLIANCE" {
+		days := s.LockDays
+		if days <= 0 {
+			days = 90
+		}
+		until := time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02T15:04:05.000Z")
+		req.Header.Set("X-Amz-Object-Lock-Mode", mode)
+		req.Header.Set("X-Amz-Object-Lock-Retain-Until-Date", until)
+	}
 	if err := s.sign(req, b); err != nil {
 		return err
 	}
@@ -205,9 +332,9 @@ func (s *S3) PutFile(ctx context.Context, key, path string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("s3 put %d", resp.StatusCode)
+		return fmt.Errorf("s3 put %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }
@@ -256,6 +383,55 @@ func (s *S3) Head(ctx context.Context, key string) (bool, error) {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
 }
 
+func (s *S3) Delete(ctx context.Context, key string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.objectURL(key), nil)
+	if err != nil {
+		return err
+	}
+	if err := s.sign(req, nil); err != nil {
+		return err
+	}
+	resp, err := s.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("s3 delete %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func (s *S3) PutLegalHold(ctx context.Context, key string, on bool) error {
+	status := "OFF"
+	if on {
+		status = "ON"
+	}
+	payload := []byte(fmt.Sprintf(`<LegalHold xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>%s</Status></LegalHold>`, status))
+	u := s.objectURL(key) + "?legal-hold"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/xml")
+	req.ContentLength = int64(len(payload))
+	req.URL.RawQuery = "legal-hold="
+	if err := s.sign(req, payload); err != nil {
+		return err
+	}
+	resp, err := s.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("s3 legal-hold %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 func (s *S3) http() *http.Client {
 	if s.Client != nil {
 		return s.Client
@@ -280,15 +456,38 @@ func (s *S3) sign(req *http.Request, payload []byte) error {
 	host := req.URL.Host
 	req.Header.Set("Host", host)
 
-	canonicalHeaders := "host:" + host + "\n" +
-		"x-amz-content-sha256:" + payloadHash + "\n" +
-		"x-amz-date:" + amzDate + "\n"
-	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	hdrs := map[string]string{
+		"host":                 host,
+		"x-amz-content-sha256": payloadHash,
+		"x-amz-date":           amzDate,
+	}
+	for k, vv := range req.Header {
+		lk := strings.ToLower(k)
+		if !strings.HasPrefix(lk, "x-amz-") || lk == "x-amz-date" || lk == "x-amz-content-sha256" {
+			continue
+		}
+		if len(vv) > 0 {
+			hdrs[lk] = strings.TrimSpace(vv[0])
+		}
+	}
+	keys := make([]string, 0, len(hdrs))
+	for k := range hdrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var canonicalHeaders strings.Builder
+	for _, k := range keys {
+		canonicalHeaders.WriteString(k)
+		canonicalHeaders.WriteByte(':')
+		canonicalHeaders.WriteString(hdrs[k])
+		canonicalHeaders.WriteByte('\n')
+	}
+	signedHeaders := strings.Join(keys, ";")
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		req.URL.EscapedPath(),
 		req.URL.RawQuery,
-		canonicalHeaders,
+		canonicalHeaders.String(),
 		signedHeaders,
 		payloadHash,
 	}, "\n")
@@ -344,6 +543,22 @@ func NewFromEnv(recordingsDir string) (Store, error) {
 	if ep == "" || bucket == "" {
 		return nil, fmt.Errorf("KEEPPAM_S3_ENDPOINT and KEEPPAM_S3_BUCKET required for s3 backend")
 	}
+	lockMode := strings.ToUpper(strings.TrimSpace(os.Getenv("KEEPPAM_S3_OBJECT_LOCK_MODE")))
+	switch lockMode {
+	case "", "OFF", "NONE":
+		lockMode = ""
+	case "GOVERNANCE", "COMPLIANCE":
+	default:
+		return nil, fmt.Errorf("KEEPPAM_S3_OBJECT_LOCK_MODE must be empty|GOVERNANCE|COMPLIANCE")
+	}
+	lockDays := 90
+	if v := strings.TrimSpace(os.Getenv("KEEPPAM_S3_OBJECT_LOCK_DAYS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 36500 {
+			return nil, fmt.Errorf("KEEPPAM_S3_OBJECT_LOCK_DAYS must be 1..36500")
+		}
+		lockDays = n
+	}
 	s3 := &S3{
 		Endpoint:  ep,
 		Region:    envOr("KEEPPAM_S3_REGION", "us-east-1"),
@@ -352,6 +567,8 @@ func NewFromEnv(recordingsDir string) (Store, error) {
 		SecretKey: os.Getenv("KEEPPAM_S3_SECRET_KEY"),
 		Prefix:    os.Getenv("KEEPPAM_S3_PREFIX"),
 		PathStyle: strings.ToLower(os.Getenv("KEEPPAM_S3_PATH_STYLE")) != "false",
+		LockMode:  lockMode,
+		LockDays:  lockDays,
 	}
 	return &Hybrid{Local: local, S3: s3}, nil
 }

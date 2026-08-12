@@ -1,0 +1,43 @@
+# KeepPAM: ITSM gate
+
+## Зачем
+
+`ticket_id` больше не просто строка: при включённом gate KeepPAM проверяет тикет во внешнем ITSM (или mock) перед create request / approve / connect.
+
+## Настройка
+
+Конфиг → блок **ITSM gate** (`GET/PUT /api/v1/admin/settings/itsm`).
+
+| Поле | Смысл |
+|------|--------|
+| `enabled` | мастер-выключатель |
+| `provider` | `mock` \| `jira` \| `servicenow` \| `generic` |
+| `base_url` | корень ITSM API |
+| `auth_header` | write-only, шифруется (Bearer/Basic) |
+| `ok_statuses` | допустимые статусы (case-insensitive) |
+| `require_on_request` | валидация при создании JIT-запроса |
+| `require_on_approve` | при одобрении |
+| `require_on_connect` | при создании сессии / SSH / app access |
+| `cache_ttl_sec` | Redis-кэш ответа |
+
+Dry-run: `POST /api/v1/admin/itsm/validate` `{ "ticket_id": "DEMO-100" }`.
+
+## Mock
+
+Без внешней системы: `provider=mock`.
+
+- `DEMO-100`, `PROJ-1` → status `Open` (если в `ok_statuses`)
+- `DEMO-CLOSED` / id содержит `CLOSED` → `Closed` → reject
+- иначе не `KEY-123` формат → `Unknown` → reject
+
+## Поведение
+
+- Break-glass и admin bypass (`users.write`) **не** требуют ITSM на connect.
+- ACL `require_ticket` по-прежнему требует непустой `ticket_id`; ITSM дополнительно проверяет статус, если `require_on_connect`.
+- Аудит: `settings.itsm.updated`, `itsm.ticket.validated`, `itsm.ticket.rejected`.
+
+## Jira / ServiceNow
+
+- Jira: `GET {base}/rest/api/2/issue/{ticket}`, статус `fields.status.name`.
+- ServiceNow: table `incident` по `number=`, статус `result.0.state`.
+- Generic: `ticket_path_template` с `{ticket}` + `status_json_path`.

@@ -24,8 +24,12 @@
 - `KEEPPAM_S3_REGION` (default `us-east-1`)
 - `KEEPPAM_S3_PREFIX` (optional)
 - `KEEPPAM_S3_PATH_STYLE` — default true (`false` = virtual-hosted)
+- `KEEPPAM_S3_OBJECT_LOCK_MODE` — пусто | `GOVERNANCE` | `COMPLIANCE` (WORM)
+- `KEEPPAM_S3_OBJECT_LOCK_DAYS` — retention при Put (default 90)
 
-Поведение hybrid: guacd/SSH пишут в `KEEPPAM_RECORDINGS_DIR` как раньше; при закрытии сессии API/worker зеркалит файл в S3. Replay сначала ищет локально, иначе скачивает из S3.
+Bucket должен быть создан с Object Lock enabled (MinIO: `mc mb --with-lock`). Compliance mode нельзя снять до даты; Governance — с bypass permission.
+
+Поведение hybrid: guacd/SSH пишут в `KEEPPAM_RECORDINGS_DIR` как раньше; при закрытии сессии API/worker зеркалит файл в S3 (с Object Lock headers, если mode задан). Replay сначала ищет локально, иначе скачивает из S3. Purge не удаляет WORM-объекты (`skipped_worm`). Legal hold сессии → S3 Legal Hold ON/OFF.
 
 ## API TLS / mTLS
 

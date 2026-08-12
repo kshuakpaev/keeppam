@@ -28,6 +28,8 @@ type Config struct {
 	S3Bucket               string
 	S3Region               string
 	S3Prefix               string
+	S3ObjectLockMode       string
+	S3ObjectLockDays       int
 	SSHAddr                string
 	SSHHostKeyPath         string
 	Mode                   string // all | api | ssh
@@ -62,6 +64,8 @@ func Load() (Config, error) {
 		S3Bucket:               env("KEEPPAM_S3_BUCKET", ""),
 		S3Region:               env("KEEPPAM_S3_REGION", "us-east-1"),
 		S3Prefix:               env("KEEPPAM_S3_PREFIX", ""),
+		S3ObjectLockMode:       strings.ToUpper(env("KEEPPAM_S3_OBJECT_LOCK_MODE", "")),
+		S3ObjectLockDays:       intEnv("KEEPPAM_S3_OBJECT_LOCK_DAYS", 90),
 		SSHAddr:                env("KEEPPAM_SSH_ADDR", ":2222"),
 		SSHHostKeyPath:         env("KEEPPAM_SSH_HOST_KEY", "/tmp/keeppam-ssh-hostkey"),
 		Mode:                   env("KEEPPAM_MODE", "all"),
@@ -92,6 +96,17 @@ func Load() (Config, error) {
 	case "env", "file", "vault":
 	default:
 		return Config{}, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault")
+	}
+	switch strings.ToUpper(cfg.S3ObjectLockMode) {
+	case "", "OFF", "NONE":
+		cfg.S3ObjectLockMode = ""
+	case "GOVERNANCE", "COMPLIANCE":
+		cfg.S3ObjectLockMode = strings.ToUpper(cfg.S3ObjectLockMode)
+	default:
+		return Config{}, fmt.Errorf("KEEPPAM_S3_OBJECT_LOCK_MODE must be empty|GOVERNANCE|COMPLIANCE")
+	}
+	if cfg.S3ObjectLockMode != "" && (cfg.S3ObjectLockDays < 1 || cfg.S3ObjectLockDays > 36500) {
+		return Config{}, fmt.Errorf("KEEPPAM_S3_OBJECT_LOCK_DAYS must be 1..36500")
 	}
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return Config{}, fmt.Errorf("KEEPPAM_TLS_CERT_FILE and KEEPPAM_TLS_KEY_FILE must both be set")

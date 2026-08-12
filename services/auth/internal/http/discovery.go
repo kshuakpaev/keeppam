@@ -79,10 +79,10 @@ func (s *Server) handleImportDiscoveryCandidate(w http.ResponseWriter, r *http.R
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	asset, err := s.discovery.ImportCandidate(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	res, err := s.discovery.ImportCandidate(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, asset)
+	writeJSON(w, http.StatusCreated, res)
 }

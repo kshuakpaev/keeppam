@@ -57,6 +57,8 @@ services:
       # KEEPPAM_S3_BUCKET: "keeppam-recordings"
       # KEEPPAM_S3_ACCESS_KEY: "minio"
       # KEEPPAM_S3_SECRET_KEY: "minio123"
+      # KEEPPAM_S3_OBJECT_LOCK_MODE: "GOVERNANCE"
+      # KEEPPAM_S3_OBJECT_LOCK_DAYS: "90"
       # KEEPPAM_TLS_CERT_FILE: "/etc/keeppam/tls/server.crt"
       # KEEPPAM_TLS_KEY_FILE: "/etc/keeppam/tls/server.key"
       # KEEPPAM_TLS_CLIENT_CA_FILE: "/etc/keeppam/tls/client-ca.crt"

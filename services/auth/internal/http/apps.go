@@ -73,6 +73,12 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	bypass := rbac.HasPermission(sess.Permissions, "users.write")
+	if s.itsm != nil && !bypass {
+		if err := s.itsm.Enforce(r.Context(), "connect", body.TicketID); err != nil {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
 	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())

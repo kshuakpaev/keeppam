@@ -4,6 +4,7 @@ import {
   hasPerm,
   type AuthSettings,
   type InfraStatus,
+  type ITSMSettings,
   type SIEMSettings,
   type SSHSettings,
 } from "../api";
@@ -54,15 +55,34 @@ const emptySIEM: SIEMSettings = {
   poll_interval_sec: 10,
 };
 
+const emptyITSM: ITSMSettings = {
+  enabled: false,
+  provider: "mock",
+  base_url: "",
+  has_auth_header: false,
+  ticket_path_template: "/rest/api/2/issue/{ticket}",
+  status_json_path: "fields.status.name",
+  ok_statuses: ["Open", "In Progress", "To Do", "New", "Assigned", "Work in Progress"],
+  require_on_request: false,
+  require_on_approve: true,
+  require_on_connect: true,
+  cache_ttl_sec: 60,
+  timeout_sec: 8,
+};
+
 export function ConfigPage() {
   const { user } = useAuth();
   const [form, setForm] = useState<AuthSettings>(empty);
   const [siem, setSiem] = useState<SIEMSettings>(emptySIEM);
+  const [itsm, setItsm] = useState<ITSMSettings>(emptyITSM);
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
   const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
   const [webhookAuth, setWebhookAuth] = useState("");
+  const [itsmAuth, setItsmAuth] = useState("");
+  const [itsmTicket, setItsmTicket] = useState("DEMO-100");
+  const [itsmCheck, setItsmCheck] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,16 +92,22 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf] = await Promise.all([
+        const [s, si, sh, inf, it] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
           api.getInfraStatus(),
+          api.getITSMSettings(),
         ]);
         setForm({ ...empty, ...s });
         setSiem({ ...emptySIEM, ...si });
         setSsh({ ...emptySSH, ...sh });
         setInfra(inf);
+        setItsm({
+          ...emptyITSM,
+          ...it,
+          ok_statuses: it.ok_statuses?.length ? it.ok_statuses : emptyITSM.ok_statuses,
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Ошибка загрузки");
       }
@@ -110,6 +136,52 @@ export function ConfigPage() {
       setMsg("Авторизация сохранена");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveITSM(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    setItsmCheck("");
+    try {
+      const body: Partial<ITSMSettings> = {
+        ...itsm,
+        ok_statuses: (itsm.ok_statuses || [])
+          .map((x) => x.trim())
+          .filter(Boolean),
+      };
+      if (itsmAuth.trim()) body.auth_header = itsmAuth.trim();
+      delete body.has_auth_header;
+      const saved = await api.putITSMSettings(body);
+      setItsm({
+        ...emptyITSM,
+        ...saved,
+        ok_statuses: saved.ok_statuses?.length ? saved.ok_statuses : emptyITSM.ok_statuses,
+      });
+      setItsmAuth("");
+      setMsg("ITSM сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения ITSM");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCheckTicket() {
+    setBusy(true);
+    setError("");
+    setItsmCheck("");
+    try {
+      const info = await api.validateITSMTicket(itsmTicket.trim());
+      setItsmCheck(
+        `${info.id}: ${info.status}${info.ok ? " · OK" : " · REJECTED"}${info.title ? ` · ${info.title}` : ""}${info.cached ? " (cache)" : ""}`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка проверки тикета");
     } finally {
       setBusy(false);
     }
@@ -179,7 +251,7 @@ export function ConfigPage() {
       <div className="toolbar">
         <div>
           <h1>Конфигурация</h1>
-          <p className="muted">Авторизация, SSH CA, SIEM и prod-инфраструктура</p>
+          <p className="muted">Авторизация, SSH CA, SIEM, ITSM и prod-инфраструктура</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -211,6 +283,24 @@ export function ConfigPage() {
               </span>
             </p>
           )}
+          <p>
+            WORM / Object Lock:{" "}
+            <span className="mono">
+              {infra.worm_recordings
+                ? `${infra.object_lock_mode || "on"} · ${infra.object_lock_days ?? "?"}d`
+                : infra.recordings_backend === "s3"
+                  ? "s3 без Object Lock"
+                  : "n/a (local)"}
+            </span>
+          </p>
+          <p>
+            Data key posture:{" "}
+            <span className="mono">
+              {infra.data_key_source === "vault"
+                ? "vault (HSM-capable)"
+                : infra.data_key_source}
+            </span>
+          </p>
           <p>
             TLS / mTLS:{" "}
             <span className="mono">
@@ -461,6 +551,141 @@ export function ConfigPage() {
         )}
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
           Сохранить SSH
+        </button>
+      </form>
+
+
+      <form className="card" onSubmit={onSaveITSM} style={{ maxWidth: 640 }}>
+        <h2>ITSM gate (тикеты JIT)</h2>
+        <p className="muted">
+          Проверка ticket_id против ITSM при запросе / одобрении / подключении. Provider{" "}
+          <span className="mono">mock</span>: DEMO-100 открыт, DEMO-CLOSED закрыт.
+        </p>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={itsm.enabled}
+            onChange={(e) => setItsm({ ...itsm, enabled: e.target.checked })}
+          />
+          Включить ITSM gate
+        </label>
+        <label>Provider</label>
+        <select
+          value={itsm.provider}
+          onChange={(e) => setItsm({ ...itsm, provider: e.target.value })}
+        >
+          <option value="mock">mock (локальный)</option>
+          <option value="jira">Jira</option>
+          <option value="servicenow">ServiceNow</option>
+          <option value="generic">generic HTTP</option>
+        </select>
+        <label>Base URL</label>
+        <input
+          value={itsm.base_url}
+          onChange={(e) => setItsm({ ...itsm, base_url: e.target.value })}
+          placeholder="https://jira.example.com"
+        />
+        <label>Path template</label>
+        <input
+          value={itsm.ticket_path_template}
+          onChange={(e) => setItsm({ ...itsm, ticket_path_template: e.target.value })}
+          placeholder="/rest/api/2/issue/{ticket}"
+        />
+        <label>Status JSON path</label>
+        <input
+          value={itsm.status_json_path}
+          onChange={(e) => setItsm({ ...itsm, status_json_path: e.target.value })}
+          placeholder="fields.status.name"
+        />
+        <label>Допустимые статусы (через запятую)</label>
+        <input
+          value={(itsm.ok_statuses || []).join(", ")}
+          onChange={(e) =>
+            setItsm({
+              ...itsm,
+              ok_statuses: e.target.value.split(",").map((x) => x.trim()).filter(Boolean),
+            })
+          }
+        />
+        <label>Authorization header {itsm.has_auth_header ? "(задан)" : ""} — пусто = не менять</label>
+        <input
+          type="password"
+          value={itsmAuth}
+          onChange={(e) => setItsmAuth(e.target.value)}
+          placeholder="Bearer … / Basic …"
+          autoComplete="new-password"
+        />
+        <div className="row" style={{ gap: "1rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+          <label className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={itsm.require_on_request}
+              onChange={(e) => setItsm({ ...itsm, require_on_request: e.target.checked })}
+            />
+            На create request
+          </label>
+          <label className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={itsm.require_on_approve}
+              onChange={(e) => setItsm({ ...itsm, require_on_approve: e.target.checked })}
+            />
+            На approve
+          </label>
+          <label className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={itsm.require_on_connect}
+              onChange={(e) => setItsm({ ...itsm, require_on_connect: e.target.checked })}
+            />
+            На connect
+          </label>
+        </div>
+        <div className="row" style={{ gap: "0.75rem", marginTop: "0.75rem" }}>
+          <div style={{ flex: 1 }}>
+            <label>Cache TTL (sec)</label>
+            <input
+              type="number"
+              min={0}
+              max={3600}
+              value={itsm.cache_ttl_sec}
+              onChange={(e) => setItsm({ ...itsm, cache_ttl_sec: Number(e.target.value) })}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Timeout (sec)</label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={itsm.timeout_sec}
+              onChange={(e) => setItsm({ ...itsm, timeout_sec: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+        {(itsm.last_check_at || itsm.last_error) && (
+          <p className="muted" style={{ marginTop: "0.75rem" }}>
+            Проверка: {itsm.last_check_at ? new Date(itsm.last_check_at).toLocaleString() : "—"}
+            {itsm.last_error ? (
+              <>
+                <br />
+                <span className="error">Ошибка: {itsm.last_error}</span>
+              </>
+            ) : null}
+          </p>
+        )}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "1rem", alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <label>Проверить тикет</label>
+            <input value={itsmTicket} onChange={(e) => setItsmTicket(e.target.value)} />
+          </div>
+          <button className="btn secondary" type="button" disabled={busy} onClick={() => void onCheckTicket()}>
+            Validate
+          </button>
+        </div>
+        {itsmCheck && <p className="muted mono">{itsmCheck}</p>}
+        <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
+          Сохранить ITSM
         </button>
       </form>
 

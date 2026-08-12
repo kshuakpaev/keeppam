@@ -15,19 +15,37 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 	if s.sessionsvc != nil && s.sessionsvc.RecordingStore() != nil {
 		backend = s.sessionsvc.RecordingStore().Backend()
 	}
+	lockMode, lockDays := s.infraObjectLock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data_key_source":    s.cfg.DataKeySource,
-		"recordings_backend": backend,
-		"recordings_dir":     s.cfg.RecordingsDir,
-		"tls_enabled":        s.cfg.TLSEnabled(),
-		"mtls":               s.cfg.MTLSMode(),
-		"s3_endpoint":        s.cfg.S3Endpoint,
-		"s3_bucket":          s.cfg.S3Bucket,
-		"s3_region":          s.cfg.S3Region,
-		"s3_prefix":          s.cfg.S3Prefix,
-		"http_addr":          s.cfg.HTTPAddr,
-		"cookie_secure":      s.cfg.CookieSecure,
+		"data_key_source":      s.cfg.DataKeySource,
+		"recordings_backend":   backend,
+		"recordings_dir":       s.cfg.RecordingsDir,
+		"object_lock_mode":     lockMode,
+		"object_lock_days":     lockDays,
+		"worm_recordings":      backend == "s3" && lockMode != "",
+		"tls_enabled":          s.cfg.TLSEnabled(),
+		"mtls":                 s.cfg.MTLSMode(),
+		"s3_endpoint":          s.cfg.S3Endpoint,
+		"s3_bucket":            s.cfg.S3Bucket,
+		"s3_region":            s.cfg.S3Region,
+		"s3_prefix":            s.cfg.S3Prefix,
+		"http_addr":            s.cfg.HTTPAddr,
+		"cookie_secure":        s.cfg.CookieSecure,
 	})
+}
+
+func (s *Server) infraObjectLock() (mode string, days int) {
+	mode = s.cfg.S3ObjectLockMode
+	days = s.cfg.S3ObjectLockDays
+	if st := s.sessionsvc.RecordingStore(); st != nil {
+		if m := st.ObjectLockMode(); m != "" {
+			mode = m
+		}
+		if d := st.ObjectLockDays(); d > 0 {
+			days = d
+		}
+	}
+	return mode, days
 }
 
 // BuildTLSConfig loads optional client CA for mTLS (server cert is passed to ListenAndServeTLS).

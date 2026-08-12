@@ -1,0 +1,32 @@
+# KeepPAM: WORM recordings + HSM posture
+
+## WORM (recordings)
+
+Immutable object storage через S3 Object Lock при sync записей:
+
+| Env | Значение |
+|-----|----------|
+| `KEEPPAM_RECORDINGS_BACKEND` | `s3` |
+| `KEEPPAM_S3_OBJECT_LOCK_MODE` | `GOVERNANCE` или `COMPLIANCE` |
+| `KEEPPAM_S3_OBJECT_LOCK_DAYS` | дней retention (default 90) |
+
+При Put выставляются `x-amz-object-lock-mode` + `retain-until-date`.
+
+- Compliance purge: локальный файл может удалиться, S3 Object Lock → `skipped_worm`.
+- Legal hold на session → S3 Legal Hold ON; release → OFF.
+- Audit events по-прежнему append-only в Postgres (hash-chain), purge их не трогает.
+
+## HSM posture (data key)
+
+Полноценный PKCS#11 в MVP не встроен. Принятый путь:
+
+`KEEPPAM_DATA_KEY_SOURCE=vault` → Transit decrypt DEK.
+
+Vault с HSM seal / Transit seal wrap = enterprise HSM без смены кода KeepPAM.
+
+## Compliance controls
+
+- `worm_recordings` — pass если backend=s3 и Object Lock mode задан
+- `kms_hsm_key` — pass для `vault`, warn для `file`, fail для `env`
+
+См. также `docs/prod-infra.txt`.

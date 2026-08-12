@@ -24,6 +24,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -40,6 +41,7 @@ type Gateway struct {
 	sessions    *sessionsvc.Service
 	audit       *audit.Service
 	live        *sessionsvc.LiveHub
+	itsm        *itsm.Service
 }
 
 func New(
@@ -50,11 +52,12 @@ func New(
 	sessSvc *sessionsvc.Service,
 	auditSvc *audit.Service,
 	live *sessionsvc.LiveHub,
+	itsmSvc *itsm.Service,
 ) *Gateway {
 	return &Gateway{
 		addr: addr, hostKeyPath: hostKeyPath,
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
-		sessions: sessSvc, audit: auditSvc, live: live,
+		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc,
 	}
 }
 
@@ -266,6 +269,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	}
 
 	bypassConnect := rbac.HasPermission(perms, "users.write")
+	usedBreakGlass := false
 	okPolicy, err := g.policy.Allowed(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: false, Now: time.Now(), TicketID: ticketID, ClientIP: ip,
 	})
@@ -276,6 +280,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	if !okPolicy {
 		if bg, berr := g.policy.HasActiveBreakGlass(ctx, userID, chosen.AssetID); berr == nil && bg {
 			okPolicy = true
+			usedBreakGlass = true
 		}
 	}
 	if !okPolicy && bypassConnect {
@@ -288,6 +293,15 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 			"reason": "policy", "ticket_id": ticketID,
 		})
 		return
+	}
+	if g.itsm != nil && !usedBreakGlass && !bypassConnect {
+		if err := g.itsm.Enforce(ctx, "connect", ticketID); err != nil {
+			_, _ = fmt.Fprintf(ch, "ITSM gate: %v\r\n", err)
+			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{
+				"reason": "itsm", "ticket_id": ticketID, "error": err.Error(),
+			})
+			return
+		}
 	}
 
 	cols, rows := 120, 40

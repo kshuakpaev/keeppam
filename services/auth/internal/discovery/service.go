@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
@@ -19,34 +20,48 @@ import (
 const maxHosts = 1024
 
 type Job struct {
-	ID            uuid.UUID  `json:"id"`
-	CIDR          string     `json:"cidr"`
-	Ports         string     `json:"ports"`
-	Status        string     `json:"status"`
-	TotalHosts    int        `json:"total_hosts"`
-	ScannedHosts  int        `json:"scanned_hosts"`
-	OpenPorts     int        `json:"open_ports"`
-	Error         string     `json:"error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	CreatedBy     *uuid.UUID `json:"created_by,omitempty"`
+	ID           uuid.UUID  `json:"id"`
+	Kind         string     `json:"kind"` // network | accounts
+	CIDR         string     `json:"cidr"`
+	Ports        string     `json:"ports"`
+	Status       string     `json:"status"`
+	TotalHosts   int        `json:"total_hosts"`
+	ScannedHosts int        `json:"scanned_hosts"`
+	OpenPorts    int        `json:"open_ports"`
+	Error        string     `json:"error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	CreatedBy    *uuid.UUID `json:"created_by,omitempty"`
 }
 
 type Candidate struct {
-	ID              uuid.UUID  `json:"id"`
-	JobID           uuid.UUID  `json:"job_id"`
-	Address         string     `json:"address"`
-	Port            int        `json:"port"`
-	Protocol        string     `json:"protocol"`
-	ImportedAssetID *uuid.UUID `json:"imported_asset_id,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	AlreadyKnown    bool       `json:"already_known"`
+	ID                 uuid.UUID       `json:"id"`
+	JobID              uuid.UUID       `json:"job_id"`
+	Address            string          `json:"address"`
+	Port               int             `json:"port"`
+	Protocol           string          `json:"protocol"`
+	Username           string          `json:"username,omitempty"`
+	SourceAssetID      *uuid.UUID      `json:"source_asset_id,omitempty"`
+	ImportedAssetID    *uuid.UUID      `json:"imported_asset_id,omitempty"`
+	ImportedAccountID  *uuid.UUID      `json:"imported_account_id,omitempty"`
+	Details            json.RawMessage `json:"details,omitempty"`
+	Privileged         bool            `json:"privileged"`
+	CreatedAt          time.Time       `json:"created_at"`
+	AlreadyKnown       bool            `json:"already_known"`
 }
 
 type CreateJobInput struct {
-	CIDR  string `json:"cidr"`
-	Ports string `json:"ports"`
+	Kind     string   `json:"kind"` // network (default) | accounts
+	CIDR     string   `json:"cidr"`
+	Ports    string   `json:"ports"`
+	AssetIDs []string `json:"asset_ids"` // optional filter for accounts kind
+}
+
+type ImportResult struct {
+	Kind    string          `json:"kind"` // asset | account
+	Asset   *assets.Asset   `json:"asset,omitempty"`
+	Account *assets.Account `json:"account,omitempty"`
 }
 
 type Service struct {
@@ -60,6 +75,21 @@ func New(db *store.DB, aud *audit.Service, assetsSvc *assets.Service) *Service {
 }
 
 func (s *Service) CreateJob(ctx context.Context, actorID uuid.UUID, in CreateJobInput, ip, ua string) (Job, error) {
+	kind := strings.TrimSpace(in.Kind)
+	if kind == "" {
+		kind = "network"
+	}
+	switch kind {
+	case "network":
+		return s.createNetworkJob(ctx, actorID, in, ip, ua)
+	case "accounts":
+		return s.createAccountsJob(ctx, actorID, in, ip, ua)
+	default:
+		return Job{}, fmt.Errorf("invalid kind (network|accounts)")
+	}
+}
+
+func (s *Service) createNetworkJob(ctx context.Context, actorID uuid.UUID, in CreateJobInput, ip, ua string) (Job, error) {
 	cidr := strings.TrimSpace(in.CIDR)
 	if cidr == "" {
 		return Job{}, fmt.Errorf("cidr required")
@@ -80,14 +110,14 @@ func (s *Service) CreateJob(ctx context.Context, actorID uuid.UUID, in CreateJob
 	}
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO discovery_jobs (id, cidr, ports, status, total_hosts, created_at, created_by)
-		VALUES ($1,$2,$3,'pending',$4,NOW(),$5)`,
+		INSERT INTO discovery_jobs (id, kind, cidr, ports, status, total_hosts, created_at, created_by)
+		VALUES ($1,'network',$2,$3,'pending',$4,NOW(),$5)`,
 		id, cidr, joinPorts(ports), len(hosts), actorID)
 	if err != nil {
 		return Job{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "discovery.job.created", "discovery_job", id.String(), ip, ua, map[string]any{
-		"cidr": cidr, "ports": ports, "total_hosts": len(hosts),
+		"kind": "network", "cidr": cidr, "ports": ports, "total_hosts": len(hosts),
 	})
 	return s.GetJob(ctx, id)
 }
@@ -97,7 +127,7 @@ func (s *Service) ListJobs(ctx context.Context, limit int) ([]Job, error) {
 		limit = 50
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
+		SELECT id, kind, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
 			created_at, started_at, finished_at, created_by
 		FROM discovery_jobs ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
@@ -117,7 +147,7 @@ func (s *Service) ListJobs(ctx context.Context, limit int) ([]Job, error) {
 
 func (s *Service) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 	row := s.db.Pool.QueryRow(ctx, `
-		SELECT id, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
+		SELECT id, kind, cidr, ports, status, total_hosts, scanned_hosts, open_ports, error,
 			created_at, started_at, finished_at, created_by
 		FROM discovery_jobs WHERE id=$1`, id)
 	return scanJob(row)
@@ -125,14 +155,21 @@ func (s *Service) GetJob(ctx context.Context, id uuid.UUID) (Job, error) {
 
 func (s *Service) ListCandidates(ctx context.Context, jobID uuid.UUID) ([]Candidate, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT c.id, c.job_id, c.address, c.port, c.protocol, c.imported_asset_id, c.created_at,
-			EXISTS(
-				SELECT 1 FROM assets a
-				WHERE a.address = c.address AND a.port = c.port AND a.protocol = c.protocol
-			)
+		SELECT c.id, c.job_id, c.address, c.port, c.protocol, COALESCE(c.username,''), c.source_asset_id,
+			c.imported_asset_id, c.imported_account_id, c.details, COALESCE(c.privileged,false), c.created_at,
+			CASE
+				WHEN COALESCE(c.username,'') <> '' AND c.source_asset_id IS NOT NULL THEN EXISTS(
+					SELECT 1 FROM asset_accounts a
+					WHERE a.asset_id = c.source_asset_id AND a.username = c.username
+				)
+				ELSE EXISTS(
+					SELECT 1 FROM assets a
+					WHERE a.address = c.address AND a.port = c.port AND a.protocol = c.protocol
+				)
+			END
 		FROM discovery_candidates c
 		WHERE c.job_id=$1
-		ORDER BY c.address, c.port`, jobID)
+		ORDER BY c.privileged DESC, c.address, c.username, c.port`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +177,8 @@ func (s *Service) ListCandidates(ctx context.Context, jobID uuid.UUID) ([]Candid
 	var out []Candidate
 	for rows.Next() {
 		var c Candidate
-		if err := rows.Scan(&c.ID, &c.JobID, &c.Address, &c.Port, &c.Protocol, &c.ImportedAssetID, &c.CreatedAt, &c.AlreadyKnown); err != nil {
+		if err := rows.Scan(&c.ID, &c.JobID, &c.Address, &c.Port, &c.Protocol, &c.Username, &c.SourceAssetID,
+			&c.ImportedAssetID, &c.ImportedAccountID, &c.Details, &c.Privileged, &c.CreatedAt, &c.AlreadyKnown); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -148,17 +186,30 @@ func (s *Service) ListCandidates(ctx context.Context, jobID uuid.UUID) ([]Candid
 	return out, rows.Err()
 }
 
-func (s *Service) ImportCandidate(ctx context.Context, actorID, candidateID uuid.UUID, ip, ua string) (assets.Asset, error) {
+func (s *Service) ImportCandidate(ctx context.Context, actorID, candidateID uuid.UUID, ip, ua string) (ImportResult, error) {
 	var c Candidate
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, job_id, address, port, protocol, imported_asset_id, created_at
+		SELECT id, job_id, address, port, protocol, COALESCE(username,''), source_asset_id,
+			imported_asset_id, imported_account_id, details, COALESCE(privileged,false), created_at
 		FROM discovery_candidates WHERE id=$1`, candidateID).Scan(
-		&c.ID, &c.JobID, &c.Address, &c.Port, &c.Protocol, &c.ImportedAssetID, &c.CreatedAt)
+		&c.ID, &c.JobID, &c.Address, &c.Port, &c.Protocol, &c.Username, &c.SourceAssetID,
+		&c.ImportedAssetID, &c.ImportedAccountID, &c.Details, &c.Privileged, &c.CreatedAt)
 	if err != nil {
-		return assets.Asset{}, err
+		return ImportResult{}, err
 	}
+	if c.Username != "" {
+		return s.importAccountCandidate(ctx, actorID, c, ip, ua)
+	}
+	return s.importHostCandidate(ctx, actorID, c, ip, ua)
+}
+
+func (s *Service) importHostCandidate(ctx context.Context, actorID uuid.UUID, c Candidate, ip, ua string) (ImportResult, error) {
 	if c.ImportedAssetID != nil {
-		return s.assets.Get(ctx, *c.ImportedAssetID)
+		a, err := s.assets.Get(ctx, *c.ImportedAssetID)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		return ImportResult{Kind: "asset", Asset: &a}, nil
 	}
 
 	name := fmt.Sprintf("%s-%s-%d", c.Address, c.Protocol, c.Port)
@@ -174,7 +225,6 @@ func (s *Service) ImportCandidate(ctx context.Context, actorID, candidateID uuid
 		Tags:      []string{"discovered"},
 	}, ip, ua)
 	if err != nil {
-		// name collision — try unique suffix
 		name2 := fmt.Sprintf("%s-%s", name, store.NewID().String()[:8])
 		asset, err = s.assets.Create(ctx, actorID, assets.CreateAssetInput{
 			Name: name2, AssetType: "host", Hostname: c.Address, Address: c.Address,
@@ -183,21 +233,24 @@ func (s *Service) ImportCandidate(ctx context.Context, actorID, candidateID uuid
 			Tags:        []string{"discovered"},
 		}, ip, ua)
 		if err != nil {
-			return assets.Asset{}, err
+			return ImportResult{}, err
 		}
 	}
 	_, _ = s.db.Pool.Exec(ctx, `
-		UPDATE discovery_candidates SET imported_asset_id=$2 WHERE id=$1`, candidateID, asset.ID)
+		UPDATE discovery_candidates SET imported_asset_id=$2 WHERE id=$1`, c.ID, asset.ID)
 	_ = s.aud.Record(ctx, &actorID, "discovery.candidate.imported", "asset", asset.ID.String(), ip, ua, map[string]any{
-		"candidate_id": candidateID.String(), "address": c.Address, "port": c.Port, "protocol": c.Protocol,
+		"candidate_id": c.ID.String(), "address": c.Address, "port": c.Port, "protocol": c.Protocol,
 	})
-	return asset, nil
+	return ImportResult{Kind: "asset", Asset: &asset}, nil
 }
 
 func scanJob(row interface{ Scan(dest ...any) error }) (Job, error) {
 	var j Job
-	err := row.Scan(&j.ID, &j.CIDR, &j.Ports, &j.Status, &j.TotalHosts, &j.ScannedHosts, &j.OpenPorts, &j.Error,
+	err := row.Scan(&j.ID, &j.Kind, &j.CIDR, &j.Ports, &j.Status, &j.TotalHosts, &j.ScannedHosts, &j.OpenPorts, &j.Error,
 		&j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.CreatedBy)
+	if j.Kind == "" {
+		j.Kind = "network"
+	}
 	return j, err
 }
 
