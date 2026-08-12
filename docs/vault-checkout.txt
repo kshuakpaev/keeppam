@@ -1,0 +1,33 @@
+# KeepPAM: vault checkout / rotation
+
+## Checkout / check-in
+
+На учётке актива (`assets.write`):
+
+1. **Checkout** — эксклюзивный hold (TTL). Пока hold активен, другой админ не может взять секрет.
+2. **Reveal** — показать plaintext только держателю (аудит `asset.account.secret_revealed`).
+3. **Check-in** — сдать hold; опционально сразу ротировать.
+4. **Force check-in** — снять чужой hold.
+
+SSH/RDP/SQL-сессии через PAM **не требуют** checkout — пароль цели пользователю не показывают.
+
+## Dual-control
+
+Флаг `dual_control_checkout` на учётке: Checkout создаёт заявку → другой админ одобряет на странице «Запросы доступа».
+
+## Авторотация
+
+| Политика | Поведение |
+|----------|-----------|
+| `rotate_after_session` | После окончания последней active-сессии по учётке — remote rotate |
+| `rotate_on_checkin` | Подсказка/дефолт при check-in |
+| `rotate_interval_hours` | Плановая ротация (`next_rotate_at`), раз в минуту scheduler |
+
+Ротация во время чужого checkout блокируется (кроме system/holder).
+
+## API
+
+- `POST /api/v1/admin/assets/{id}/accounts/{accountId}/checkout|checkin|force-checkin|reveal`
+- `GET /api/v1/admin/secret-checkouts`
+- `POST /api/v1/admin/secret-checkouts/{id}/approve|deny`
+- `PATCH .../accounts/{id}` — политики ротации

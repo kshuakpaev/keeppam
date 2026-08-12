@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, hasPerm, type CommandPolicyPack } from "../api";
+import { api, hasPerm, type CommandPolicyPack, type SQLPolicyPack } from "../api";
 import { useAuth } from "../auth";
 
 export function JeaPage() {
   const { user } = useAuth();
   const canRead = hasPerm(user, "jea.read");
   const canWrite = hasPerm(user, "jea.write");
+  const [tab, setTab] = useState<"ssh" | "sql">("ssh");
   const [packs, setPacks] = useState<CommandPolicyPack[]>([]);
+  const [sqlPacks, setSqlPacks] = useState<SQLPolicyPack[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,12 +19,23 @@ export function JeaPage() {
     mode: "allowlist",
     patterns: "",
   });
+  const [sqlEditId, setSqlEditId] = useState<string | null>(null);
+  const [sqlForm, setSqlForm] = useState({
+    name: "",
+    description: "",
+    mode: "allowlist",
+    statements: "SELECT",
+    tables: "",
+    mask_columns: "",
+    mask_replacement: "***",
+  });
 
   async function load() {
     setError("");
     try {
-      const res = await api.listCommandPacks();
-      setPacks(res.packs || []);
+      const [cmd, sql] = await Promise.all([api.listCommandPacks(), api.listSQLPacks()]);
+      setPacks(cmd.packs || []);
+      setSqlPacks(sql.packs || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка загрузки");
     }
@@ -53,6 +66,33 @@ export function JeaPage() {
     setForm({ name: "", description: "", mode: "allowlist", patterns: "" });
   }
 
+  function startSqlEdit(p: SQLPolicyPack) {
+    setSqlEditId(p.id);
+    setSqlForm({
+      name: p.name,
+      description: p.description || "",
+      mode: p.mode || "allowlist",
+      statements: (p.statements || []).join("\n"),
+      tables: (p.tables || []).join("\n"),
+      mask_columns: (p.mask_columns || []).join("\n"),
+      mask_replacement: p.mask_replacement || "***",
+    });
+    setMsg("");
+  }
+
+  function resetSqlForm() {
+    setSqlEditId(null);
+    setSqlForm({
+      name: "",
+      description: "",
+      mode: "allowlist",
+      statements: "SELECT",
+      tables: "",
+      mask_columns: "",
+      mask_replacement: "***",
+    });
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canWrite) return;
@@ -72,12 +112,53 @@ export function JeaPage() {
       };
       if (editId) {
         await api.updateCommandPack(editId, body);
-        setMsg("Пакет обновлён");
+        setMsg("SSH-пакет обновлён");
       } else {
         await api.createCommandPack(body);
-        setMsg("Пакет создан");
+        setMsg("SSH-пакет создан");
       }
       resetForm();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSqlSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!canWrite) return;
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const body = {
+        name: sqlForm.name.trim(),
+        description: sqlForm.description.trim(),
+        mode: sqlForm.mode,
+        statements: sqlForm.statements
+          .split(/[\n,]/)
+          .map((x) => x.trim().toUpperCase())
+          .filter(Boolean),
+        tables: sqlForm.tables
+          .split(/[\n,]/)
+          .map((x) => x.trim())
+          .filter(Boolean),
+        mask_columns: sqlForm.mask_columns
+          .split(/[\n,]/)
+          .map((x) => x.trim())
+          .filter(Boolean),
+        mask_replacement: sqlForm.mask_replacement.trim() || "***",
+      };
+      if (sqlEditId) {
+        await api.updateSQLPack(sqlEditId, body);
+        setMsg("SQL-пакет обновлён");
+      } else {
+        await api.createSQLPack(body);
+        setMsg("SQL-пакет создан");
+      }
+      resetSqlForm();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения");
@@ -90,7 +171,6 @@ export function JeaPage() {
     if (!canWrite) return;
     if (!confirm(`Удалить пакет «${p.name}»?`)) return;
     setBusy(true);
-    setError("");
     try {
       await api.deleteCommandPack(p.id);
       setMsg("Удалён");
@@ -103,108 +183,251 @@ export function JeaPage() {
     }
   }
 
+  async function onSqlDelete(p: SQLPolicyPack) {
+    if (!canWrite) return;
+    if (!confirm(`Удалить SQL-пакет «${p.name}»?`)) return;
+    setBusy(true);
+    try {
+      await api.deleteSQLPack(p.id);
+      setMsg("Удалён");
+      if (sqlEditId === p.id) resetSqlForm();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка удаления");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
-      <h1>JEA / Command policy</h1>
+      <h1>JEA</h1>
       <p className="muted">
-        Пакеты allowlist/denylist для SSH-сессий. Привяжите пакет к ACL на карточке актива — фильтрация
-        команд работает в браузерном терминале и на SSH gateway :2222.
+        SSH command packs и SQL table/mask packs. Привязка — в ACL на карточке актива.
       </p>
+      <div className="row" style={{ gap: "0.5rem", marginBottom: "1rem" }}>
+        <button
+          className={`btn ${tab === "ssh" ? "" : "secondary"}`}
+          type="button"
+          onClick={() => setTab("ssh")}
+        >
+          SSH commands
+        </button>
+        <button
+          className={`btn ${tab === "sql" ? "" : "secondary"}`}
+          type="button"
+          onClick={() => setTab("sql")}
+        >
+          SQL tables / masking
+        </button>
+      </div>
       {error && <p className="error">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
 
-      <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>Пакеты</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Имя</th>
-              <th>Режим</th>
-              <th>Паттерны</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {packs.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  <span className="mono">{p.name}</span>
-                  {p.description ? (
-                    <div className="muted" style={{ fontSize: "0.85rem" }}>
-                      {p.description}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="mono">{p.mode}</td>
-                <td className="mono" style={{ fontSize: "0.8rem", maxWidth: 360 }}>
-                  {(p.patterns || []).slice(0, 8).join(", ")}
-                  {(p.patterns || []).length > 8 ? ` (+${(p.patterns || []).length - 8})` : ""}
-                </td>
-                <td>
-                  {canWrite && (
-                    <div className="row" style={{ gap: "0.4rem" }}>
-                      <button className="btn secondary" type="button" onClick={() => startEdit(p)}>
-                        Изменить
-                      </button>
-                      <button className="btn danger" type="button" disabled={busy} onClick={() => void onDelete(p)}>
-                        Удалить
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {packs.length === 0 && (
-              <tr>
-                <td colSpan={4} className="muted">
-                  Пакетов нет
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {canWrite && (
-        <form className="card" onSubmit={onSubmit} style={{ maxWidth: 560 }}>
-          <h2>{editId ? "Редактировать пакет" : "Новый пакет"}</h2>
-          <label>Имя</label>
-          <input
-            required
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="readonly-linux"
-            disabled={!!editId}
-          />
-          <label>Описание</label>
-          <input
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-          />
-          <label>Режим</label>
-          <select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}>
-            <option value="allowlist">allowlist — только совпадения</option>
-            <option value="denylist">denylist — запрет совпадений</option>
-          </select>
-          <label>Паттерны (по одному в строке, glob)</label>
-          <textarea
-            rows={10}
-            value={form.patterns}
-            onChange={(e) => setForm({ ...form, patterns: e.target.value })}
-            placeholder={"ls\ncat *\nrm *"}
-            style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
-          />
-          <div className="row" style={{ gap: "0.5rem" }}>
-            <button className="btn" type="submit" disabled={busy}>
-              {editId ? "Сохранить" : "Создать"}
-            </button>
-            {editId && (
-              <button className="btn secondary" type="button" onClick={resetForm}>
-                Отмена
-              </button>
-            )}
+      {tab === "ssh" && (
+        <>
+          <div className="card" style={{ marginBottom: "1.25rem" }}>
+            <h2>SSH-пакеты</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Имя</th>
+                  <th>Режим</th>
+                  <th>Паттерны</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {packs.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span className="mono">{p.name}</span>
+                      {p.description ? (
+                        <div className="muted" style={{ fontSize: "0.85rem" }}>
+                          {p.description}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="mono">{p.mode}</td>
+                    <td className="mono" style={{ fontSize: "0.8rem", maxWidth: 360 }}>
+                      {(p.patterns || []).slice(0, 8).join(", ")}
+                      {(p.patterns || []).length > 8 ? ` (+${(p.patterns || []).length - 8})` : ""}
+                    </td>
+                    <td>
+                      {canWrite && (
+                        <div className="row" style={{ gap: "0.4rem" }}>
+                          <button className="btn secondary" type="button" onClick={() => startEdit(p)}>
+                            Изменить
+                          </button>
+                          <button className="btn danger" type="button" disabled={busy} onClick={() => void onDelete(p)}>
+                            Удалить
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </form>
+          {canWrite && (
+            <form className="card" onSubmit={onSubmit} style={{ maxWidth: 560 }}>
+              <h2>{editId ? "Редактировать SSH-пакет" : "Новый SSH-пакет"}</h2>
+              <label>Имя</label>
+              <input
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                disabled={!!editId}
+              />
+              <label>Описание</label>
+              <input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+              <label>Режим</label>
+              <select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}>
+                <option value="allowlist">allowlist</option>
+                <option value="denylist">denylist</option>
+              </select>
+              <label>Паттерны</label>
+              <textarea
+                rows={8}
+                value={form.patterns}
+                onChange={(e) => setForm({ ...form, patterns: e.target.value })}
+                style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
+              />
+              <div className="row" style={{ gap: "0.5rem" }}>
+                <button className="btn" type="submit" disabled={busy}>
+                  {editId ? "Сохранить" : "Создать"}
+                </button>
+                {editId && (
+                  <button className="btn secondary" type="button" onClick={resetForm}>
+                    Отмена
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+        </>
+      )}
+
+      {tab === "sql" && (
+        <>
+          <div className="card" style={{ marginBottom: "1.25rem" }}>
+            <h2>SQL-пакеты</h2>
+            <p className="muted">
+              statements: SELECT/INSERT/UPDATE/DELETE/DDL · tables: glob · mask_columns: колонки → ***
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Имя</th>
+                  <th>Режим</th>
+                  <th>Statements</th>
+                  <th>Tables</th>
+                  <th>Mask</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {sqlPacks.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <span className="mono">{p.name}</span>
+                      {p.description ? (
+                        <div className="muted" style={{ fontSize: "0.85rem" }}>
+                          {p.description}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="mono">{p.mode}</td>
+                    <td className="mono">{(p.statements || []).join(", ") || "—"}</td>
+                    <td className="mono">{(p.tables || []).slice(0, 6).join(", ")}</td>
+                    <td className="mono">{(p.mask_columns || []).join(", ") || "—"}</td>
+                    <td>
+                      {canWrite && (
+                        <div className="row" style={{ gap: "0.4rem" }}>
+                          <button className="btn secondary" type="button" onClick={() => startSqlEdit(p)}>
+                            Изменить
+                          </button>
+                          <button
+                            className="btn danger"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void onSqlDelete(p)}
+                          >
+                            Удалить
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {canWrite && (
+            <form className="card" onSubmit={onSqlSubmit} style={{ maxWidth: 560 }}>
+              <h2>{sqlEditId ? "Редактировать SQL-пакет" : "Новый SQL-пакет"}</h2>
+              <label>Имя</label>
+              <input
+                required
+                value={sqlForm.name}
+                onChange={(e) => setSqlForm({ ...sqlForm, name: e.target.value })}
+                disabled={!!sqlEditId}
+              />
+              <label>Описание</label>
+              <input
+                value={sqlForm.description}
+                onChange={(e) => setSqlForm({ ...sqlForm, description: e.target.value })}
+              />
+              <label>Режим</label>
+              <select value={sqlForm.mode} onChange={(e) => setSqlForm({ ...sqlForm, mode: e.target.value })}>
+                <option value="allowlist">allowlist</option>
+                <option value="denylist">denylist</option>
+              </select>
+              <label>Statements (SELECT, INSERT, DDL…)</label>
+              <textarea
+                rows={3}
+                value={sqlForm.statements}
+                onChange={(e) => setSqlForm({ ...sqlForm, statements: e.target.value })}
+                style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
+              />
+              <label>Tables (glob, по одному в строке)</label>
+              <textarea
+                rows={4}
+                value={sqlForm.tables}
+                onChange={(e) => setSqlForm({ ...sqlForm, tables: e.target.value })}
+                placeholder={"tickets\npublic.tickets"}
+                style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
+              />
+              <label>Mask columns</label>
+              <textarea
+                rows={3}
+                value={sqlForm.mask_columns}
+                onChange={(e) => setSqlForm({ ...sqlForm, mask_columns: e.target.value })}
+                placeholder={"amount\nssn"}
+                style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
+              />
+              <label>Mask replacement</label>
+              <input
+                value={sqlForm.mask_replacement}
+                onChange={(e) => setSqlForm({ ...sqlForm, mask_replacement: e.target.value })}
+              />
+              <div className="row" style={{ gap: "0.5rem" }}>
+                <button className="btn" type="submit" disabled={busy}>
+                  {sqlEditId ? "Сохранить" : "Создать"}
+                </button>
+                {sqlEditId && (
+                  <button className="btn secondary" type="button" onClick={resetSqlForm}>
+                    Отмена
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+        </>
       )}
     </div>
   );

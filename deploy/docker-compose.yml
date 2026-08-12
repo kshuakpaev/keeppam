@@ -28,6 +28,7 @@ services:
       - ../deploy/auth-server:/app/auth-server:ro
       - ../services/auth/migrations:/app/migrations:ro
       - recordings:/tmp/recordings
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
       - "15432:15432"
@@ -46,9 +47,26 @@ services:
       KEEPPAM_CORS_ORIGIN: "http://localhost:5173"
       KEEPPAM_MIGRATIONS_DIR: "/app/migrations"
       KEEPPAM_RECORDINGS_DIR: "/tmp/recordings"
+      KEEPPAM_DATA_KEY_SOURCE: "env"
+      KEEPPAM_RECORDINGS_BACKEND: "local"
+      # Prod (см. docs/prod-infra.txt):
+      # KEEPPAM_DATA_KEY_SOURCE: "file"
+      # KEEPPAM_DATA_KEY_FILE: "/run/secrets/keeppam-data-key"
+      # KEEPPAM_RECORDINGS_BACKEND: "s3"
+      # KEEPPAM_S3_ENDPOINT: "http://minio:9000"
+      # KEEPPAM_S3_BUCKET: "keeppam-recordings"
+      # KEEPPAM_S3_ACCESS_KEY: "minio"
+      # KEEPPAM_S3_SECRET_KEY: "minio123"
+      # KEEPPAM_TLS_CERT_FILE: "/etc/keeppam/tls/server.crt"
+      # KEEPPAM_TLS_KEY_FILE: "/etc/keeppam/tls/server.key"
+      # KEEPPAM_TLS_CLIENT_CA_FILE: "/etc/keeppam/tls/client-ca.crt"
+      # KEEPPAM_TLS_REQUIRE_CLIENT_CERT: "true"
       KEEPPAM_GUACD_ADDR: "guacd:4822"
       KEEPPAM_GUACENC_URL: "http://guacenc:8099"
       KEEPPAM_ACCESS_REQUEST_TTL: "24h"
+      KEEPPAM_ISO_IMAGE: "keeppam-iso-browser:local"
+      KEEPPAM_ISO_NETWORK: "deploy_default"
+      KEEPPAM_ISO_DOCKER_SOCK: "/var/run/docker.sock"
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,7 +109,9 @@ services:
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
       KEEPPAM_REDIS_URL: "redis://redis:6379/0"
       KEEPPAM_DATA_KEY: "a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE="
+      KEEPPAM_DATA_KEY_SOURCE: "env"
       KEEPPAM_RECORDINGS_DIR: "/tmp/recordings"
+      KEEPPAM_RECORDINGS_BACKEND: "local"
       KEEPPAM_SSH_ADDR: ":2222"
       KEEPPAM_SSH_HOST_KEY: "/var/lib/keeppam/ssh/hostkey"
     depends_on:
@@ -101,6 +121,27 @@ services:
         condition: service_healthy
       api:
         condition: service_started
+
+  demo-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pam
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: postgres
+    volumes:
+      - ./demo-postgres/init.sql:/docker-entrypoint-initdb.d/01-demo.sql:ro
+      - demo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pam -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  iso-browser:
+    image: keeppam-iso-browser:local
+    build:
+      context: ./iso-browser
+    profiles: ["build"]
 
   web:
     build:
@@ -114,3 +155,4 @@ volumes:
   pgdata:
   recordings:
   sshhost:
+  demo_pgdata:

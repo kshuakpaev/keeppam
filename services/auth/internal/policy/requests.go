@@ -135,6 +135,9 @@ func (s *Service) ApproveRequest(ctx context.Context, actorID, requestID uuid.UU
 	if req.Status != "pending" {
 		return AccessRequest{}, fmt.Errorf("request is not pending")
 	}
+	if req.RequesterID == actorID {
+		return AccessRequest{}, fmt.Errorf("dual control: cannot approve your own access request")
+	}
 	uid := req.RequesterID
 	b, err := s.Create(ctx, actorID, req.AssetID, CreateBindingInput{
 		UserID:          &uid,

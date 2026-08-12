@@ -28,6 +28,7 @@ export function SessionReplayPage() {
   const [error, setError] = useState("");
   const [meta, setMeta] = useState("");
   const [protocol, setProtocol] = useState("");
+  const [isolated, setIsolated] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -61,11 +62,12 @@ export function SessionReplayPage() {
         if (cancelled) return;
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
+        setIsolated(!!sess.isolated);
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
         if (!res.ok) throw new Error("запись недоступна");
 
-        if (sess.protocol === "rdp" || sess.protocol === "vnc") {
+        if (sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           const blob = await res.blob();
           if (cancelled) return;
           const recording = openSessionRecording(blob);
@@ -285,7 +287,7 @@ export function SessionReplayPage() {
     }
   }
 
-  const isGuac = protocol === "rdp" || protocol === "vnc";
+  const isGuac = protocol === "rdp" || protocol === "vnc" || isolated;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", minHeight: 0 }}>

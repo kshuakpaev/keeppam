@@ -1,0 +1,29 @@
+# KeepPAM: ABAC, 4-eyes, break-glass
+
+## ABAC (уже было + дополнено)
+
+На ACL-привязке актива:
+
+- `required_tags` — теги должны быть и у пользователя, и у актива
+- `require_ticket` — при сессии нужен ticket_id
+- `require_reason` — при сессии нужна текстовая причина
+- `allowed_cidrs` — IP клиента (или CIDR); пусто = любой
+- окно времени / дни недели / JIT `expires_at`
+
+Deny-by-default: нет совпавшей привязки — отказ.
+
+## 4-eyes
+
+JIT-запрос доступа **нельзя одобрить самому себе** (API + UI). То же для dual-control checkout секретов.
+
+## Break-glass
+
+Право `access.breakglass` (по умолчанию admin).
+
+1. На карточке актива → «Открыть break-glass» (причина ≥ 20 символов, TTL ≤ 60 мин).
+2. Создаётся короткое user-ACL + запись в `break_glass_events`.
+3. Аудит `access.breakglass.opened` (severity=critical).
+4. Сессия, открытая по активному glass, помечается `break_glass`.
+5. Тихий admin-обход ACL (`users.write`) больше не молчит: пишется `session.admin_bypass`.
+
+Список: страница «Запросы».

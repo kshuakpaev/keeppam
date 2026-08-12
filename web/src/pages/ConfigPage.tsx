@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, hasPerm, type AuthSettings, type SIEMSettings, type SSHSettings } from "../api";
+import {
+  api,
+  hasPerm,
+  type AuthSettings,
+  type InfraStatus,
+  type SIEMSettings,
+  type SSHSettings,
+} from "../api";
 import { useAuth } from "../auth";
 
 const empty: AuthSettings = {
@@ -52,6 +59,7 @@ export function ConfigPage() {
   const [form, setForm] = useState<AuthSettings>(empty);
   const [siem, setSiem] = useState<SIEMSettings>(emptySIEM);
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
+  const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
   const [webhookAuth, setWebhookAuth] = useState("");
@@ -64,14 +72,16 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh] = await Promise.all([
+        const [s, si, sh, inf] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
+          api.getInfraStatus(),
         ]);
         setForm({ ...empty, ...s });
         setSiem({ ...emptySIEM, ...si });
         setSsh({ ...emptySSH, ...sh });
+        setInfra(inf);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Ошибка загрузки");
       }
@@ -169,11 +179,50 @@ export function ConfigPage() {
       <div className="toolbar">
         <div>
           <h1>Конфигурация</h1>
-          <p className="muted">Авторизация, SSH CA и экспорт аудита в SIEM</p>
+          <p className="muted">Авторизация, SSH CA, SIEM и prod-инфраструктура</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
+
+      {infra && (
+        <div className="card" style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
+          <h2>Инфраструктура (env)</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Только чтение. Меняется через переменные окружения API / session-worker (см.{" "}
+            <span className="mono">docs/prod-infra.txt</span>).
+          </p>
+          <p>
+            Data key: <span className="mono">{infra.data_key_source}</span>
+          </p>
+          <p>
+            Recordings:{" "}
+            <span className="mono">
+              {infra.recordings_backend}
+              {infra.recordings_dir ? ` · ${infra.recordings_dir}` : ""}
+            </span>
+          </p>
+          {infra.recordings_backend === "s3" && (
+            <p>
+              S3:{" "}
+              <span className="mono">
+                {infra.s3_endpoint || "—"} / {infra.s3_bucket || "—"}
+                {infra.s3_prefix ? ` · prefix=${infra.s3_prefix}` : ""}
+              </span>
+            </p>
+          )}
+          <p>
+            TLS / mTLS:{" "}
+            <span className="mono">
+              {infra.tls_enabled ? "on" : "off"} · client={infra.mtls}
+              {infra.cookie_secure ? " · cookie_secure" : ""}
+            </span>
+          </p>
+          <p>
+            HTTP: <span className="mono">{infra.http_addr || "—"}</span>
+          </p>
+        </div>
+      )}
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
         <h2>Авторизация</h2>

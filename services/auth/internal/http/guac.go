@@ -60,7 +60,8 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if row.Protocol != "rdp" && row.Protocol != "vnc" {
+	isolated := row.Isolated || (row.Protocol == "https" && s.apps != nil && s.apps.IsIsolated(r.Context(), row.AssetID))
+	if row.Protocol != "rdp" && row.Protocol != "vnc" && !isolated {
 		http.Error(w, "not a graphical session", http.StatusBadRequest)
 		return
 	}
@@ -80,8 +81,31 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		height = 800
 	}
 
-	tunnel, err := s.openGuacTunnel(row.Protocol, creds.Asset.Address, creds.Asset.Port,
-		creds.Account.Username, creds.Secret, width, height, id)
+	guacProto := row.Protocol
+	host := creds.Asset.Address
+	port := creds.Asset.Port
+	user := creds.Account.Username
+	pass := creds.Secret
+	if isolated {
+		loginURL := ""
+		if integ, err := s.apps.GetIntegration(r.Context(), row.AssetID); err == nil {
+			loginURL = integ.LoginURL
+		}
+		ep, err := s.apps.IsolateStart(r.Context(), id, creds, loginURL)
+		if err != nil {
+			slog.Error("iso browser", "err", err, "session", id.String())
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		guacProto = "vnc"
+		host = ep.Host
+		port = ep.Port
+		user = ""
+		pass = ""
+	}
+
+	tunnel, err := s.openGuacTunnel(guacProto, host, port, user, pass, width, height, id)
 	if err != nil {
 		slog.Error("guac tunnel", "err", err, "session", id.String())
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())

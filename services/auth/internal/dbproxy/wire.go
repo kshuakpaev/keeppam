@@ -23,21 +23,30 @@ import (
 const wireTokenPrefix = "keeppam:dbwire:"
 
 type WireGateway struct {
-	addr     string
-	protocol string
-	rdb      *redis.Client
-	assets   *assets.Service
-	sessions *sessionsvc.Service
-	audit    *audit.Service
-	live     *sessionsvc.LiveHub
+	addr      string
+	protocol  string
+	rdb       *redis.Client
+	assets    *assets.Service
+	sessions  *sessionsvc.Service
+	audit     *audit.Service
+	live      *sessionsvc.LiveHub
 	ensureEph EnsureEphemeral
+	sqlGuard  ResolveSQLGuard
 }
 
 // EnsureEphemeral creates a temporary DB role and returns dial credentials.
 type EnsureEphemeral func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (creds assets.TargetCreds, roleName string, err error)
 
-func NewWireGateway(addr, protocol string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service, aud *audit.Service, live *sessionsvc.LiveHub, ensure EnsureEphemeral) *WireGateway {
-	return &WireGateway{addr: addr, protocol: protocol, rdb: rdb, assets: assetsSvc, sessions: sess, audit: aud, live: live, ensureEph: ensure}
+// SQLGuard enforces table JEA and column masking for wire statements.
+type SQLGuard struct {
+	Allow func(stmt string) (ok bool, reason string)
+	Mask  func(cols []string, rows [][]string) ([]string, [][]string)
+}
+
+type ResolveSQLGuard func(ctx context.Context, sessionID uuid.UUID) (*SQLGuard, error)
+
+func NewWireGateway(addr, protocol string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service, aud *audit.Service, live *sessionsvc.LiveHub, ensure EnsureEphemeral, sqlGuard ResolveSQLGuard) *WireGateway {
+	return &WireGateway{addr: addr, protocol: protocol, rdb: rdb, assets: assetsSvc, sessions: sess, audit: aud, live: live, ensureEph: ensure, sqlGuard: sqlGuard}
 }
 
 func IssueWireToken(ctx context.Context, rdb *redis.Client, sessionID uuid.UUID, ttl time.Duration) (string, error) {
@@ -89,7 +98,7 @@ func (g *WireGateway) handleConn(client net.Conn) {
 	_ = client.SetDeadline(time.Now().Add(60 * time.Second))
 	ctx := context.Background()
 
-	sessionID, token, err := g.clientAuth(client)
+	sessionID, token, clientDB, err := g.clientAuth(client)
 	if err != nil {
 		slog.Info("db wire auth failed", "protocol", g.protocol, "err", err)
 		return
@@ -113,6 +122,12 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		_ = g.sendAuthFail(client, "creds error")
 		return
 	}
+	wantDB := ResolveDatabase(row.Protocol, row.DatabaseName, creds.Asset.DatabaseName)
+	creds.Asset.DatabaseName = wantDB
+	if clientDB != "" && !strings.EqualFold(clientDB, wantDB) {
+		_ = g.sendAuthFail(client, fmt.Sprintf("database mismatch: session is %q, client asked %q", wantDB, clientDB))
+		return
+	}
 	ephRole := ""
 	if g.ensureEph != nil {
 		ephCreds, roleName, eerr := g.ensureEph(ctx, sessionID, creds, row.DBPrivilege)
@@ -121,6 +136,7 @@ func (g *WireGateway) handleConn(client net.Conn) {
 			return
 		}
 		creds = ephCreds
+		creds.Asset.DatabaseName = wantDB
 		ephRole = roleName
 	}
 
@@ -152,15 +168,33 @@ func (g *WireGateway) handleConn(client net.Conn) {
 	ClearWireToken(ctx, g.rdb, sessionID)
 }
 
+func (g *WireGateway) loadGuard(ctx context.Context, sessionID uuid.UUID) *SQLGuard {
+	if g.sqlGuard == nil {
+		return nil
+	}
+	g2, err := g.sqlGuard(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	return g2
+}
+
+func (g *WireGateway) denySQL(ctx context.Context, sessionID, userID uuid.UUID, stmt, reason string) {
+	_ = g.sessions.AddEvent(ctx, sessionID, "sql_denied", map[string]any{"statement": truncateStmt(stmt), "reason": reason, "via": "wire"})
+	_ = g.audit.Record(ctx, &userID, "session.sql.denied", "session", sessionID.String(), "", "dbwire", map[string]any{
+		"statement": truncateStmt(stmt), "reason": reason,
+	})
+}
+
 func (g *WireGateway) servePostgres(ctx context.Context, client net.Conn, creds assets.TargetCreds, sessionID, userID uuid.UUID, rec *Recorder) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/postgres?sslmode=disable",
-		urlUser(creds.Account.Username), urlUser(creds.Secret), creds.Asset.Address, creds.Asset.Port)
+	dsn := PostgresDSN(creds, ResolveDatabase("postgres", "", creds.Asset.DatabaseName))
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		_ = writePGMsg(client, 'E', pgErrorBody(err.Error()))
 		return
 	}
 	defer conn.Close(ctx)
+	guard := g.loadGuard(ctx, sessionID)
 
 	for {
 		msg, err := readPGMsg(client)
@@ -170,13 +204,20 @@ func (g *WireGateway) servePostgres(ctx context.Context, client net.Conn, creds 
 		switch msg.tag {
 		case 'Q':
 			stmt := strings.TrimRight(string(msg.body), "\x00")
+			if guard != nil && guard.Allow != nil {
+				if ok, reason := guard.Allow(stmt); !ok {
+					g.denySQL(ctx, sessionID, userID, stmt, reason)
+					_ = writePGMsg(client, 'E', pgErrorBody(reason))
+					_ = writePGMsg(client, 'Z', []byte{'I'})
+					continue
+				}
+			}
 			g.execAndRecord(ctx, sessionID, userID, stmt, rec, func() error {
-				return writePGQueryResult(ctx, client, conn, stmt)
+				return writePGQueryResult(ctx, client, conn, stmt, guard)
 			})
 		case 'X':
 			return
 		case 'P', 'B', 'D', 'E', 'S', 'H', 'C':
-			// Ignore extended protocol for MVP — tell client to use simple queries
 			_ = writePGMsg(client, 'E', pgErrorBody("extended protocol not supported; use simple Query"))
 			_ = writePGMsg(client, 'Z', []byte{'I'})
 		default:
@@ -186,8 +227,7 @@ func (g *WireGateway) servePostgres(ctx context.Context, client net.Conn, creds 
 }
 
 func (g *WireGateway) serveMySQL(ctx context.Context, client net.Conn, creds assets.TargetCreds, sessionID, userID uuid.UUID, rec *Recorder) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=15s",
-		creds.Account.Username, creds.Secret, creds.Asset.Address, creds.Asset.Port)
+	dsn := MySQLDSN(creds, ResolveDatabase("mysql", "", creds.Asset.DatabaseName))
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		_ = writeMySQLPacket(client, 1, mysqlErr(err.Error()))
@@ -195,6 +235,7 @@ func (g *WireGateway) serveMySQL(ctx context.Context, client net.Conn, creds ass
 	}
 	defer db.Close()
 	seq := byte(0)
+	guard := g.loadGuard(ctx, sessionID)
 	for {
 		pkt, s, err := readMySQLPacket(client)
 		if err != nil {
@@ -209,8 +250,16 @@ func (g *WireGateway) serveMySQL(ctx context.Context, client net.Conn, creds ass
 			return
 		case 0x03: // COM_QUERY
 			stmt := string(pkt[1:])
+			if guard != nil && guard.Allow != nil {
+				if ok, reason := guard.Allow(stmt); !ok {
+					g.denySQL(ctx, sessionID, userID, stmt, reason)
+					_ = writeMySQLPacket(client, seq, mysqlErr(reason))
+					seq++
+					continue
+				}
+			}
 			g.execAndRecord(ctx, sessionID, userID, stmt, rec, func() error {
-				return writeMySQLQueryResult(ctx, client, db, stmt, &seq)
+				return writeMySQLQueryResult(ctx, client, db, stmt, &seq, guard)
 			})
 		default:
 			_ = writeMySQLPacket(client, seq, mysqlErr("command not supported in KeepPAM wire MVP"))
@@ -234,7 +283,7 @@ func (g *WireGateway) execAndRecord(ctx context.Context, sessionID, userID uuid.
 	})
 }
 
-func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, stmt string) error {
+func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, stmt string, guard *SQLGuard) error {
 	rows, err := conn.Query(ctx, stmt)
 	if err != nil {
 		_ = writePGMsg(client, 'E', pgErrorBody(err.Error()))
@@ -242,8 +291,10 @@ func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, st
 	}
 	defer rows.Close()
 	fds := rows.FieldDescriptions()
+	colNames := make([]string, len(fds))
 	rd := binary.BigEndian.AppendUint16(nil, uint16(len(fds)))
-	for _, f := range fds {
+	for i, f := range fds {
+		colNames[i] = string(f.Name)
 		rd = append(rd, []byte(f.Name)...)
 		rd = append(rd, 0)
 		tmp := make([]byte, 18)
@@ -254,38 +305,49 @@ func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, st
 	if err := writePGMsg(client, 'T', rd); err != nil {
 		return err
 	}
-	n := 0
+	var buffered [][]string
 	for rows.Next() {
 		vals, err := rows.Values()
 		if err != nil {
 			break
 		}
-		row := binary.BigEndian.AppendUint16(nil, uint16(len(vals)))
-		for _, v := range vals {
+		row := make([]string, len(vals))
+		for i, v := range vals {
 			if v == nil {
-				row = binary.BigEndian.AppendUint32(row, 0xffffffff)
-				continue
+				row[i] = ""
+			} else {
+				row[i] = fmt.Sprint(v)
 			}
-			s := []byte(fmt.Sprint(v))
-			row = binary.BigEndian.AppendUint32(row, uint32(len(s)))
-			row = append(row, s...)
+		}
+		buffered = append(buffered, row)
+		if len(buffered) >= maxRows {
+			break
+		}
+	}
+	if guard != nil && guard.Mask != nil {
+		_, buffered = guard.Mask(colNames, buffered)
+	}
+	for _, cells := range buffered {
+		row := binary.BigEndian.AppendUint16(nil, uint16(len(cells)))
+		for i, s := range cells {
+			// preserve NULL if original was empty and... we lost NULL; treat empty as value
+			_ = i
+			b := []byte(s)
+			row = binary.BigEndian.AppendUint32(row, uint32(len(b)))
+			row = append(row, b...)
 		}
 		if err := writePGMsg(client, 'D', row); err != nil {
 			return err
 		}
-		n++
-		if n >= maxRows {
-			break
-		}
 	}
-	tag := fmt.Sprintf("SELECT %d", n)
+	tag := fmt.Sprintf("SELECT %d", len(buffered))
 	if err := writePGMsg(client, 'C', append([]byte(tag), 0)); err != nil {
 		return err
 	}
 	return writePGMsg(client, 'Z', []byte{'I'})
 }
 
-func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stmt string, seq *byte) error {
+func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stmt string, seq *byte, guard *SQLGuard) error {
 	rows, err := db.QueryContext(ctx, stmt)
 	if err != nil {
 		_ = writeMySQLPacket(client, *seq, mysqlErr(err.Error()))
@@ -297,7 +359,6 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 	if err != nil {
 		return err
 	}
-	// column count
 	_ = writeMySQLPacket(client, *seq, []byte{byte(len(cols))})
 	*seq++
 	for _, c := range cols {
@@ -305,7 +366,6 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 		_ = writeMySQLPacket(client, *seq, def)
 		*seq++
 	}
-	// EOF
 	_ = writeMySQLPacket(client, *seq, []byte{0xfe, 0, 0, 2, 0})
 	*seq++
 	raw := make([]sql.NullString, len(cols))
@@ -313,36 +373,53 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 	for i := range raw {
 		ptrs[i] = &raw[i]
 	}
-	n := 0
+	var buffered [][]string
+	var nulls [][]bool
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
 			break
 		}
+		row := make([]string, len(cols))
+		nuls := make([]bool, len(cols))
+		for i, v := range raw {
+			if v.Valid {
+				row[i] = truncateCell(v.String)
+			} else {
+				nuls[i] = true
+			}
+		}
+		buffered = append(buffered, row)
+		nulls = append(nulls, nuls)
+		if len(buffered) >= maxRows {
+			break
+		}
+	}
+	if guard != nil && guard.Mask != nil {
+		_, buffered = guard.Mask(cols, buffered)
+	}
+	for ri, cells := range buffered {
 		row := []byte{}
-		for _, v := range raw {
-			if !v.Valid {
-				row = append(row, 0xfb) // NULL
+		for i, s := range cells {
+			if ri < len(nulls) && nulls[ri][i] && s == "" {
+				row = append(row, 0xfb)
 				continue
 			}
-			row = appendLenEnc(row, []byte(truncateCell(v.String)))
+			row = appendLenEnc(row, []byte(s))
 		}
 		_ = writeMySQLPacket(client, *seq, row)
 		*seq++
-		n++
-		if n >= maxRows {
-			break
-		}
 	}
 	_ = writeMySQLPacket(client, *seq, []byte{0xfe, 0, 0, 2, 0})
 	*seq++
 	return nil
 }
 
-func (g *WireGateway) clientAuth(c net.Conn) (uuid.UUID, string, error) {
+func (g *WireGateway) clientAuth(c net.Conn) (uuid.UUID, string, string, error) {
 	if g.protocol == "postgres" {
 		return g.authPostgres(c)
 	}
-	return g.authMySQL(c)
+	id, tok, err := g.authMySQL(c)
+	return id, tok, "", err
 }
 
 func (g *WireGateway) sendAuthFail(c net.Conn, msg string) error {
@@ -363,18 +440,18 @@ func (g *WireGateway) sendAuthOK(c net.Conn) error {
 	return writeMySQLPacket(c, 2, []byte{0, 0, 0, 2, 0, 0, 0})
 }
 
-func (g *WireGateway) authPostgres(c net.Conn) (uuid.UUID, string, error) {
+func (g *WireGateway) authPostgres(c net.Conn) (uuid.UUID, string, string, error) {
 	hdr := make([]byte, 8)
 	if _, err := io.ReadFull(c, hdr); err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, "", "", err
 	}
 	length := int(binary.BigEndian.Uint32(hdr[0:4]))
 	if length < 8 || length > 10000 {
-		return uuid.Nil, "", fmt.Errorf("bad startup length")
+		return uuid.Nil, "", "", fmt.Errorf("bad startup length")
 	}
 	rest := make([]byte, length-8)
 	if _, err := io.ReadFull(c, rest); err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, "", "", err
 	}
 	if binary.BigEndian.Uint32(hdr[4:8]) == 80877103 {
 		_, _ = c.Write([]byte{'N'})
@@ -383,19 +460,19 @@ func (g *WireGateway) authPostgres(c net.Conn) (uuid.UUID, string, error) {
 	params := parsePGStartup(rest)
 	id, err := uuid.Parse(params["user"])
 	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("user must be session uuid")
+		return uuid.Nil, "", "", fmt.Errorf("user must be session uuid")
 	}
 	if err := writePGMsg(c, 'R', []byte{0, 0, 0, 3}); err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, "", "", err
 	}
 	msg, err := readPGMsg(c)
 	if err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, "", "", err
 	}
 	if msg.tag != 'p' {
-		return uuid.Nil, "", fmt.Errorf("expected password")
+		return uuid.Nil, "", "", fmt.Errorf("expected password")
 	}
-	return id, strings.TrimRight(string(msg.body), "\x00"), nil
+	return id, strings.TrimRight(string(msg.body), "\x00"), strings.TrimSpace(params["database"]), nil
 }
 
 func (g *WireGateway) authMySQL(c net.Conn) (uuid.UUID, string, error) {

@@ -31,9 +31,10 @@ type CommandPackInput struct {
 }
 
 type AccessResult struct {
-	OK                   bool
-	BindingID            *uuid.UUID
-	CommandPolicyPackID  *uuid.UUID
+	OK                  bool
+	BindingID           *uuid.UUID
+	CommandPolicyPackID *uuid.UUID
+	SQLPolicyPackID     *uuid.UUID
 }
 
 func (s *Service) ListCommandPacks(ctx context.Context) ([]CommandPack, error) {
@@ -239,7 +240,8 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT b.id, b.user_id, b.role_id, b.time_start, b.time_end, b.days_of_week, b.expires_at,
-			b.required_tags, b.require_ticket, b.command_policy_pack_id, r.name
+			b.required_tags, b.require_ticket, COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
+			b.command_policy_pack_id, b.sql_policy_pack_id, r.name
 		FROM asset_access_bindings b
 		LEFT JOIN roles r ON r.id = b.role_id
 		WHERE b.asset_id=$1
@@ -256,14 +258,14 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 
 	for rows.Next() {
 		var bid uuid.UUID
-		var uid, rid, packID *uuid.UUID
+		var uid, rid, packID, sqlPackID *uuid.UUID
 		var tStart, tEnd *time.Time
 		var expires *time.Time
 		var days int
 		var roleName *string
-		var reqTags []string
-		var requireTicket bool
-		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &packID, &roleName); err != nil {
+		var reqTags, cidrs []string
+		var requireTicket, requireReason bool
+		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &packID, &sqlPackID, &roleName); err != nil {
 			return AccessResult{}, err
 		}
 		match := false
@@ -293,8 +295,14 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		if requireTicket && !in.IgnoreTicket && ticket == "" {
 			continue
 		}
+		if requireReason && strings.TrimSpace(in.Reason) == "" {
+			continue
+		}
+		if !ipAllowed(cidrs, in.ClientIP) {
+			continue
+		}
 		idCopy := bid
-		return AccessResult{OK: true, BindingID: &idCopy, CommandPolicyPackID: packID}, nil
+		return AccessResult{OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID}, nil
 	}
 	if err := rows.Err(); err != nil {
 		return AccessResult{}, err

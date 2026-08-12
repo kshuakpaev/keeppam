@@ -9,6 +9,7 @@ api-build:
 # Сборка на хосте — без pull golang/node из Docker Hub (офлайн / IPv6).
 up: api-build web-build
 	docker compose -f deploy/docker-compose.yml build web
+	docker compose -f deploy/docker-compose.yml --profile build build iso-browser
 	docker compose -f deploy/docker-compose.yml up -d
 	docker compose -f deploy/docker-compose.yml restart api session-worker
 

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -33,18 +34,23 @@ type Session struct {
 	TicketID        string     `json:"ticket_id,omitempty"`
 	Reason          string     `json:"reason,omitempty"`
 	DBPrivilege     string     `json:"db_privilege,omitempty"`
+	DatabaseName    string     `json:"database_name,omitempty"`
+	SQLPolicyPackID *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
+	BreakGlass      bool       `json:"break_glass"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
 	AccountUsername string `json:"account_username,omitempty"`
 	AssetAddress    string `json:"asset_address,omitempty"`
 	HasRecording    bool   `json:"has_recording"`
+	Isolated        bool   `json:"isolated"`
 }
 
 type Service struct {
 	db            *store.DB
 	aud           *audit.Service
 	recordingsDir string
+	store         recstore.Store
 	endHook       EndHook
 }
 
@@ -53,14 +59,33 @@ type EndHook func(ctx context.Context, id uuid.UUID, protocol string)
 
 func New(db *store.DB, aud *audit.Service, recordingsDir string) *Service {
 	_ = os.MkdirAll(recordingsDir, 0o750)
-	return &Service{db: db, aud: aud, recordingsDir: recordingsDir}
+	return &Service{db: db, aud: aud, recordingsDir: recordingsDir, store: &recstore.Local{Root: recordingsDir}}
 }
 
 func (s *Service) SetEndHook(h EndHook) {
 	s.endHook = h
 }
 
+func (s *Service) SetRecordingStore(st recstore.Store) {
+	if st != nil {
+		s.store = st
+	}
+}
+
+func (s *Service) RecordingStore() recstore.Store { return s.store }
+
 func (s *Service) RecordingsDir() string { return s.recordingsDir }
+
+func (s *Service) syncRecording(ctx context.Context, id uuid.UUID) {
+	if s.store == nil {
+		return
+	}
+	sess, err := s.Get(ctx, id)
+	if err != nil || sess.RecordingPath == "" {
+		return
+	}
+	_ = s.store.Sync(ctx, sess.RecordingPath)
+}
 
 type CreateInput struct {
 	AssetID     uuid.UUID
@@ -69,7 +94,11 @@ type CreateInput struct {
 	ClientIP    string
 	TicketID    string
 	Reason      string
-	DBPrivilege string // readonly|readwrite for postgres/mysql
+	DBPrivilege  string // readonly|readwrite for postgres/mysql
+	DatabaseName    string     // target database/schema name
+	SQLPolicyPackID *uuid.UUID // optional SQL JEA pack snapshot
+	Isolated        bool       // https isolated Chromium via VNC
+	BreakGlass      bool
 }
 
 type ListFilter struct {
@@ -95,7 +124,11 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		recPath = filepath.Join(s.recordingsDir, "sql", id.String()+".jsonl")
 	}
 	if in.Protocol == "https" {
-		recPath = filepath.Join(s.recordingsDir, "http", id.String()+".jsonl")
+		if in.Isolated {
+			recPath = filepath.Join(s.recordingsDir, "guac", id.String())
+		} else {
+			recPath = filepath.Join(s.recordingsDir, "http", id.String()+".jsonl")
+		}
 	}
 	dbPriv := "readonly"
 	if in.Protocol == "postgres" || in.Protocol == "mysql" {
@@ -105,17 +138,21 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	} else {
 		dbPriv = ""
 	}
+	dbName := strings.TrimSpace(in.DatabaseName)
+	if dbName == "" && in.Protocol == "postgres" {
+		dbName = "postgres"
+	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, created_at)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, break_glass, created_at)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
-		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, now)
+		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.BreakGlass, now)
 	if err != nil {
 		return Session{}, err
 	}
 	_ = s.aud.Record(ctx, &userID, "session.created", "session", id.String(), in.ClientIP, ua, map[string]any{
 		"asset_id": in.AssetID.String(), "account_id": in.AccountID.String(), "protocol": in.Protocol,
-		"ticket_id": strings.TrimSpace(in.TicketID),
+		"ticket_id": strings.TrimSpace(in.TicketID), "break_glass": in.BreakGlass,
 	})
 	_ = s.AddEvent(ctx, id, "created", map[string]any{"protocol": in.Protocol})
 	return s.Get(ctx, id)
@@ -155,6 +192,7 @@ func (s *Service) MarkEnded(ctx context.Context, id uuid.UUID, failMsg string) e
 	if s.endHook != nil {
 		s.endHook(ctx, id, protocol)
 	}
+	s.syncRecording(ctx, id)
 	return nil
 }
 
@@ -185,6 +223,7 @@ func (s *Service) CloseStale(ctx context.Context, olderThan time.Duration) (int,
 		if s.endHook != nil {
 			s.endHook(ctx, id, protocol)
 		}
+		s.syncRecording(ctx, id)
 		n++
 	}
 	return n, rows.Err()
@@ -204,7 +243,8 @@ func (s *Service) AddEvent(ctx context.Context, sessionID uuid.UUID, eventType s
 const sessionSelect = `
 		SELECT s.id, s.user_id, s.asset_id, s.account_id, s.protocol, s.status, s.client_ip,
 			s.recording_path, s.error_message, s.started_at, s.ended_at, s.last_seen_at, s.created_at,
-			s.ticket_id, s.reason, COALESCE(s.db_privilege,''),
+			s.ticket_id, s.reason, COALESCE(s.db_privilege,''), COALESCE(s.database_name,''), s.sql_policy_pack_id,
+			COALESCE(s.break_glass,false),
 			u.username, a.name, aa.username, a.address,
 			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
 		FROM sessions s
@@ -270,7 +310,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 			return nil, 0, err
 		}
 		if sess.RecordingPath != "" {
-			if _, err := os.Stat(sess.RecordingPath); err == nil {
+			if s.store != nil {
+				sess.HasRecording = s.store.Exists(ctx, sess.RecordingPath)
+			} else if _, err := os.Stat(sess.RecordingPath); err == nil {
 				sess.HasRecording = true
 			} else {
 				sess.HasRecording = false
@@ -290,7 +332,12 @@ func (s *Service) RecordingFile(ctx context.Context, id uuid.UUID) (string, erro
 		return "", fmt.Errorf("no recording")
 	}
 	path := sess.RecordingPath
-	if sess.Protocol == "rdp" || sess.Protocol == "vnc" {
+	guac := sess.Protocol == "rdp" || sess.Protocol == "vnc" ||
+		strings.Contains(filepath.ToSlash(path), "/guac/")
+	if s.store != nil {
+		_ = s.store.EnsureLocal(ctx, path)
+	}
+	if guac {
 		if best := largestGuacRecording(path); best != "" {
 			return best, nil
 		}
@@ -333,10 +380,15 @@ func scanSession(row scannable) (Session, error) {
 	err := row.Scan(
 		&s.ID, &s.UserID, &s.AssetID, &s.AccountID, &s.Protocol, &s.Status, &s.ClientIP,
 		&s.RecordingPath, &s.ErrorMessage, &s.StartedAt, &s.EndedAt, &s.LastSeenAt, &s.CreatedAt,
-		&s.TicketID, &s.Reason, &s.DBPrivilege,
+		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID,
+		&s.BreakGlass,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
 	)
-	return s, err
+	if err != nil {
+		return s, err
+	}
+	s.Isolated = s.Protocol == "https" && strings.Contains(filepath.ToSlash(s.RecordingPath), "/guac/")
+	return s, nil
 }
 
 func IsNotFound(err error) bool { return err == pgx.ErrNoRows }

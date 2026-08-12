@@ -130,3 +130,33 @@ func (s *Server) handleAccessRequestsSummary(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, sum)
 }
+
+func (s *Server) handleOpenBreakGlass(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	assetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in policy.BreakGlassInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	ev, err := s.policy.OpenBreakGlass(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ev)
+}
+
+func (s *Server) handleListBreakGlass(w http.ResponseWriter, r *http.Request) {
+	activeOnly := r.URL.Query().Get("all") != "1"
+	list, err := s.policy.ListBreakGlass(r.Context(), activeOnly)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": list})
+}

@@ -118,6 +118,10 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "not an https session")
 		return
 	}
+	if s.apps.IsIsolated(r.Context(), row.AssetID) || row.Isolated {
+		writeErr(w, http.StatusBadRequest, "isolated sessions use /sessions/{id}/guac")
+		return
+	}
 	if !s.apps.NeedsFullRecording(r.Context(), row.AssetID) {
 		writeErr(w, http.StatusBadRequest, "asset recording_mode is not full")
 		return

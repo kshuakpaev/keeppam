@@ -47,8 +47,8 @@ func DialAndQuery(ctx context.Context, creds assets.TargetCreds, statement strin
 }
 
 func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement string) (QueryResult, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/postgres?sslmode=disable",
-		urlUser(creds.Account.Username), urlUser(creds.Secret), creds.Asset.Address, creds.Asset.Port)
+	db := ResolveDatabase("postgres", "", creds.Asset.DatabaseName)
+	dsn := PostgresDSN(creds, db)
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return QueryResult{}, fmt.Errorf("postgres dial: %w", err)
@@ -87,16 +87,16 @@ func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement stri
 }
 
 func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string) (QueryResult, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=10s",
-		creds.Account.Username, creds.Secret, creds.Asset.Address, creds.Asset.Port)
-	db, err := sql.Open("mysql", dsn)
+	db := ResolveDatabase("mysql", "", creds.Asset.DatabaseName)
+	dsn := MySQLDSN(creds, db)
+	dbConn, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return QueryResult{}, err
 	}
-	defer db.Close()
-	db.SetConnMaxLifetime(30 * time.Second)
+	defer dbConn.Close()
+	dbConn.SetConnMaxLifetime(30 * time.Second)
 
-	rows, err := db.QueryContext(ctx, statement)
+	rows, err := dbConn.QueryContext(ctx, statement)
 	if err != nil {
 		return QueryResult{}, err
 	}

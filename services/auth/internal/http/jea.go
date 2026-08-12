@@ -98,6 +98,104 @@ func (s *Server) handleDeleteCommandPack(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleListSQLPacks(w http.ResponseWriter, r *http.Request) {
+	list, err := s.policy.ListSQLPacks(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"packs": list})
+}
+
+func (s *Server) handleGetSQLPack(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	p, err := s.policy.GetSQLPack(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleCreateSQLPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	var in policy.SQLPackInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	p, err := s.policy.CreateSQLPack(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) handleUpdateSQLPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in policy.SQLPackInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	p, err := s.policy.UpdateSQLPack(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleDeleteSQLPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := s.policy.DeleteSQLPack(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) resolveSQLPack(ctx context.Context, userID, assetID uuid.UUID, roles []string, bypass bool, ticketID string) (policy.SQLPack, bool) {
+	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID,
+	})
+	if err != nil || !ev.OK || ev.SQLPolicyPackID == nil {
+		return policy.SQLPack{}, false
+	}
+	pack, err := s.policy.GetSQLPack(ctx, *ev.SQLPolicyPackID)
+	if err != nil {
+		return policy.SQLPack{}, false
+	}
+	return pack, true
+}
+
 func (s *Server) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{

@@ -18,6 +18,7 @@ export function AssetsPage() {
     address: "",
     port: 22,
     protocol: "ssh",
+    database_name: "",
     description: "",
     tags: "",
   });
@@ -49,6 +50,7 @@ export function AssetsPage() {
         address: form.address,
         port: Number(form.port) || 22,
         protocol: form.protocol,
+        database_name: form.database_name || undefined,
         description: form.description,
         tags: form.tags
           .split(",")
@@ -63,6 +65,7 @@ export function AssetsPage() {
         address: "",
         port: 22,
         protocol: "ssh",
+        database_name: "",
         description: "",
         tags: "",
       });
@@ -132,7 +135,17 @@ export function AssetsPage() {
                     postgres: 5432,
                     mysql: 3306,
                   };
-                  setForm({ ...form, protocol, port: ports[protocol] ?? 22 });
+                  setForm({
+                    ...form,
+                    protocol,
+                    port: ports[protocol] ?? 22,
+                    database_name:
+                      protocol === "postgres"
+                        ? form.database_name || "postgres"
+                        : protocol === "mysql"
+                          ? form.database_name
+                          : "",
+                  });
                 }}
               >
                 {PROTOCOLS.map((p) => (
@@ -152,6 +165,16 @@ export function AssetsPage() {
               />
             </div>
           </div>
+          {(form.protocol === "postgres" || form.protocol === "mysql") && (
+            <>
+              <label>Database</label>
+              <input
+                value={form.database_name}
+                onChange={(e) => setForm({ ...form, database_name: e.target.value })}
+                placeholder={form.protocol === "postgres" ? "postgres" : "(optional)"}
+              />
+            </>
+          )}
           <label>Теги (через запятую)</label>
           <input
             value={form.tags}

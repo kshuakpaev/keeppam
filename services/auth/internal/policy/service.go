@@ -26,9 +26,13 @@ type Binding struct {
 	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
 	RequiredTags         []string   `json:"required_tags"`
 	RequireTicket        bool       `json:"require_ticket"`
-	CommandPolicyPackID  *uuid.UUID `json:"command_policy_pack_id,omitempty"`
-	CommandPolicyPackName string    `json:"command_policy_pack_name,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
+	RequireReason        bool       `json:"require_reason"`
+	AllowedCIDRs         []string   `json:"allowed_cidrs"`
+	CommandPolicyPackID   *uuid.UUID `json:"command_policy_pack_id,omitempty"`
+	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
+	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
+	SQLPolicyPackName     string     `json:"sql_policy_pack_name,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 
 type Service struct {
@@ -50,7 +54,10 @@ type CreateBindingInput struct {
 	DurationMinutes     *int       `json:"duration_minutes"`
 	RequiredTags        []string   `json:"required_tags"`
 	RequireTicket       bool       `json:"require_ticket"`
+	RequireReason       bool       `json:"require_reason"`
+	AllowedCIDRs        []string   `json:"allowed_cidrs"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
+	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
 }
 
 type AccessCheck struct {
@@ -60,6 +67,8 @@ type AccessCheck struct {
 	Bypass       bool
 	Now          time.Time
 	TicketID     string
+	Reason       string
+	ClientIP     string
 	IgnoreTicket bool
 }
 
@@ -69,11 +78,14 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 			COALESCE(u.username,''), COALESCE(r.name,''),
 			to_char(b.time_start, 'HH24:MI'), to_char(b.time_end, 'HH24:MI'),
 			b.days_of_week, b.expires_at, b.required_tags, b.require_ticket,
-			b.command_policy_pack_id, COALESCE(p.name,''), b.created_at
+			COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
+			b.command_policy_pack_id, COALESCE(p.name,''),
+			b.sql_policy_pack_id, COALESCE(sp.name,''), b.created_at
 		FROM asset_access_bindings b
 		LEFT JOIN users u ON u.id = b.user_id
 		LEFT JOIN roles r ON r.id = b.role_id
 		LEFT JOIN command_policy_packs p ON p.id = b.command_policy_pack_id
+		LEFT JOIN sql_policy_packs sp ON sp.id = b.sql_policy_pack_id
 		WHERE b.asset_id=$1
 		ORDER BY b.expires_at NULLS FIRST, COALESCE(u.username, r.name)`, assetID)
 	if err != nil {
@@ -84,17 +96,20 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 	for rows.Next() {
 		var b Binding
 		var ts, te *string
-		var tags []string
-		var packName string
+		var tags, cidrs []string
+		var packName, sqlPackName string
 		if err := rows.Scan(&b.ID, &b.AssetID, &b.UserID, &b.RoleID, &b.Username, &b.RoleName,
 			&ts, &te, &b.DaysOfWeek, &b.ExpiresAt, &tags, &b.RequireTicket,
-			&b.CommandPolicyPackID, &packName, &b.CreatedAt); err != nil {
+			&b.RequireReason, &cidrs,
+			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		b.TimeStart = emptyToNil(ts)
 		b.TimeEnd = emptyToNil(te)
 		b.RequiredTags = normalizeTags(tags)
+		b.AllowedCIDRs = normalizeCIDRs(cidrs)
 		b.CommandPolicyPackName = packName
+		b.SQLPolicyPackName = sqlPackName
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -149,19 +164,24 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 		expires = time.Now().UTC().Add(time.Duration(m) * time.Minute)
 	}
 	tags := normalizeTags(in.RequiredTags)
+	cidrs, err := validateCIDRs(in.AllowedCIDRs)
+	if err != nil {
+		return Binding{}, err
+	}
 	id := store.NewID()
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, command_policy_pack_id, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,NOW(),$12)`,
-		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.CommandPolicyPackID, actorID)
+			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, command_policy_pack_id, sql_policy_pack_id, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)`,
+		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, in.CommandPolicyPackID, in.SQLPolicyPackID, actorID)
 	if err != nil {
 		return Binding{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.acl.granted", "asset", assetID.String(), ip, ua, map[string]any{
 		"binding_id": id.String(), "user_id": in.UserID, "role_id": in.RoleID,
 		"expires_at": expires, "required_tags": tags, "require_ticket": in.RequireTicket,
-		"command_policy_pack_id": in.CommandPolicyPackID,
+		"require_reason": in.RequireReason, "allowed_cidrs": cidrs,
+		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
 	})
 	list, err := s.ListByAsset(ctx, assetID)
 	if err != nil {

@@ -67,17 +67,34 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
-	if creds.Asset.Protocol == "https" && s.apps != nil && !s.apps.NeedsFullRecording(r.Context(), assetID) {
-		writeErr(w, http.StatusBadRequest, "https sessions require app recording_mode=full; use app access lease otherwise")
+	httpsIsolated := creds.Asset.Protocol == "https" && s.apps != nil && s.apps.IsIsolated(r.Context(), assetID)
+	if creds.Asset.Protocol == "https" && s.apps != nil && !s.apps.NeedsHTTPSSession(r.Context(), assetID) {
+		writeErr(w, http.StatusBadRequest, "https sessions require app recording_mode=full or isolated; use app access lease otherwise")
 		return
 	}
-	bypass := rbac.HasPermission(sess.Permissions, "users.write")
-	ok, err := s.policy.Allowed(r.Context(), policy.AccessCheck{
-		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: bypass, Now: time.Now(), TicketID: body.TicketID,
-	})
+	bypassAdmin := rbac.HasPermission(sess.Permissions, "users.write")
+	check := policy.AccessCheck{
+		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: false, Now: time.Now(),
+		TicketID: body.TicketID, Reason: body.Reason, ClientIP: clientIP(r),
+	}
+	ev, err := s.policy.Evaluate(r.Context(), check)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	ok := ev.OK
+	usedBreakGlass := false
+	if !ok {
+		if bg, berr := s.policy.HasActiveBreakGlass(r.Context(), sess.UserID, assetID); berr == nil && bg {
+			ok = true
+			usedBreakGlass = true
+		}
+	}
+	if !ok && bypassAdmin {
+		_ = s.audit.Record(r.Context(), &sess.UserID, "session.admin_bypass", "asset", assetID.String(), clientIP(r), r.UserAgent(), map[string]any{
+			"severity": "high", "ticket_id": body.TicketID, "reason": body.Reason,
+		})
+		ok = true
 	}
 	if !ok {
 		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), clientIP(r), r.UserAgent(), map[string]any{
@@ -86,9 +103,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "access denied by policy")
 		return
 	}
+	var sqlPackID *uuid.UUID
+	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
+		if ev.OK && ev.SQLPolicyPackID != nil {
+			sqlPackID = ev.SQLPolicyPackID
+		}
+	}
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
+		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID,
+		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 	}, r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -99,7 +124,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"protocol": created.Protocol, "status": created.Status, "client_ip": created.ClientIP,
 		"recording_path": created.RecordingPath, "created_at": created.CreatedAt,
 		"has_recording": created.HasRecording, "ticket_id": created.TicketID, "reason": created.Reason,
-		"db_privilege": created.DBPrivilege,
+		"db_privilege": created.DBPrivilege, "database_name": created.DatabaseName, "isolated": created.Isolated,
+		"break_glass": created.BreakGlass,
 	}
 	if created.Protocol == "postgres" || created.Protocol == "mysql" {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
@@ -111,7 +137,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				out["wire_addr"] = s.cfg.MySQLWireAddr
 			}
 			out["wire_user"] = created.ID.String()
-			out["wire_hint"] = "user=session UUID, password=wire_token, host=PAM, port from wire_addr"
+			dbHint := created.DatabaseName
+			if dbHint == "" {
+				dbHint = "(default)"
+			}
+			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
 		}
 	}
 	writeJSON(w, http.StatusCreated, out)

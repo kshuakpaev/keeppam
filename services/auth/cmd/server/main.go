@@ -28,6 +28,7 @@ import (
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
@@ -44,6 +45,25 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config", "err", err)
+		os.Exit(1)
+	}
+
+	kp, err := crypto.NewKeyProviderFromEnv()
+	if err != nil {
+		slog.Error("key provider", "err", err)
+		os.Exit(1)
+	}
+	key, err := kp.Load(context.Background())
+	if err != nil {
+		slog.Error("data key", "source", kp.Source(), "err", err)
+		os.Exit(1)
+	}
+	cfg.DataKey = key
+	cfg.DataKeySource = kp.Source()
+
+	recStore, err := recstore.NewFromEnv(cfg.RecordingsDir)
+	if err != nil {
+		slog.Error("recordings store", "err", err)
 		os.Exit(1)
 	}
 
@@ -96,6 +116,7 @@ func main() {
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
+	sessSvc.SetRecordingStore(recStore)
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
@@ -106,10 +127,33 @@ func main() {
 		if protocol == "postgres" || protocol == "mysql" {
 			dbEphSvc.Drop(ctx, id)
 		}
+		if protocol == "https" {
+			appsSvc.IsolateStop(ctx, id)
+		}
+		if row, err := sessSvc.Get(ctx, id); err == nil {
+			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
+				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
+			}
+		}
 	})
 	ensureEph := func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (assets.TargetCreds, string, error) {
 		creds, info, err := dbEphSvc.Ensure(ctx, sessionID, vault, privilege)
 		return creds, info.RoleName, err
+	}
+	resolveSQLGuard := func(ctx context.Context, sessionID uuid.UUID) (*dbproxy.SQLGuard, error) {
+		row, err := sessSvc.Get(ctx, sessionID)
+		if err != nil || row.SQLPolicyPackID == nil {
+			return nil, nil
+		}
+		pack, err := policySvc.GetSQLPack(ctx, *row.SQLPolicyPackID)
+		if err != nil {
+			return nil, err
+		}
+		p := pack
+		return &dbproxy.SQLGuard{
+			Allow: func(stmt string) (bool, string) { return policy.MatchSQL(p, stmt) },
+			Mask:  func(cols []string, rows [][]string) ([]string, [][]string) { return policy.MaskSQLResult(p, cols, rows) },
+		}, nil
 	}
 	attackSimSvc := attacksim.New(db, auditSvc, policySvc, cfg.HTTPAddr)
 
@@ -131,7 +175,23 @@ func main() {
 		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
-			slog.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode)
+			if cfg.TLSEnabled() {
+				tlsCfg, err := httpapi.BuildTLSConfig(cfg)
+				if err != nil {
+					slog.Error("tls", "err", err)
+					os.Exit(1)
+				}
+				srv.TLSConfig = tlsCfg
+				slog.Info("listening tls", "addr", cfg.HTTPAddr, "mode", cfg.Mode, "mtls", cfg.MTLSMode(),
+					"data_key", cfg.DataKeySource, "recordings", recStore.Backend())
+				if err := srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && err != http.ErrServerClosed {
+					slog.Error("http", "err", err)
+					os.Exit(1)
+				}
+				return
+			}
+			slog.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode,
+				"data_key", cfg.DataKeySource, "recordings", recStore.Backend())
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("http", "err", err)
 				os.Exit(1)
@@ -141,7 +201,7 @@ func main() {
 		go discoverySvc.Run(runCtx)
 		go complianceSvc.Run(runCtx)
 		if cfg.PostgresWireAddr != "" && cfg.PostgresWireAddr != "off" {
-			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph)
+			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
 			go func() {
 				if err := pgWire.ListenAndServe(runCtx); err != nil {
 					slog.Error("postgres wire", "err", err)
@@ -149,7 +209,7 @@ func main() {
 			}()
 		}
 		if cfg.MySQLWireAddr != "" && cfg.MySQLWireAddr != "off" {
-			myWire := dbproxy.NewWireGateway(cfg.MySQLWireAddr, "mysql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph)
+			myWire := dbproxy.NewWireGateway(cfg.MySQLWireAddr, "mysql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
 			go func() {
 				if err := myWire.ListenAndServe(runCtx); err != nil {
 					slog.Error("mysql wire", "err", err)
@@ -176,6 +236,21 @@ func main() {
 					} else if expired > 0 {
 						slog.Info("access request reaper expired", "count", expired)
 					}
+					if n, err := policySvc.CloseExpiredBreakGlass(runCtx); err != nil {
+						slog.Warn("break-glass reaper", "err", err)
+					} else if n > 0 {
+						slog.Info("break-glass closed expired", "count", n)
+					}
+					if n, err := assetsSvc.ExpireCheckouts(runCtx); err != nil {
+						slog.Warn("checkout reaper", "err", err)
+					} else if n > 0 {
+						slog.Info("checkout reaper expired", "count", n)
+					}
+					if n, err := assetsSvc.RunDueRotations(runCtx); err != nil {
+						slog.Warn("scheduled rotation", "err", err)
+					} else if n > 0 {
+						slog.Info("scheduled rotation done", "count", n)
+					}
 				}
 			}
 		}()
@@ -184,7 +259,7 @@ func main() {
 	if runSSH {
 		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live)
 		go func() {
-			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode)
+			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := gw.ListenAndServe(); err != nil {
 				slog.Error("ssh gateway", "err", err)
 				os.Exit(1)

@@ -267,11 +267,20 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 
 	bypassConnect := rbac.HasPermission(perms, "users.write")
 	okPolicy, err := g.policy.Allowed(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: bypassConnect, Now: time.Now(), TicketID: ticketID,
+		UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: false, Now: time.Now(), TicketID: ticketID, ClientIP: ip,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(ch, "policy error: %v\n", err)
 		return
+	}
+	if !okPolicy {
+		if bg, berr := g.policy.HasActiveBreakGlass(ctx, userID, chosen.AssetID); berr == nil && bg {
+			okPolicy = true
+		}
+	}
+	if !okPolicy && bypassConnect {
+		_ = g.audit.Record(ctx, &userID, "session.admin_bypass", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{"severity": "high", "ticket_id": ticketID})
+		okPolicy = true
 	}
 	if !okPolicy {
 		_, _ = io.WriteString(ch, "access denied by policy (check tags/ticket)\r\n")

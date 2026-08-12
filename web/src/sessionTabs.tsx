@@ -63,10 +63,10 @@ export function pathForTab(tab: SessionTab): string {
   return `/sessions/${tab.id}/${tab.kind}?title=${title}`;
 }
 
-export function kindForProtocol(protocol: string): SessionTabKind {
+export function kindForProtocol(protocol: string, isolated?: boolean): SessionTabKind {
   if (protocol === "rdp" || protocol === "vnc") return "desktop";
   if (protocol === "postgres" || protocol === "mysql") return "sql";
-  if (protocol === "https") return "app";
+  if (protocol === "https") return isolated ? "desktop" : "app";
   return "terminal";
 }
 
@@ -97,6 +97,7 @@ export function SessionTabsProvider({ children }: { children: ReactNode }) {
           if (s.status === "active" || s.status === "pending") {
             alive.push({
               ...t,
+              kind: kindForProtocol(s.protocol || t.protocol, s.isolated),
               title: t.title || s.asset_name || t.kind,
               protocol: s.protocol || t.protocol,
             });

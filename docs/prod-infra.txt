@@ -1,0 +1,40 @@
+# KeepPAM: production infra (mTLS / S3 / KMS)
+
+## Data key (KMS-style provider)
+
+`KEEPPAM_DATA_KEY_SOURCE`:
+
+| Value | Env | Notes |
+|-------|-----|-------|
+| `env` (default) | `KEEPPAM_DATA_KEY` | base64 of 32 raw bytes (AES-GCM envelope) |
+| `file` | `KEEPPAM_DATA_KEY_FILE` | file with base64 text or raw 32 bytes |
+| `vault` | `KEEPPAM_VAULT_ADDR`, `KEEPPAM_VAULT_TOKEN`, `KEEPPAM_VAULT_CIPHERTEXT`, optional `KEEPPAM_VAULT_TRANSIT_PATH` | POST transit decrypt; expects `{"data":{"plaintext":"<base64 32 bytes>"}}` |
+
+Ключ по-прежнему питает локальный AES-GCM Envelope (секреты учёток / SIEM / SSH CA). Полноценный cloud KMS unwrap — следующий шаг.
+
+## Recordings store
+
+`KEEPPAM_RECORDINGS_BACKEND=local|s3` (default `local`).
+
+Для `s3` (MinIO / Ceph / AWS path-style):
+
+- `KEEPPAM_S3_ENDPOINT` — например `http://minio:9000`
+- `KEEPPAM_S3_BUCKET`
+- `KEEPPAM_S3_ACCESS_KEY` / `KEEPPAM_S3_SECRET_KEY`
+- `KEEPPAM_S3_REGION` (default `us-east-1`)
+- `KEEPPAM_S3_PREFIX` (optional)
+- `KEEPPAM_S3_PATH_STYLE` — default true (`false` = virtual-hosted)
+
+Поведение hybrid: guacd/SSH пишут в `KEEPPAM_RECORDINGS_DIR` как раньше; при закрытии сессии API/worker зеркалит файл в S3. Replay сначала ищет локально, иначе скачивает из S3.
+
+## API TLS / mTLS
+
+- `KEEPPAM_TLS_CERT_FILE` + `KEEPPAM_TLS_KEY_FILE` — HTTPS (`ListenAndServeTLS`)
+- `KEEPPAM_TLS_CLIENT_CA_FILE` — проверка клиентского сертификата
+- `KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true` — обязательный mTLS; иначе optional (`VerifyClientCertIfGiven`)
+
+Рекомендуется `KEEPPAM_COOKIE_SECURE=true` при включённом TLS.
+
+## UI
+
+Конфигурация → блок «Инфраструктура (env)» — read-only статус (`GET /api/v1/admin/settings/infra`, право `settings.write`).

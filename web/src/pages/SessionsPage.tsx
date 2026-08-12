@@ -201,6 +201,11 @@ export function SessionsPage() {
                   >
                     {s.status === "active" ? "live" : s.status}
                   </span>
+                  {s.break_glass && (
+                    <span className="badge locked" style={{ marginLeft: 6 }} title="break-glass session">
+                      glass
+                    </span>
+                  )}
                 </td>
                 <td>
                   <div className="row">
@@ -212,13 +217,13 @@ export function SessionsPage() {
                           onClick={() =>
                             openTab({
                               id: s.id,
-                              kind: kindForProtocol(s.protocol),
+                              kind: kindForProtocol(s.protocol, s.isolated),
                               title: s.asset_name || s.protocol,
                               protocol: s.protocol,
                             })
                           }
                         >
-                          {s.protocol === "rdp" || s.protocol === "vnc"
+                          {s.protocol === "rdp" || s.protocol === "vnc" || s.isolated
                             ? "Desktop"
                             : s.protocol === "postgres" || s.protocol === "mysql"
                               ? "SQL"
@@ -239,7 +244,7 @@ export function SessionsPage() {
                       <>
                         {s.protocol === "postgres" ||
                         s.protocol === "mysql" ||
-                        s.protocol === "https" ? (
+                        (s.protocol === "https" && !s.isolated) ? (
                           <a className="btn secondary" href={api.getRecordingUrl(s.id)}>
                             Recording
                           </a>
@@ -248,7 +253,7 @@ export function SessionsPage() {
                             <Link className="btn secondary" to={`/sessions/${s.id}/replay`}>
                               Replay
                             </Link>
-                            {(s.protocol === "rdp" || s.protocol === "vnc") && (
+                            {(s.protocol === "rdp" || s.protocol === "vnc" || s.isolated) && (
                               <a className="btn secondary" href={api.getRecordingUrl(s.id)}>
                                 Скачать
                               </a>

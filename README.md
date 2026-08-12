@@ -44,7 +44,7 @@ make smoke
 - `services/auth` — Go identity/auth API (`KEEPPAM_MODE=api`) + SSH session-worker (`KEEPPAM_MODE=ssh`)
 - `web` — React admin UI (SSH terminal + RDP/VNC desktop via Guacamole)
 - `deploy/docker-compose.yml` — api, session-worker :2222, guacd, web, postgres, redis
-- `docs/` — architecture notes
+- `docs/` — architecture notes (`prod-infra.txt` — mTLS / S3 / data-key provider)
 
 ### RDP / VNC
 

@@ -189,8 +189,8 @@ func randomPassword() (string, error) {
 }
 
 func createPostgresRole(ctx context.Context, vault assets.TargetCreds, role, pwd, privilege string) error {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/postgres?sslmode=disable",
-		urlUser(vault.Account.Username), urlUser(vault.Secret), vault.Asset.Address, vault.Asset.Port)
+	targetDB := resolveDB("postgres", vault.Asset.DatabaseName)
+	dsn := pgDSN(vault, "postgres")
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("bootstrap dial: %w", err)
@@ -199,28 +199,46 @@ func createPostgresRole(ctx context.Context, vault assets.TargetCreds, role, pwd
 
 	until := time.Now().UTC().Add(8 * time.Hour).Format(time.RFC3339)
 	ident := pgQuoteIdent(role)
+	dbIdent := pgQuoteIdent(targetDB)
 	stmts := []string{
 		fmt.Sprintf(`CREATE ROLE %s WITH LOGIN PASSWORD %s NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT VALID UNTIL %s`,
 			ident, pgQuoteLiteral(pwd), pgQuoteLiteral(until)),
-		fmt.Sprintf(`GRANT CONNECT ON DATABASE postgres TO %s`, ident),
+		fmt.Sprintf(`GRANT CONNECT ON DATABASE %s TO %s`, dbIdent, ident),
+	}
+	for _, q := range stmts {
+		if _, err := conn.Exec(ctx, q); err != nil {
+			_ = dropPostgresRole(ctx, conn, role)
+			return err
+		}
+	}
+	_ = conn.Close(ctx)
+
+	tconn, err := pgx.Connect(ctx, pgDSN(vault, targetDB))
+	if err != nil {
+		_ = dropRemote(ctx, vault, role)
+		return fmt.Errorf("target dial %s: %w", targetDB, err)
+	}
+	defer tconn.Close(ctx)
+
+	schemaStmts := []string{
 		fmt.Sprintf(`GRANT USAGE ON SCHEMA public TO %s`, ident),
 	}
 	if privilege == "readwrite" {
-		stmts = append(stmts,
+		schemaStmts = append(schemaStmts,
 			fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s`, ident),
 			fmt.Sprintf(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %s`, ident),
 			fmt.Sprintf(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s`, ident),
 		)
 	} else {
-		stmts = append(stmts,
+		schemaStmts = append(schemaStmts,
 			fmt.Sprintf(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO %s`, ident),
 			fmt.Sprintf(`GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO %s`, ident),
 			fmt.Sprintf(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO %s`, ident),
 		)
 	}
-	for _, q := range stmts {
-		if _, err := conn.Exec(ctx, q); err != nil {
-			_ = dropPostgresRole(ctx, conn, role)
+	for _, q := range schemaStmts {
+		if _, err := tconn.Exec(ctx, q); err != nil {
+			_ = dropRemote(ctx, vault, role)
 			return err
 		}
 	}
@@ -238,16 +256,20 @@ func createMySQLRole(ctx context.Context, vault assets.TargetCreds, role, pwd, p
 	db.SetConnMaxLifetime(30 * time.Second)
 
 	u := mysqlQuoteIdent(role)
-	// host '%' for wire/proxy clients
 	create := fmt.Sprintf("CREATE USER %s@'%%' IDENTIFIED BY %s", u, mysqlQuoteLiteral(pwd))
 	if _, err := db.ExecContext(ctx, create); err != nil {
 		return err
 	}
+	target := resolveDB("mysql", vault.Asset.DatabaseName)
+	scope := "*.*"
+	if target != "" {
+		scope = mysqlQuoteIdent(target) + ".*"
+	}
 	var grant string
 	if privilege == "readwrite" {
-		grant = fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON *.* TO %s@'%%'", u)
+		grant = fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO %s@'%%'", scope, u)
 	} else {
-		grant = fmt.Sprintf("GRANT SELECT ON *.* TO %s@'%%'", u)
+		grant = fmt.Sprintf("GRANT SELECT ON %s TO %s@'%%'", scope, u)
 	}
 	if _, err := db.ExecContext(ctx, grant); err != nil {
 		_, _ = db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s@'%%'", u))
@@ -260,9 +282,7 @@ func createMySQLRole(ctx context.Context, vault assets.TargetCreds, role, pwd, p
 func dropRemote(ctx context.Context, vault assets.TargetCreds, role string) error {
 	switch vault.Asset.Protocol {
 	case "postgres":
-		dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/postgres?sslmode=disable",
-			urlUser(vault.Account.Username), urlUser(vault.Secret), vault.Asset.Address, vault.Asset.Port)
-		conn, err := pgx.Connect(ctx, dsn)
+		conn, err := pgx.Connect(ctx, pgDSN(vault, "postgres"))
 		if err != nil {
 			return err
 		}
@@ -306,6 +326,22 @@ func dropPostgresRole(ctx context.Context, conn *pgx.Conn, role string) error {
 func urlUser(s string) string {
 	r := strings.NewReplacer(":", "%3A", "/", "%2F", "@", "%40", "?", "%3F", "#", "%23", "%", "%25")
 	return r.Replace(s)
+}
+
+func resolveDB(protocol, name string) string {
+	if s := strings.TrimSpace(name); s != "" {
+		return s
+	}
+	if protocol == "postgres" {
+		return "postgres"
+	}
+	return ""
+}
+
+func pgDSN(creds assets.TargetCreds, database string) string {
+	db := resolveDB("postgres", database)
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+		urlUser(creds.Account.Username), urlUser(creds.Secret), creds.Asset.Address, creds.Asset.Port, urlUser(db))
 }
 
 func pgQuoteIdent(s string) string {

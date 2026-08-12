@@ -49,6 +49,9 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 	if acc.Status != "active" {
 		return RotateResult{}, fmt.Errorf("account disabled")
 	}
+	if acc.CheckoutUserID != nil && *acc.CheckoutUserID != actorID && actorID != uuid.Nil {
+		return RotateResult{}, fmt.Errorf("account checked out; check in (or force-checkin) before rotate")
+	}
 
 	method := acc.AuthMethod
 	if method != "password" && method != "ssh_key" {
@@ -81,12 +84,20 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 	}
 
 	rotationID := store.NewID()
+	var actorAny any
+	if actorID != uuid.Nil {
+		actorAny = actorID
+	}
 	fail := func(msg string) (RotateResult, error) {
 		_, _ = s.db.Pool.Exec(ctx, `
 			INSERT INTO secret_rotations (id, asset_id, account_id, actor_id, method, status, apply_remote, error, created_at)
 			VALUES ($1,$2,$3,$4,$5,'failed',$6,$7,NOW())`,
-			rotationID, assetID, accountID, actorID, method, applyRemote, truncate(msg, 500))
-		_ = s.aud.Record(ctx, &actorID, "asset.account.secret_rotate.failure", "asset_account", accountID.String(), ip, ua, map[string]any{
+			rotationID, assetID, accountID, actorAny, method, applyRemote, truncate(msg, 500))
+		var actorPtr *uuid.UUID
+		if actorID != uuid.Nil {
+			actorPtr = &actorID
+		}
+		_ = s.aud.Record(ctx, actorPtr, "asset.account.secret_rotate.failure", "asset_account", accountID.String(), ip, ua, map[string]any{
 			"asset_id": assetID.String(), "method": method, "apply_remote": applyRemote, "error": truncate(msg, 200),
 		})
 		return RotateResult{}, fmt.Errorf("%s", msg)
@@ -111,9 +122,15 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 		return fail("encrypt: " + err.Error())
 	}
 	now := time.Now().UTC()
+	var nextRotate any
+	if acc.RotateIntervalHours > 0 {
+		nextRotate = now.Add(time.Duration(acc.RotateIntervalHours) * time.Hour)
+	} else {
+		nextRotate = nil
+	}
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE asset_accounts SET secret_enc=$2, last_rotated_at=$3, updated_at=$3 WHERE id=$1`,
-		accountID, enc, now)
+		UPDATE asset_accounts SET secret_enc=$2, last_rotated_at=$3, next_rotate_at=$4, updated_at=$3 WHERE id=$1`,
+		accountID, enc, now, nextRotate)
 	if err != nil {
 		return fail("vault update: " + err.Error())
 	}
@@ -121,8 +138,12 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 	_, _ = s.db.Pool.Exec(ctx, `
 		INSERT INTO secret_rotations (id, asset_id, account_id, actor_id, method, status, apply_remote, error, created_at)
 		VALUES ($1,$2,$3,$4,$5,'success',$6,'',NOW())`,
-		rotationID, assetID, accountID, actorID, method, applyRemote)
-	_ = s.aud.Record(ctx, &actorID, "asset.account.secret_rotated", "asset_account", accountID.String(), ip, ua, map[string]any{
+		rotationID, assetID, accountID, actorAny, method, applyRemote)
+	var actorPtr *uuid.UUID
+	if actorID != uuid.Nil {
+		actorPtr = &actorID
+	}
+	_ = s.aud.Record(ctx, actorPtr, "asset.account.secret_rotated", "asset_account", accountID.String(), ip, ua, map[string]any{
 		"asset_id": assetID.String(), "username": acc.Username, "method": method, "apply_remote": applyRemote,
 	})
 
@@ -273,11 +294,15 @@ func (s *Service) dialManagementSSH(ctx context.Context, creds TargetCreds) (*ss
 
 func rotatePostgresPassword(ctx context.Context, creds TargetCreds, newSecret string) error {
 	host := net.JoinHostPort(creds.Asset.Address, strconv.Itoa(creds.Asset.Port))
+	db := strings.TrimSpace(creds.Asset.DatabaseName)
+	if db == "" {
+		db = "postgres"
+	}
 	u := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(creds.Account.Username, creds.Secret),
 		Host:     host,
-		Path:     "/postgres",
+		Path:     "/" + db,
 		RawQuery: "sslmode=disable",
 	}
 	conn, err := pgx.Connect(ctx, u.String())

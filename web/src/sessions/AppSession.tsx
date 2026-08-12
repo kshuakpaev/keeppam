@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { DesktopSession } from "./DesktopSession";
 
 type Props = {
   id: string;
@@ -9,8 +11,28 @@ type Props = {
 
 export function AppSession({ id, title, visible, onClose }: Props) {
   const [closing, setClosing] = useState(false);
+  const [isolated, setIsolated] = useState(false);
   const src = `/api/v1/sessions/${id}/app/`;
   void visible;
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getSession(id)
+      .then((s) => {
+        if (!cancelled && s.isolated) setIsolated(true);
+      })
+      .catch(() => {
+        /* keep proxy iframe */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (isolated) {
+    return <DesktopSession id={id} title={title} visible={visible} onClose={onClose} />;
+  }
 
   async function handleClose() {
     if (closing) return;

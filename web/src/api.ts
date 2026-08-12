@@ -53,6 +53,34 @@ export type AssetAccount = {
   last_rotated_at?: string;
   created_at: string;
   updated_at: string;
+  checked_out?: boolean;
+  checkout_user_id?: string;
+  checkout_username?: string;
+  checkout_at?: string;
+  checkout_expires_at?: string;
+  checkout_reason?: string;
+  rotate_after_session?: boolean;
+  rotate_on_checkin?: boolean;
+  rotate_interval_hours?: number;
+  next_rotate_at?: string;
+  dual_control_checkout?: boolean;
+};
+
+export type SecretCheckoutRequest = {
+  id: string;
+  asset_id: string;
+  account_id: string;
+  requester_id: string;
+  reason: string;
+  ttl_minutes: number;
+  status: string;
+  approver_id?: string;
+  decided_at?: string;
+  created_at: string;
+  expires_at: string;
+  asset_name?: string;
+  account_username?: string;
+  requester_username?: string;
 };
 
 export type Asset = {
@@ -63,6 +91,7 @@ export type Asset = {
   address: string;
   port: number;
   protocol: string;
+  database_name?: string;
   description: string;
   status: string;
   tags: string[];
@@ -87,9 +116,28 @@ export type AccessBinding = {
   expires_at?: string;
   required_tags: string[];
   require_ticket: boolean;
+  require_reason?: boolean;
+  allowed_cidrs?: string[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
+  sql_policy_pack_id?: string;
+  sql_policy_pack_name?: string;
   created_at: string;
+};
+
+export type BreakGlassEvent = {
+  id: string;
+  asset_id: string;
+  user_id: string;
+  reason: string;
+  duration_minutes: number;
+  binding_id?: string;
+  created_at: string;
+  expires_at: string;
+  closed_at?: string;
+  asset_name?: string;
+  username?: string;
+  active: boolean;
 };
 
 export type AccessRequest = {
@@ -164,6 +212,20 @@ export type SIEMSettings = {
   last_error?: string;
   last_export_at?: string;
   updated_at?: string;
+};
+
+export type InfraStatus = {
+  data_key_source: string;
+  recordings_backend: string;
+  recordings_dir: string;
+  tls_enabled: boolean;
+  mtls: "off" | "optional" | "required" | string;
+  s3_endpoint?: string;
+  s3_bucket?: string;
+  s3_region?: string;
+  s3_prefix?: string;
+  http_addr?: string;
+  cookie_secure?: boolean;
 };
 
 export type DiscoveryJob = {
@@ -301,6 +363,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getInfraStatus: () => request<InfraStatus>("/api/v1/admin/settings/infra"),
   getSSHSettings: () => request<SSHSettings>("/api/v1/admin/settings/ssh"),
   putSSHSettings: (body: Partial<SSHSettings>) =>
     request<SSHSettings>("/api/v1/admin/settings/ssh", {
@@ -415,6 +478,7 @@ export const api = {
     address: string;
     port?: number;
     protocol: string;
+    database_name?: string;
     description?: string;
     tags?: string[];
   }) =>
@@ -431,6 +495,7 @@ export const api = {
       address?: string;
       port?: number;
       protocol?: string;
+      database_name?: string;
       description?: string;
       status?: string;
       tags?: string[];
@@ -466,6 +531,10 @@ export const api = {
       secret?: string;
       description?: string;
       status?: string;
+      rotate_after_session?: boolean;
+      rotate_on_checkin?: boolean;
+      rotate_interval_hours?: number;
+      dual_control_checkout?: boolean;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}`, {
@@ -488,6 +557,57 @@ export const api = {
         body: JSON.stringify(body ?? {}),
       },
     ),
+  checkoutAccount: (
+    assetId: string,
+    accountId: string,
+    body?: { reason?: string; ttl_minutes?: number },
+  ) =>
+    request<{
+      account: AssetAccount;
+      status: string;
+      pending_request?: SecretCheckoutRequest;
+    }>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}/checkout`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  checkinAccount: (
+    assetId: string,
+    accountId: string,
+    body?: { rotate?: boolean; apply_remote?: boolean },
+  ) =>
+    request<{ account: AssetAccount; status: string }>(
+      `/api/v1/admin/assets/${assetId}/accounts/${accountId}/checkin`,
+      { method: "POST", body: JSON.stringify(body ?? {}) },
+    ),
+  forceCheckinAccount: (assetId: string, accountId: string) =>
+    request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}/force-checkin`, {
+      method: "POST",
+      body: "{}",
+    }),
+  revealAccount: (assetId: string, accountId: string) =>
+    request<{
+      username: string;
+      auth_method: string;
+      secret: string;
+      checkout_expires_at?: string;
+    }>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}/reveal`, {
+      method: "POST",
+      body: "{}",
+    }),
+  listSecretCheckouts: (pending = true) =>
+    request<{ requests: SecretCheckoutRequest[] }>(
+      `/api/v1/admin/secret-checkouts?pending=${pending ? "1" : "0"}`,
+    ),
+  approveSecretCheckout: (id: string) =>
+    request<{ account: AssetAccount; status: string }>(
+      `/api/v1/admin/secret-checkouts/${id}/approve`,
+      { method: "POST", body: "{}" },
+    ),
+  denySecretCheckout: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/secret-checkouts/${id}/deny`, {
+      method: "POST",
+      body: "{}",
+    }),
   listACL: (assetId: string) =>
     request<{ bindings: AccessBinding[] }>(`/api/v1/admin/assets/${assetId}/acl`),
   createACL: (
@@ -501,7 +621,10 @@ export const api = {
       duration_minutes?: number;
       required_tags?: string[];
       require_ticket?: boolean;
+      require_reason?: boolean;
+      allowed_cidrs?: string[];
       command_policy_pack_id?: string;
+      sql_policy_pack_id?: string;
     },
   ) =>
     request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl`, {
@@ -542,6 +665,13 @@ export const api = {
     request<AccessRequest>(`/api/v1/admin/access-requests/${id}/deny`, { method: "POST" }),
   cancelAccessRequest: (id: string) =>
     request<AccessRequest>(`/api/v1/admin/access-requests/${id}/cancel`, { method: "POST" }),
+  openBreakGlass: (assetId: string, body: { reason: string; duration_minutes?: number }) =>
+    request<BreakGlassEvent>(`/api/v1/admin/assets/${assetId}/break-glass`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listBreakGlass: (all = false) =>
+    request<{ events: BreakGlassEvent[] }>(`/api/v1/admin/break-glass${all ? "?all=1" : ""}`),
   exportSessionMP4: (id: string) =>
     request<{ status: string; url: string }>(`/api/v1/admin/sessions/${id}/export-mp4`, {
       method: "POST",
@@ -654,6 +784,19 @@ export const api = {
     }),
   deleteCommandPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/packs/${id}`, { method: "DELETE" }),
+  listSQLPacks: () => request<{ packs: SQLPolicyPack[] }>("/api/v1/admin/jea/sql-packs"),
+  createSQLPack: (body: SQLPolicyPackInput) =>
+    request<SQLPolicyPack>("/api/v1/admin/jea/sql-packs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSQLPack: (id: string, body: SQLPolicyPackInput) =>
+    request<SQLPolicyPack>(`/api/v1/admin/jea/sql-packs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteSQLPack: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/jea/sql-packs/${id}`, { method: "DELETE" }),
   listAttackScenarios: () =>
     request<{ scenarios: AttackSimScenario[] }>("/api/v1/admin/attack-sim/scenarios"),
   listAttackRuns: () => request<{ runs: AttackSimRun[] }>("/api/v1/admin/attack-sim/runs"),
@@ -712,6 +855,29 @@ export type CommandPolicyPackInput = {
   patterns: string[];
 };
 
+export type SQLPolicyPack = {
+  id: string;
+  name: string;
+  description: string;
+  mode: "allowlist" | "denylist" | string;
+  statements: string[];
+  tables: string[];
+  mask_columns: string[];
+  mask_replacement: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SQLPolicyPackInput = {
+  name: string;
+  description?: string;
+  mode: string;
+  statements: string[];
+  tables: string[];
+  mask_columns: string[];
+  mask_replacement?: string;
+};
+
 export type PamSession = {
   id: string;
   user_id: string;
@@ -731,11 +897,14 @@ export type PamSession = {
   account_username?: string;
   asset_address?: string;
   has_recording: boolean;
+  isolated?: boolean;
+  database_name?: string;
   wire_token?: string;
   wire_addr?: string;
   wire_user?: string;
   wire_hint?: string;
   db_privilege?: string;
+  break_glass?: boolean;
 };
 
 export type AppIntegration = {

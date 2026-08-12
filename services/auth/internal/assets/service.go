@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ type Asset struct {
 	Address             string     `json:"address"`
 	Port                int        `json:"port"`
 	Protocol            string     `json:"protocol"`
+	DatabaseName        string     `json:"database_name,omitempty"`
 	Description         string     `json:"description"`
 	Status              string     `json:"status"`
 	Tags                []string   `json:"tags"`
@@ -59,17 +61,28 @@ type Asset struct {
 }
 
 type Account struct {
-	ID             uuid.UUID  `json:"id"`
-	AssetID        uuid.UUID  `json:"asset_id"`
-	Username       string     `json:"username"`
-	AuthMethod     string     `json:"auth_method"`
-	HasSecret      bool       `json:"has_secret"`
-	Description    string     `json:"description"`
-	Status         string     `json:"status"`
-	LastRotatedAt  *time.Time `json:"last_rotated_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	CreatedBy      *uuid.UUID `json:"created_by,omitempty"`
+	ID                   uuid.UUID  `json:"id"`
+	AssetID              uuid.UUID  `json:"asset_id"`
+	Username             string     `json:"username"`
+	AuthMethod           string     `json:"auth_method"`
+	HasSecret            bool       `json:"has_secret"`
+	Description          string     `json:"description"`
+	Status               string     `json:"status"`
+	LastRotatedAt        *time.Time `json:"last_rotated_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	CreatedBy            *uuid.UUID `json:"created_by,omitempty"`
+	CheckoutUserID       *uuid.UUID `json:"checkout_user_id,omitempty"`
+	CheckoutUsername     string     `json:"checkout_username,omitempty"`
+	CheckoutAt           *time.Time `json:"checkout_at,omitempty"`
+	CheckoutExpiresAt    *time.Time `json:"checkout_expires_at,omitempty"`
+	CheckoutReason       string     `json:"checkout_reason,omitempty"`
+	CheckedOut           bool       `json:"checked_out"`
+	RotateAfterSession   bool       `json:"rotate_after_session"`
+	RotateOnCheckin      bool       `json:"rotate_on_checkin"`
+	RotateIntervalHours  int        `json:"rotate_interval_hours"`
+	NextRotateAt         *time.Time `json:"next_rotate_at,omitempty"`
+	DualControlCheckout  bool       `json:"dual_control_checkout"`
 }
 
 type CreateAssetInput struct {
@@ -78,21 +91,23 @@ type CreateAssetInput struct {
 	Hostname    string   `json:"hostname"`
 	Address     string   `json:"address"`
 	Port        int      `json:"port"`
-	Protocol    string   `json:"protocol"`
-	Description string   `json:"description"`
-	Tags        []string `json:"tags"`
+	Protocol     string   `json:"protocol"`
+	DatabaseName string   `json:"database_name"`
+	Description  string   `json:"description"`
+	Tags         []string `json:"tags"`
 }
 
 type UpdateAssetInput struct {
-	Name        *string  `json:"name"`
-	AssetType   *string  `json:"asset_type"`
-	Hostname    *string  `json:"hostname"`
-	Address     *string  `json:"address"`
-	Port        *int     `json:"port"`
-	Protocol    *string  `json:"protocol"`
-	Description *string  `json:"description"`
-	Status      *string  `json:"status"`
-	Tags        *[]string `json:"tags"`
+	Name         *string  `json:"name"`
+	AssetType    *string  `json:"asset_type"`
+	Hostname     *string  `json:"hostname"`
+	Address      *string  `json:"address"`
+	Port         *int     `json:"port"`
+	Protocol     *string  `json:"protocol"`
+	DatabaseName *string  `json:"database_name"`
+	Description  *string  `json:"description"`
+	Status       *string  `json:"status"`
+	Tags         *[]string `json:"tags"`
 }
 
 type CreateAccountInput struct {
@@ -103,16 +118,20 @@ type CreateAccountInput struct {
 }
 
 type UpdateAccountInput struct {
-	Username    *string `json:"username"`
-	AuthMethod  *string `json:"auth_method"`
-	Secret      *string `json:"secret"`
-	Description *string `json:"description"`
-	Status      *string `json:"status"`
+	Username              *string `json:"username"`
+	AuthMethod            *string `json:"auth_method"`
+	Secret                *string `json:"secret"`
+	Description           *string `json:"description"`
+	Status                *string `json:"status"`
+	RotateAfterSession    *bool   `json:"rotate_after_session"`
+	RotateOnCheckin       *bool   `json:"rotate_on_checkin"`
+	RotateIntervalHours   *int    `json:"rotate_interval_hours"`
+	DualControlCheckout   *bool   `json:"dual_control_checkout"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, asset_type, hostname, address, port, protocol, description, status,
+		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
 			created_at, updated_at, created_by
 		FROM assets ORDER BY name`)
@@ -138,7 +157,7 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 	row := s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, asset_type, hostname, address, port, protocol, description, status,
+		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
 			created_at, updated_at, created_by
 		FROM assets WHERE id=$1`, id)
@@ -168,10 +187,14 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 		in.Port = defaultPort(in.Protocol)
 	}
 	now := time.Now().UTC()
+	dbName := strings.TrimSpace(in.DatabaseName)
+	if dbName == "" && (in.Protocol == "postgres") {
+		dbName = "postgres"
+	}
 	a := Asset{
 		ID: store.NewID(), Name: in.Name, AssetType: in.AssetType,
 		Hostname: in.Hostname, Address: in.Address, Port: in.Port,
-		Protocol: in.Protocol, Description: in.Description, Status: "active",
+		Protocol: in.Protocol, DatabaseName: dbName, Description: in.Description, Status: "active",
 		Tags: in.Tags, CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
 	}
 	tx, err := s.db.Pool.Begin(ctx)
@@ -180,9 +203,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, description, status, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -228,6 +251,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.Protocol != nil {
 		a.Protocol = *in.Protocol
 	}
+	if in.DatabaseName != nil {
+		a.DatabaseName = strings.TrimSpace(*in.DatabaseName)
+	}
 	if in.Description != nil {
 		a.Description = *in.Description
 	}
@@ -253,10 +279,10 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
 		UPDATE assets SET name=$2, asset_type=$3, hostname=$4, address=$5, port=$6,
-			protocol=$7, description=$8, status=$9, updated_at=$10,
-			host_key_algo=$11, host_key_blob=$12, host_key_fp=$13, host_key_learned_at=$14
+			protocol=$7, database_name=$8, description=$9, status=$10, updated_at=$11,
+			host_key_algo=$12, host_key_blob=$13, host_key_fp=$14, host_key_learned_at=$15
 		WHERE id=$1`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.Description, a.Status, a.UpdatedAt,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt)
 	if err != nil {
 		return Asset{}, err
@@ -335,6 +361,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	authMethod := acc.AuthMethod
 	description := acc.Description
 	status := acc.Status
+	rotateAfter := acc.RotateAfterSession
+	rotateOnCheckin := acc.RotateOnCheckin
+	interval := acc.RotateIntervalHours
+	dual := acc.DualControlCheckout
 	if in.Username != nil {
 		username = *in.Username
 	}
@@ -352,6 +382,31 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			return Account{}, fmt.Errorf("invalid status")
 		}
 	}
+	if in.RotateAfterSession != nil {
+		rotateAfter = *in.RotateAfterSession
+	}
+	if in.RotateOnCheckin != nil {
+		rotateOnCheckin = *in.RotateOnCheckin
+	}
+	if in.DualControlCheckout != nil {
+		dual = *in.DualControlCheckout
+	}
+	if in.RotateIntervalHours != nil {
+		if *in.RotateIntervalHours < 0 {
+			return Account{}, fmt.Errorf("rotate_interval_hours must be >= 0")
+		}
+		interval = *in.RotateIntervalHours
+	}
+	var nextRotate any
+	if interval > 0 {
+		if acc.NextRotateAt != nil && acc.RotateIntervalHours == interval {
+			nextRotate = *acc.NextRotateAt
+		} else {
+			nextRotate = time.Now().UTC().Add(time.Duration(interval) * time.Hour)
+		}
+	} else {
+		nextRotate = nil
+	}
 	now := time.Now().UTC()
 	if in.Secret != nil && *in.Secret != "" {
 		enc, err := s.env.Encrypt([]byte(*in.Secret))
@@ -359,21 +414,30 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			return Account{}, err
 		}
 		_, err = s.db.Pool.Exec(ctx, `
-			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6, updated_at=$7
-			WHERE id=$1`, accountID, username, authMethod, enc, description, status, now)
+			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6,
+				rotate_after_session=$7, rotate_on_checkin=$8, rotate_interval_hours=$9, next_rotate_at=$10,
+				dual_control_checkout=$11, updated_at=$12
+			WHERE id=$1`,
+			accountID, username, authMethod, enc, description, status,
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, now)
 		if err != nil {
 			return Account{}, err
 		}
 	} else {
 		_, err = s.db.Pool.Exec(ctx, `
-			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5, updated_at=$6
-			WHERE id=$1`, accountID, username, authMethod, description, status, now)
+			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5,
+				rotate_after_session=$6, rotate_on_checkin=$7, rotate_interval_hours=$8, next_rotate_at=$9,
+				dual_control_checkout=$10, updated_at=$11
+			WHERE id=$1`,
+			accountID, username, authMethod, description, status,
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, now)
 		if err != nil {
 			return Account{}, err
 		}
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.account.updated", "asset_account", accountID.String(), ip, ua, map[string]any{
 		"username": username, "status": status,
+		"rotate_after_session": rotateAfter, "rotate_interval_hours": interval,
 	})
 	return s.getAccount(ctx, accountID)
 }
@@ -394,34 +458,65 @@ func (s *Service) DeleteAccount(ctx context.Context, actorID, accountID uuid.UUI
 
 func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Account, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, asset_id, username, auth_method, secret_enc IS NOT NULL AND length(secret_enc)>0,
-			description, status, last_rotated_at, created_at, updated_at, created_by
-		FROM asset_accounts WHERE asset_id=$1 ORDER BY username`, assetID)
+		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
+			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
+			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
+			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+		FROM asset_accounts a
+		LEFT JOIN users u ON u.id=a.checkout_user_id
+		WHERE a.asset_id=$1 ORDER BY a.username`, assetID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Account
 	for rows.Next() {
-		var a Account
-		if err := rows.Scan(&a.ID, &a.AssetID, &a.Username, &a.AuthMethod, &a.HasSecret,
-			&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy); err != nil {
+		a, err := scanAccountRow(rows)
+		if err != nil {
 			return nil, err
 		}
+		s.expireCheckoutIfNeeded(ctx, &a)
 		out = append(out, a)
 	}
 	return out, rows.Err()
 }
 
 func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error) {
+	row := s.db.Pool.QueryRow(ctx, `
+		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
+			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
+			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
+			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+		FROM asset_accounts a
+		LEFT JOIN users u ON u.id=a.checkout_user_id
+		WHERE a.id=$1`, id)
+	a, err := scanAccountRow(row)
+	if err != nil {
+		return Account{}, err
+	}
+	s.expireCheckoutIfNeeded(ctx, &a)
+	return a, nil
+}
+
+type accountScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAccountRow(row accountScanner) (Account, error) {
 	var a Account
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, asset_id, username, auth_method, secret_enc IS NOT NULL AND length(secret_enc)>0,
-			description, status, last_rotated_at, created_at, updated_at, created_by
-		FROM asset_accounts WHERE id=$1`, id).Scan(
+	err := row.Scan(
 		&a.ID, &a.AssetID, &a.Username, &a.AuthMethod, &a.HasSecret,
-		&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy)
-	return a, err
+		&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy,
+		&a.CheckoutUserID, &a.CheckoutUsername, &a.CheckoutAt, &a.CheckoutExpiresAt, &a.CheckoutReason,
+		&a.RotateAfterSession, &a.RotateOnCheckin, &a.RotateIntervalHours, &a.NextRotateAt, &a.DualControlCheckout,
+	)
+	if err != nil {
+		return a, err
+	}
+	a.CheckedOut = a.CheckoutUserID != nil
+	return a, nil
 }
 
 // TargetCreds returns decrypted credentials for a session proxy (never expose via HTTP).
@@ -455,14 +550,18 @@ func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UU
 	}
 	acc.HasSecret = len(secretEnc) > 0
 	certMode := asset.Protocol == "ssh" && s.sshCA != nil && s.sshCA.Mode(ctx) == "ssh_cert"
+	httpsNoVault := asset.Protocol == "https"
 	if len(secretEnc) == 0 {
-		if !certMode {
+		if !certMode && !httpsNoVault {
 			return TargetCreds{}, fmt.Errorf("account has no secret")
 		}
 		return TargetCreds{Account: acc, Asset: asset, AuthMethod: acc.AuthMethod}, nil
 	}
 	plain, err := s.env.Decrypt(secretEnc)
 	if err != nil {
+		if httpsNoVault {
+			return TargetCreds{Account: acc, Asset: asset, AuthMethod: acc.AuthMethod}, nil
+		}
 		return TargetCreds{}, err
 	}
 	return TargetCreds{Account: acc, Asset: asset, Secret: string(plain), AuthMethod: acc.AuthMethod}, nil
@@ -560,7 +659,7 @@ type scannable interface {
 func scanAsset(row scannable) (Asset, error) {
 	var a Asset
 	err := row.Scan(&a.ID, &a.Name, &a.AssetType, &a.Hostname, &a.Address, &a.Port,
-		&a.Protocol, &a.Description, &a.Status,
+		&a.Protocol, &a.DatabaseName, &a.Description, &a.Status,
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
 		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy)
 	if a.Tags == nil {

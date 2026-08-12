@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/dbproxy"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
@@ -59,6 +60,8 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	dbName := dbproxy.ResolveDatabase(row.Protocol, row.DatabaseName, creds.Asset.DatabaseName)
+	creds.Asset.DatabaseName = dbName
 	var ephRole string
 	if s.dbEph != nil {
 		ephCreds, info, eerr := s.dbEph.Ensure(r.Context(), id, creds, row.DBPrivilege)
@@ -67,6 +70,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		creds = ephCreds
+		creds.Asset.DatabaseName = dbName
 		ephRole = info.RoleName
 	}
 
@@ -87,9 +91,25 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
 		"protocol": row.Protocol, "via": "sql-ws", "asset": creds.Asset.Name, "ephemeral_role": ephRole,
 	})
+
+	bypass := rbac.HasPermission(authSess.Permissions, "users.write")
+	var sqlPack policy.SQLPack
+	hasSQLPack := false
+	if row.SQLPolicyPackID != nil {
+		if p, err := s.policy.GetSQLPack(r.Context(), *row.SQLPolicyPackID); err == nil {
+			sqlPack, hasSQLPack = p, true
+		}
+	}
+	if !hasSQLPack {
+		sqlPack, hasSQLPack = s.resolveSQLPack(r.Context(), authSess.UserID, row.AssetID, authSess.Roles, bypass, row.TicketID)
+	}
+
 	_ = conn.WriteJSON(map[string]any{
 		"type": "ready", "protocol": row.Protocol,
 		"ephemeral_role": ephRole, "db_privilege": row.DBPrivilege,
+		"database_name": dbName,
+		"sql_jea":       hasSQLPack,
+		"sql_jea_pack":  sqlPack.Name,
 	})
 
 	unregister := s.live.Register(id, func() { _ = conn.Close() })
@@ -115,10 +135,25 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			_ = conn.WriteJSON(map[string]any{"type": "pong"})
 		case "query":
+			if hasSQLPack {
+				ok, reason := policy.MatchSQL(sqlPack, msg.Statement)
+				if !ok {
+					_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", map[string]any{
+						"statement": truncateStr(msg.Statement, 8000), "reason": reason, "pack": sqlPack.Name,
+					})
+					_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+						"statement": truncateStr(msg.Statement, 2000), "reason": reason, "pack": sqlPack.Name,
+					})
+					_ = conn.WriteJSON(map[string]any{"type": "error", "error": reason})
+					continue
+				}
+			}
 			res, qerr := dbproxy.DialAndQuery(r.Context(), creds, msg.Statement)
 			errMsg := ""
 			if qerr != nil {
 				errMsg = qerr.Error()
+			} else if hasSQLPack {
+				res.Columns, res.Rows = policy.MaskSQLResult(sqlPack, res.Columns, res.Rows)
 			}
 			rec.Record(msg.Statement, res.Duration, res.RowCount, errMsg)
 			_ = s.sessionsvc.AddEvent(r.Context(), id, "sql", map[string]any{

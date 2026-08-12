@@ -107,7 +107,7 @@ func (s *Service) UpsertIntegration(ctx context.Context, actorID, assetID uuid.U
 	if in.RecordingMode == "" {
 		in.RecordingMode = "off"
 	}
-	if in.RecordingMode != "off" && in.RecordingMode != "full" {
+	if in.RecordingMode != "off" && in.RecordingMode != "full" && in.RecordingMode != "isolated" {
 		return Integration{}, fmt.Errorf("invalid recording_mode")
 	}
 	cur, _ := s.GetIntegration(ctx, assetID)
@@ -255,4 +255,14 @@ func (s *Service) ConsumeLease(ctx context.Context, userID, leaseID uuid.UUID) e
 func (s *Service) NeedsFullRecording(ctx context.Context, assetID uuid.UUID) bool {
 	in, err := s.GetIntegration(ctx, assetID)
 	return err == nil && in.RecordingMode == "full"
+}
+
+func (s *Service) IsIsolated(ctx context.Context, assetID uuid.UUID) bool {
+	in, err := s.GetIntegration(ctx, assetID)
+	return err == nil && in.RecordingMode == "isolated"
+}
+
+func (s *Service) NeedsHTTPSSession(ctx context.Context, assetID uuid.UUID) bool {
+	in, err := s.GetIntegration(ctx, assetID)
+	return err == nil && (in.RecordingMode == "full" || in.RecordingMode == "isolated")
 }

@@ -116,12 +116,14 @@ export function AppLayout() {
           </NavLink>
           {hasPerm(user, "assets.read") && <NavLink to="/assets">Активы</NavLink>}
           {hasPerm(user, "discovery.read") && <NavLink to="/discovery">Discovery</NavLink>}
-          {hasPerm(user, "access.request") && (
+          {hasPerm(user, "access.request") ||
+          hasPerm(user, "access.breakglass") ||
+          hasPerm(user, "assets.write") ? (
             <NavLink to="/access-requests">
               Запросы
               {badge > 0 && <span className="nav-badge">{badge > 99 ? "99+" : badge}</span>}
             </NavLink>
-          )}
+          ) : null}
           {hasPerm(user, "sessions.read") && <NavLink to="/sessions">Сессии</NavLink>}
           {hasPerm(user, "users.read") && <NavLink to="/users">Пользователи</NavLink>}
           {hasPerm(user, "audit.read") && <NavLink to="/analytics">Аналитика</NavLink>}

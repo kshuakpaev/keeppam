@@ -46,5 +46,28 @@ Parse failure: allow + raw audit (strict_sql_parse не требуется в MV
 
 - DB-1: Web SQL console + statement audit — реализовано (`/sessions/{id}/sql`)
 - DB-2: native wire proxy — реализовано (`:15432` postgres, `:13306` mysql; user=session UUID, password=wire_token)
+- DB-3: целевая БД (`assets.database_name` / `sessions.database_name`) — реализовано; ephemeral GRANT и dial на выбранную БД
 - App-A: app_integrations + credential lease / OIDC broker — реализовано
 - App-B: HTTPS reverse-proxy + metadata recording — реализовано (`recording_mode=full`)
+- App-C: isolated Chromium via Guacamole VNC — реализовано (`recording_mode=isolated`)
+
+Wire/SQL: клиентский `database=` должен совпадать с `database_name` сессии (иначе отказ).
+
+## SQL JEA / masking (DB-4)
+
+- `sql_policy_packs`: mode allowlist|denylist, statements, tables (glob), mask_columns.
+- Привязка: `asset_access_bindings.sql_policy_pack_id` (как SSH JEA).
+- Enforce: Web SQL + wire; audit `session.sql.denied`; маскирование колонок в result set.
+- Seed: `sql-readonly-tickets`, `sql-block-ddl`.
+
+## Prod infra
+
+См. `docs/prod-infra.txt`: KeyProvider (`env|file|vault`), hybrid S3 recordings, optional API TLS/mTLS, UI статус в Конфигурация.
+
+## Vault checkout / rotation
+
+См. `docs/vault-checkout.txt`: exclusive checkout + reveal, dual-control, rotate-after-session, schedule.
+
+## ABAC / 4-eyes / break-glass
+
+См. `docs/abac-breakglass.txt`: CIDR + require_reason, запрет самоодобрения JIT, экстренный доступ с громким аудитом.

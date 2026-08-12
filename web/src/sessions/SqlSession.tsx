@@ -11,6 +11,7 @@ type ResultMsg = {
   error?: string;
   ephemeral_role?: string;
   db_privilege?: string;
+  database_name?: string;
 };
 
 type Props = {
@@ -21,12 +22,13 @@ type Props = {
 };
 
 export function SqlSession({ id, title, visible, onClose }: Props) {
-  const [sql, setSql] = useState("SELECT 1");
+  const [sql, setSql] = useState("SELECT * FROM tickets LIMIT 10");
   const [status, setStatus] = useState("connecting…");
   const [error, setError] = useState("");
   const [result, setResult] = useState<ResultMsg | null>(null);
-  const [wire, setWire] = useState<{ user?: string; addr?: string }>({});
+  const [wire, setWire] = useState<{ user?: string; addr?: string; db?: string }>({});
   const [eph, setEph] = useState<{ role?: string; privilege?: string }>({});
+  const [database, setDatabase] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const [ready, setReady] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -35,7 +37,12 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
     void api
       .getSession(id)
       .then((s) => {
-        setWire({ user: s.id, addr: s.protocol === "mysql" ? ":13306" : ":15432" });
+        setWire({
+          user: s.id,
+          addr: s.protocol === "mysql" ? ":13306" : ":15432",
+          db: s.database_name || "",
+        });
+        if (s.database_name) setDatabase(s.database_name);
         if (s.db_privilege) setEph((e) => ({ ...e, privilege: s.db_privilege }));
       })
       .catch(() => undefined);
@@ -56,6 +63,7 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
           setReady(true);
           setStatus("ready");
           setEph({ role: msg.ephemeral_role, privilege: msg.db_privilege });
+          if (msg.database_name) setDatabase(msg.database_name);
         } else if (msg.type === "result" || msg.type === "error") {
           setResult(msg);
           if (msg.error) setError(msg.error);
@@ -97,6 +105,12 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
           <h1>SQL · {title}</h1>
           <p className="muted">
             {status}
+            {database && (
+              <>
+                {" "}
+                · db <span className="mono">{database}</span>
+              </>
+            )}
             {eph.role && (
               <>
                 {" "}
@@ -108,6 +122,12 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
               <>
                 {" "}
                 · wire: user=<span className="mono">{wire.user}</span> port={wire.addr}
+                {wire.db ? (
+                  <>
+                    {" "}
+                    dbname=<span className="mono">{wire.db}</span>
+                  </>
+                ) : null}
               </>
             )}
           </p>
