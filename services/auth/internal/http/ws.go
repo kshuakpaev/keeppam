@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/keeppam/auth/internal/dbproxy"
+	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -63,7 +65,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if creds.Asset.Protocol != "ssh" && creds.Asset.Protocol != "rdp" && creds.Asset.Protocol != "vnc" &&
-		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "https" {
+		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "https" &&
+		creds.Asset.Protocol != "kubectl" {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
@@ -97,10 +100,18 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ok = true
 	}
 	if !ok {
-		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), clientIP(r), r.UserAgent(), map[string]any{
-			"reason": "policy", "ticket_id": body.TicketID,
-		})
-		writeErr(w, http.StatusForbidden, "access denied by policy")
+		payload := map[string]any{"reason": "policy", "ticket_id": body.TicketID}
+		msg := "access denied by policy"
+		if ev.DeniedByRisk {
+			payload["reason"] = "risk"
+			payload["risk_score"] = ev.RiskScore
+			payload["risk_factors"] = ev.RiskFactors
+			payload["max_risk"] = ev.MaxRisk
+			payload["risk_action"] = ev.RiskAction
+			msg = ev.DenyMessage()
+		}
+		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), clientIP(r), r.UserAgent(), payload)
+		writeErr(w, http.StatusForbidden, msg)
 		return
 	}
 	if s.itsm != nil && !usedBreakGlass && !bypassAdmin {
@@ -148,6 +159,14 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				dbHint = "(default)"
 			}
 			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
+		}
+	}
+	if created.Protocol == "kubectl" {
+		if kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), created.ID); err == nil {
+			out["kubeconfig"] = kube
+			out["k8s_addr"] = addr
+			out["k8s_token"] = tok
+			out["wire_hint"] = fmt.Sprintf("export KUBECONFIG=./keeppam-%s.yaml && kubectl get ns", created.ID.String()[:8])
 		}
 	}
 	writeJSON(w, http.StatusCreated, out)
@@ -205,6 +224,57 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, row)
+}
+
+func (s *Server) handleGetKubeconfig(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	row, err := s.sessionsvc.Get(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if row.Protocol != "kubectl" {
+		writeErr(w, http.StatusBadRequest, "not a kubectl session")
+		return
+	}
+	if sess.UserID != row.UserID && !rbac.HasPermission(sess.Permissions, "users.write") {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if row.Status != "pending" && row.Status != "active" {
+		writeErr(w, http.StatusGone, "session ended")
+		return
+	}
+	kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	_ = s.sessionsvc.Touch(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"kubeconfig": kube, "k8s_addr": addr, "k8s_token": tok,
+	})
+}
+
+func (s *Server) issueK8sKubeconfig(ctx context.Context, sessionID uuid.UUID) (kube, addr, bearer string, err error) {
+	tok, err := k8sproxy.GetToken(ctx, s.sessions.Redis(), sessionID)
+	if err != nil || tok == "" {
+		tok, err = k8sproxy.IssueToken(ctx, s.sessions.Redis(), sessionID, s.cfg.SessionTTL)
+		if err != nil {
+			return "", "", "", err
+		}
+	}
+	addr = s.cfg.K8sPublicURL
+	if addr == "" {
+		addr = k8sproxy.DefaultPublicURL(s.cfg.CORSOrigin, s.cfg.K8sAPIAddr)
+	}
+	bearer = k8sproxy.BearerValue(sessionID, tok)
+	return k8sproxy.RenderKubeconfig(addr, bearer), addr, bearer, nil
 }
 
 func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +337,7 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 	if row.Protocol == "rdp" || row.Protocol == "vnc" {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", id.String()+".guac"))
-	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "https" {
+	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "https" || row.Protocol == "kubectl" {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", id.String()+".jsonl"))
 	} else {

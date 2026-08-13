@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 
+	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
-	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/sshca"
 )
 
@@ -305,4 +307,44 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		dest = base + "/setup"
 	}
 	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+func (s *Server) handleSAMLSLO(w http.ResponseWriter, r *http.Request) {
+	cfg, _, _, err := s.settings.Get(r.Context())
+	base := cfg.PublicBaseURL
+	if base == "" {
+		base = s.cfg.CORSOrigin
+	}
+	base = strings.TrimRight(base, "/")
+	loginURL := base + "/login"
+
+	_ = r.ParseForm()
+	if r.Form.Get("SAMLResponse") != "" {
+		if vErr := s.settings.SAMLValidateLogoutResponse(r.Context(), cfg, r); vErr != nil {
+			slog.Warn("saml slo response", "err", vErr)
+		}
+		s.clearCookies(w)
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+
+	var nameID string
+	if c, _ := r.Cookie(sessionCookie); c != nil && c.Value != "" {
+		if sess, gerr := s.sessions.Get(r.Context(), c.Value); gerr == nil {
+			nameID = sess.SAMLNameID
+		}
+		_ = s.auth.Logout(r.Context(), c.Value, nil, clientIP(r), r.UserAgent())
+	}
+	s.clearCookies(w)
+
+	if err != nil || cfg.Mode != "saml" || nameID == "" {
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+	loc, lerr := s.settings.SAMLLogoutRedirect(r.Context(), cfg, nameID)
+	if lerr != nil || loc == nil {
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, loc.String(), http.StatusFound)
 }

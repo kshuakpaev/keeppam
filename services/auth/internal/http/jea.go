@@ -184,7 +184,7 @@ func (s *Server) handleDeleteSQLPack(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resolveSQLPack(ctx context.Context, userID, assetID uuid.UUID, roles []string, bypass bool, ticketID string) (policy.SQLPack, bool) {
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID,
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
 	})
 	if err != nil || !ev.OK || ev.SQLPolicyPackID == nil {
 		return policy.SQLPack{}, false
@@ -199,7 +199,7 @@ func (s *Server) resolveSQLPack(ctx context.Context, userID, assetID uuid.UUID, 
 func (s *Server) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID,
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
 	})
 	if err != nil || !ev.OK || ev.CommandPolicyPackID == nil {
 		return opts

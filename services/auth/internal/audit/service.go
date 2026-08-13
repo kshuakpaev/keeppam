@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -31,11 +32,15 @@ func (s *Service) Record(ctx context.Context, actorID *uuid.UUID, action, resour
 	id := store.NewID()
 	ts := time.Now().UTC()
 	h := computeHash(prev, id, ts, actorID, action, resourceType, resourceID, payload)
-	return s.db.InsertAudit(ctx, store.AuditEvent{
+	err = s.db.InsertAudit(ctx, store.AuditEvent{
 		ID: id, TS: ts, ActorID: actorID, Action: action,
 		ResourceType: resourceType, ResourceID: resourceID,
 		IP: ip, UserAgent: ua, Payload: payload, PrevHash: prev, Hash: h,
 	})
+	if err == nil {
+		obs.Default.IncAudit()
+	}
+	return err
 }
 
 func (s *Service) List(ctx context.Context, f store.AuditFilter) ([]store.AuditEvent, int, error) {

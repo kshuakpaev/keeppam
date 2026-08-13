@@ -230,7 +230,9 @@ export function SessionsPage() {
                               ? "SQL"
                               : s.protocol === "https"
                                 ? "App"
-                                : "Terminal"}
+                                : s.protocol === "kubectl"
+                                  ? "kubectl"
+                                  : "Terminal"}
                         </button>
                         {canWatch && (
                           <Link className="btn secondary" to={`/sessions/${s.id}/watch`}>
@@ -250,6 +252,7 @@ export function SessionsPage() {
                       <>
                         {s.protocol === "postgres" ||
                         s.protocol === "mysql" ||
+                        s.protocol === "kubectl" ||
                         (s.protocol === "https" && !s.isolated) ? (
                           <a className="btn secondary" href={api.getRecordingUrl(s.id)}>
                             Recording

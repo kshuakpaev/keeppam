@@ -2,10 +2,11 @@ import { useMatch } from "react-router-dom";
 import { useSessionTabs, type SessionTabKind } from "../sessionTabs";
 import { AppSession } from "../sessions/AppSession";
 import { DesktopSession } from "../sessions/DesktopSession";
+import { K8sSession } from "../sessions/K8sSession";
 import { SqlSession } from "../sessions/SqlSession";
 import { TerminalSession } from "../sessions/TerminalSession";
 
-const SESSION_KINDS = new Set(["terminal", "sql", "desktop", "app"]);
+const SESSION_KINDS = new Set(["terminal", "sql", "desktop", "app", "k8s"]);
 
 export function SessionKeepAliveHost() {
   const { tabs, closeTab } = useSessionTabs();
@@ -53,5 +54,7 @@ function renderSession(
       return <DesktopSession id={id} title={title} visible={visible} onClose={onClose} />;
     case "app":
       return <AppSession id={id} title={title} visible={visible} onClose={onClose} />;
+    case "k8s":
+      return <K8sSession id={id} title={title} visible={visible} onClose={onClose} />;
   }
 }

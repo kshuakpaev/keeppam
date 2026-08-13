@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -130,6 +131,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 			recPath = filepath.Join(s.recordingsDir, "http", id.String()+".jsonl")
 		}
 	}
+	if in.Protocol == "kubectl" {
+		recPath = filepath.Join(s.recordingsDir, "k8s", id.String()+".jsonl")
+	}
 	dbPriv := "readonly"
 	if in.Protocol == "postgres" || in.Protocol == "mysql" {
 		if in.DBPrivilege == "readwrite" {
@@ -159,11 +163,15 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 }
 
 func (s *Service) MarkActive(ctx context.Context, id uuid.UUID) error {
+	row, _ := s.Get(ctx, id)
 	now := time.Now().UTC()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET status='active', started_at=$2, last_seen_at=$2 WHERE id=$1`, id, now)
 	if err != nil {
 		return err
+	}
+	if row.Status == "pending" {
+		obs.Default.ObserveSessionSetup(now.Sub(row.CreatedAt))
 	}
 	return s.AddEvent(ctx, id, "started", nil)
 }

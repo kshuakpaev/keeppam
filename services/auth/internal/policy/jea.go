@@ -32,9 +32,14 @@ type CommandPackInput struct {
 
 type AccessResult struct {
 	OK                  bool
+	DeniedByRisk        bool
 	BindingID           *uuid.UUID
 	CommandPolicyPackID *uuid.UUID
 	SQLPolicyPackID     *uuid.UUID
+	RiskScore           int
+	MaxRisk             int
+	RiskAction          string
+	RiskFactors         []string
 }
 
 func (s *Service) ListCommandPacks(ctx context.Context) ([]CommandPack, error) {
@@ -238,14 +243,17 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	assetTagSet := toSet(assetTags)
 	ticket := strings.TrimSpace(in.TicketID)
 
+	in.Now = now
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT b.id, b.user_id, b.role_id, b.time_start, b.time_end, b.days_of_week, b.expires_at,
 			b.required_tags, b.require_ticket, COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
-			b.command_policy_pack_id, b.sql_policy_pack_id, r.name
+			b.command_policy_pack_id, b.sql_policy_pack_id, r.name,
+			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny')
 		FROM asset_access_bindings b
 		LEFT JOIN roles r ON r.id = b.role_id
 		WHERE b.asset_id=$1
-		  AND (b.expires_at IS NULL OR b.expires_at > $2)`, in.AssetID, now.UTC())
+		  AND (b.expires_at IS NULL OR b.expires_at > $2)
+		ORDER BY b.expires_at NULLS LAST, b.created_at DESC`, in.AssetID, now.UTC())
 	if err != nil {
 		return AccessResult{}, err
 	}
@@ -265,7 +273,9 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var roleName *string
 		var reqTags, cidrs []string
 		var requireTicket, requireReason bool
-		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &packID, &sqlPackID, &roleName); err != nil {
+		var maxRisk int
+		var riskAction string
+		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &packID, &sqlPackID, &roleName, &maxRisk, &riskAction); err != nil {
 			return AccessResult{}, err
 		}
 		match := false
@@ -302,7 +312,12 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			continue
 		}
 		idCopy := bid
-		return AccessResult{OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID}, nil
+		res := AccessResult{
+			OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID,
+			MaxRisk: maxRisk, RiskAction: riskAction,
+		}
+		s.applyRisk(ctx, in, &res, expires)
+		return res, nil
 	}
 	if err := rows.Err(); err != nil {
 		return AccessResult{}, err

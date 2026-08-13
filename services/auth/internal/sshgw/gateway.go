@@ -270,13 +270,14 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 
 	bypassConnect := rbac.HasPermission(perms, "users.write")
 	usedBreakGlass := false
-	okPolicy, err := g.policy.Allowed(ctx, policy.AccessCheck{
+	evPolicy, err := g.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: false, Now: time.Now(), TicketID: ticketID, ClientIP: ip,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(ch, "policy error: %v\n", err)
 		return
 	}
+	okPolicy := evPolicy.OK
 	if !okPolicy {
 		if bg, berr := g.policy.HasActiveBreakGlass(ctx, userID, chosen.AssetID); berr == nil && bg {
 			okPolicy = true
@@ -288,10 +289,16 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		okPolicy = true
 	}
 	if !okPolicy {
-		_, _ = io.WriteString(ch, "access denied by policy (check tags/ticket)\r\n")
-		_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{
-			"reason": "policy", "ticket_id": ticketID,
-		})
+		_, _ = fmt.Fprintf(ch, "%s\r\n", evPolicy.DenyMessage())
+		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
+		if evPolicy.DeniedByRisk {
+			payload["reason"] = "risk"
+			payload["risk_score"] = evPolicy.RiskScore
+			payload["risk_factors"] = evPolicy.RiskFactors
+			payload["max_risk"] = evPolicy.MaxRisk
+			payload["risk_action"] = evPolicy.RiskAction
+		}
+		_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
 		return
 	}
 	if g.itsm != nil && !usedBreakGlass && !bypassConnect {
@@ -458,7 +465,7 @@ func (g *Gateway) listTargets(ctx context.Context, userID uuid.UUID, roles, perm
 			continue
 		}
 		ok, err := g.policy.Allowed(ctx, policy.AccessCheck{
-			UserID: userID, AssetID: a.ID, RoleNames: roles, Bypass: bypass, Now: now, IgnoreTicket: true,
+			UserID: userID, AssetID: a.ID, RoleNames: roles, Bypass: bypass, Now: now, IgnoreTicket: true, SkipRisk: true,
 		})
 		if err != nil {
 			return nil, err
@@ -658,7 +665,7 @@ func be32(b []byte) uint32 {
 func (g *Gateway) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
 	ev, err := g.policy.Evaluate(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID,
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
 	})
 	if err != nil || !ev.OK || ev.CommandPolicyPackID == nil {
 		return opts

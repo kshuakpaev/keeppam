@@ -199,7 +199,26 @@ func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip,
 	if u.Status == "disabled" {
 		return LoginResult{}, fmt.Errorf("account disabled")
 	}
-	return s.finishLogin(ctx, u, ip, ua, authCfg.SAMLSkipMFA, "saml")
+	if len(authCfg.SAMLGroupRoleMap) > 0 {
+		roles, rerr := s.db.ListRoles(ctx)
+		if rerr == nil {
+			known := map[string]struct{}{}
+			for _, r := range roles {
+				known[r.Name] = struct{}{}
+			}
+			mapped := settings.MapSAMLRoles(claims.Groups, authCfg.SAMLGroupRoleMap, u.Roles, authCfg.SAMLDefaultRole, known)
+			if !settings.RolesEqual(mapped, u.Roles) {
+				if upd, uerr := s.db.UpdateUser(ctx, u, &mapped); uerr == nil {
+					u = upd
+				}
+			}
+		}
+	}
+	via := "saml"
+	if claims.IDPInitiated {
+		via = "saml_idp"
+	}
+	return s.finishLoginSess(ctx, u, ip, ua, authCfg.SAMLSkipMFA, via, claims.Subject)
 }
 
 func (s *Service) findOrProvisionExternal(ctx context.Context, username, email, displayName, source string, autoProvision bool, defaultRole string) (store.User, error) {
@@ -247,6 +266,10 @@ func (s *Service) findOrProvisionExternal(ctx context.Context, username, email, 
 }
 
 func (s *Service) finishLogin(ctx context.Context, u store.User, ip, ua string, skipMFA bool, via string) (LoginResult, error) {
+	return s.finishLoginSess(ctx, u, ip, ua, skipMFA, via, "")
+}
+
+func (s *Service) finishLoginSess(ctx context.Context, u store.User, ip, ua string, skipMFA bool, via, samlNameID string) (LoginResult, error) {
 	if u.MFAEnabled && !skipMFA {
 		tok, err := s.sessions.CreateChallenge(ctx, session.Challenge{UserID: u.ID, Username: u.Username}, s.cfg.ChallengeTTL)
 		if err != nil {
@@ -255,7 +278,10 @@ func (s *Service) finishLogin(ctx context.Context, u store.User, ip, ua string, 
 		return LoginResult{Status: "mfa_required", ChallengeToken: tok}, nil
 	}
 
-	sessTok, err := s.issueSession(ctx, u)
+	sessTok, err := s.sessions.Create(ctx, session.Session{
+		UserID: u.ID, Username: u.Username, Roles: u.Roles, Permissions: u.Permissions,
+		SAMLNameID: samlNameID,
+	}, s.cfg.SessionTTL)
 	if err != nil {
 		return LoginResult{}, err
 	}

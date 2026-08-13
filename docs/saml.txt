@@ -4,12 +4,13 @@
 
 SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисключающий: `local|oidc|ldap|saml`).
 
-1. Миграция `031_saml_settings.sql` — поля IdP/SP + encrypted SP signing key.
-2. `GET /api/v1/auth/saml/metadata` — SP metadata XML.
+1. Миграции `031` + `033` — IdP/SP, group→role, SLO URL в metadata.
+2. `GET /api/v1/auth/saml/metadata` — SP metadata XML (ACS + SingleLogoutService).
 3. `GET /api/v1/auth/saml/start` — AuthnRequest → redirect на IdP.
-4. `POST /api/v1/auth/saml/acs` — assertion → provision/login → cookies / MFA / setup.
-5. Config UI: metadata URL или ручные entity/SSO/cert, attr mapping, auto-provision, skip MFA.
-6. Login: кнопка «Войти через SAML SSO» при `saml_ready`.
+4. `POST /api/v1/auth/saml/acs` — assertion → provision/login. **IdP-initiated ACS** принимается без `/start` (`via=saml_idp`).
+5. `GET|POST /api/v1/auth/saml/slo` — SP-initiated SLO (local logout всегда; редирект на IdP если в metadata есть SingleLogoutService).
+6. Group→role: `saml_group_attr` + `saml_group_role_map` (не создаёт роли; `admin` не снимается).
+7. Login: кнопка «Войти через SAML SSO»; «Выйти» у `auth_source=saml` идёт на `/saml/slo`.
 
 При первом сохранении `mode=saml` генерируется RSA SP key (можно rotate).
 
@@ -19,12 +20,15 @@ SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисклю
 2. В IdP зарегистрировать SP:
    - Entity ID / metadata: `{base}/api/v1/auth/saml/metadata`
    - ACS: `{base}/api/v1/auth/saml/acs` (HTTP-POST)
+   - SLO: `{base}/api/v1/auth/saml/slo` (Redirect+POST)
 3. В KeepPAM: IdP Metadata URL **или** Entity ID + SSO URL + signing cert PEM.
-4. Сохранить → открыть Login.
+   SLO на IdP берётся **только из metadata URL** (ручной fallback SSO без SLO URL).
+4. Group mapping (опц.): attr `groups`/`memberOf`, строки `IdP-group=keeppam-role`.
+5. Сохранить → открыть Login.
 
 ## Вне scope
 
-- SLO / IdP-initiated
-- Group→role mapping
 - Assertion encryption policy UI
 - Несколько IdP одновременно
+- IdP-initiated SLO (LogoutRequest от IdP)
+- Создание ролей из групп

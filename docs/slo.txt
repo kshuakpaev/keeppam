@@ -1,0 +1,36 @@
+# KeepPAM: Observability / SLO
+
+## Что есть
+
+In-process метрики + снимок SLO. Prometheus/Grafana в compose нет.
+
+1. `GET /metrics` — Prometheus text 0.0.4, без auth (как `/healthz`).
+2. `GET /api/v1/admin/analytics/slo` — JSON для UI, право `audit.read`.
+3. Карточка **SLO** на странице Аналитика.
+
+## Цели (константы, не settings)
+
+| Сигнал | Target |
+|--------|--------|
+| auth p95 (handler login/MFA/WebAuthn/OIDC/SAML) | 500ms |
+| session setup p95 (`started_at - created_at`, 24ч) | 2s |
+| SIEM export lag (если SIEM включён) | 60s |
+
+Burn = observed / target. `breached` если любой burn > 1. Нет сэмплов → не breach.
+
+## Метрики `/metrics`
+
+- `keeppam_http_requests_total{route,code}`
+- `keeppam_http_request_duration_seconds{route}`
+- `keeppam_auth_login_seconds{method}`
+- `keeppam_session_setup_seconds` (API-процесс; SSH worker — в SQL p95)
+- `keeppam_audit_events_total`
+- `keeppam_active_sessions`
+- `keeppam_audit_export_lag_seconds`
+
+## Вне scope
+
+- Prometheus/Grafana в docker-compose
+- трассировки / OpenTelemetry
+- хранение гистограмм в Postgres
+- отдельные SLO settings

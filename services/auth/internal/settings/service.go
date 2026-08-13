@@ -60,9 +60,12 @@ type AuthSettings struct {
 	SAMLAttrDisplayName string `json:"saml_attr_display_name"`
 	SAMLAutoProvision   bool   `json:"saml_auto_provision"`
 	SAMLSkipMFA         bool   `json:"saml_skip_mfa"`
-	SAMLDefaultRole     string `json:"saml_default_role"`
-	SAMLACSURL          string `json:"saml_acs_url,omitempty"`
-	SAMLMetadataURL     string `json:"saml_metadata_url,omitempty"`
+	SAMLDefaultRole     string            `json:"saml_default_role"`
+	SAMLGroupAttr       string            `json:"saml_group_attr"`
+	SAMLGroupRoleMap    map[string]string `json:"saml_group_role_map"`
+	SAMLACSURL          string            `json:"saml_acs_url,omitempty"`
+	SAMLMetadataURL     string            `json:"saml_metadata_url,omitempty"`
+	SAMLSLOURL          string            `json:"saml_slo_url,omitempty"`
 
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
@@ -99,6 +102,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			saml_sp_entity_id, saml_sp_key_enc,
 			saml_attr_username, saml_attr_email, saml_attr_display_name,
 			saml_auto_provision, saml_skip_mfa, saml_default_role,
+			COALESCE(saml_group_attr,'groups'), COALESCE(saml_group_role_map,'{}'::jsonb),
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -111,6 +115,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.SAMLSPEntityID, &samlKey,
 		&out.SAMLAttrUsername, &out.SAMLAttrEmail, &out.SAMLAttrDisplayName,
 		&out.SAMLAutoProvision, &out.SAMLSkipMFA, &out.SAMLDefaultRole,
+		&out.SAMLGroupAttr, &out.SAMLGroupRoleMap,
 		&updatedAt,
 	)
 	if err != nil {
@@ -120,6 +125,9 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 	out.HasLDAPBindPassword = len(ldapSec) > 0
 	out.HasSAMLSPKey = len(samlKey) > 0
 	out.UpdatedAt = &updatedAt
+	if out.SAMLGroupRoleMap == nil {
+		out.SAMLGroupRoleMap = map[string]string{}
+	}
 	s.fillSAMLDerived(&out)
 	return out, oidcSec, ldapSec, nil
 }
@@ -135,6 +143,7 @@ func (s *Service) fillSAMLDerived(out *AuthSettings) {
 	if base != "" {
 		out.SAMLACSURL = base + "/api/v1/auth/saml/acs"
 		out.SAMLMetadataURL = base + "/api/v1/auth/saml/metadata"
+		out.SAMLSLOURL = base + "/api/v1/auth/saml/slo"
 		if out.SAMLSPEntityID == "" {
 			out.SAMLSPEntityID = out.SAMLMetadataURL
 		}
@@ -227,6 +236,12 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 	if in.SAMLDefaultRole == "" {
 		in.SAMLDefaultRole = "operator"
 	}
+	if in.SAMLGroupAttr == "" {
+		in.SAMLGroupAttr = "groups"
+	}
+	if in.SAMLGroupRoleMap == nil {
+		in.SAMLGroupRoleMap = map[string]string{}
+	}
 	publicURL := strings.TrimRight(strings.TrimSpace(in.PublicBaseURL), "/")
 	if publicURL == "" {
 		publicURL = cur.PublicBaseURL
@@ -260,7 +275,8 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			saml_sp_entity_id=$28, saml_sp_key_enc=$29,
 			saml_attr_username=$30, saml_attr_email=$31, saml_attr_display_name=$32,
 			saml_auto_provision=$33, saml_skip_mfa=$34, saml_default_role=$35,
-			updated_at=NOW(), updated_by=$36
+			saml_group_attr=$36, saml_group_role_map=$37,
+			updated_at=NOW(), updated_by=$38
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -272,6 +288,7 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		spEntity, samlKeyEnc,
 		strings.TrimSpace(in.SAMLAttrUsername), strings.TrimSpace(in.SAMLAttrEmail), strings.TrimSpace(in.SAMLAttrDisplayName),
 		in.SAMLAutoProvision, in.SAMLSkipMFA, strings.TrimSpace(in.SAMLDefaultRole),
+		strings.TrimSpace(in.SAMLGroupAttr), in.SAMLGroupRoleMap,
 		actorID,
 	)
 	if err != nil {

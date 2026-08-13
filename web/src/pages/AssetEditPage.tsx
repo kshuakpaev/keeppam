@@ -57,6 +57,8 @@ export function AssetEditPage() {
     allowed_cidrs: "",
     command_policy_pack_id: "",
     sql_policy_pack_id: "",
+    max_risk: "0",
+    risk_action: "deny",
   });
   const [jitForm, setJitForm] = useState({ reason: "", duration_minutes: 60, ticket_id: "" });
   const [bgForm, setBgForm] = useState({ reason: "", duration_minutes: 30 });
@@ -508,6 +510,8 @@ export function AssetEditPage() {
         allowed_cidrs?: string[];
         command_policy_pack_id?: string;
         sql_policy_pack_id?: string;
+        max_risk?: number;
+        risk_action?: string;
       } = {
         days_of_week: aclForm.days_of_week,
         require_ticket: aclForm.require_ticket,
@@ -541,6 +545,11 @@ export function AssetEditPage() {
       if (aclForm.sql_policy_pack_id) {
         body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
       }
+      const maxRisk = Number(aclForm.max_risk);
+      if (maxRisk > 0) {
+        body.max_risk = maxRisk;
+        body.risk_action = aclForm.risk_action;
+      }
       await api.createACL(id, body);
       setMsg("Доступ выдан");
       setAclForm({
@@ -557,6 +566,8 @@ export function AssetEditPage() {
         allowed_cidrs: "",
         command_policy_pack_id: "",
         sql_policy_pack_id: "",
+        max_risk: "0",
+        risk_action: "deny",
       });
       await load();
     } catch (err) {
@@ -1044,14 +1055,24 @@ export function AssetEditPage() {
                               {connecting === acc.id ? "…" : "Получить доступ"}
                             </button>
                           ) : asset.protocol === "kubectl" ? (
-                            <button
-                              className="btn"
-                              type="button"
-                              disabled={connecting === acc.id}
-                              onClick={() => void onK8sAccess(acc)}
-                            >
-                              {connecting === acc.id ? "…" : "Получить kubeconfig"}
-                            </button>
+                            <>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={connecting === acc.id}
+                                onClick={() => void onConnect(acc)}
+                              >
+                                {connecting === acc.id ? "…" : "Подключить kubectl"}
+                              </button>
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                disabled={connecting === acc.id}
+                                onClick={() => void onK8sAccess(acc)}
+                              >
+                                Vault checkout
+                              </button>
+                            </>
                           ) : (
                             <button
                               className="btn"
@@ -1320,7 +1341,7 @@ export function AssetEditPage() {
       <div className="card" style={{ marginBottom: "1.25rem" }}>
         <h2>Политика доступа</h2>
         <p className="muted">
-          Deny-by-default + ABAC: tags, ticket, reason, CIDR. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
+          Deny-by-default + ABAC: tags, ticket, reason, CIDR, risk. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
           JEA: SSH command pack и SQL table/mask pack (см. <Link to="/jea">JEA</Link>).
         </p>
         <table>
@@ -1330,6 +1351,7 @@ export function AssetEditPage() {
               <th>Окно</th>
               <th>Дни</th>
               <th>ABAC</th>
+              <th>Risk</th>
               <th>SSH JEA</th>
               <th>SQL JEA</th>
               <th>Истекает</th>
@@ -1363,6 +1385,9 @@ export function AssetEditPage() {
                   {(b.allowed_cidrs || []).length ? ` · ${b.allowed_cidrs!.join(",")}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
+                  {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
+                </td>
+                <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.command_policy_pack_name || "—"}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
@@ -1393,7 +1418,7 @@ export function AssetEditPage() {
             ))}
             {bindings.length === 0 && (
               <tr>
-                <td colSpan={8} className="muted">
+                <td colSpan={9} className="muted">
                   Привязок нет — доступ только у admin
                 </td>
               </tr>
@@ -1546,6 +1571,32 @@ export function AssetEditPage() {
               </option>
             ))}
           </select>
+          <div className="row" style={{ alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <label>Max risk (0 = выкл.)</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={aclForm.max_risk}
+                onChange={(e) => setAclForm({ ...aclForm, max_risk: e.target.value })}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label>Если выше порога</label>
+              <select
+                value={aclForm.risk_action}
+                onChange={(e) => setAclForm({ ...aclForm, risk_action: e.target.value })}
+              >
+                <option value="deny">deny</option>
+                <option value="require_approval">require_approval (JIT)</option>
+              </select>
+            </div>
+          </div>
+          <p className="muted" style={{ fontSize: "0.85rem" }}>
+            Score: off_hours 25, break_glass 40, failed_logins 15–45, concurrent 10–20, anom_brute 20,
+            anom_multi 15 (cap 100).
+          </p>
           <button className="btn" type="submit">
             Выдать
           </button>

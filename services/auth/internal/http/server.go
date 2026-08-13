@@ -73,11 +73,13 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(s.metricsMW)
 	r.Use(s.cors)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.Get("/metrics", s.handleMetrics)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// WebSocket without request timeout (long-lived).
@@ -109,6 +111,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Get("/saml/metadata", s.handleSAMLMetadata)
 				r.Get("/saml/start", s.handleSAMLStart)
 				r.Post("/saml/acs", s.handleSAMLACS)
+				r.Get("/saml/slo", s.handleSAMLSLO)
+				r.Post("/saml/slo", s.handleSAMLSLO)
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireSession)
 					r.Use(s.requireCSRF)
@@ -156,6 +160,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("users.read")).Get("/roles", s.handleListRoles)
 				r.With(s.requirePerm("audit.read")).Get("/audit-events", s.handleListAudit)
 				r.With(s.requirePerm("audit.read")).Get("/analytics/overview", s.handleAnalyticsOverview)
+				r.With(s.requirePerm("audit.read")).Get("/analytics/slo", s.handleAnalyticsSLO)
 
 				r.With(s.requirePerm("compliance.read")).Get("/compliance/status", s.handleComplianceStatus)
 				r.With(s.requirePerm("compliance.read")).Get("/compliance/packs", s.handleListCompliancePacks)
@@ -229,6 +234,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Post("/sessions/{id}/end", s.handleEndSession)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/kubeconfig", s.handleGetKubeconfig)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
 			})

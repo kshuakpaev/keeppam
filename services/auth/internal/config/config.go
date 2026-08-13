@@ -39,6 +39,11 @@ type Config struct {
 	AccessRequestTTL       time.Duration
 	PostgresWireAddr       string
 	MySQLWireAddr          string
+	K8sAPIAddr             string
+	K8sTLSCertFile         string
+	K8sTLSKeyFile          string
+	K8sTLSPath             string
+	K8sPublicURL           string
 	TLSCertFile            string
 	TLSKeyFile             string
 	TLSClientCAFile        string
@@ -78,6 +83,11 @@ func Load() (Config, error) {
 		AccessRequestTTL:       durationEnv("KEEPPAM_ACCESS_REQUEST_TTL", 24*time.Hour),
 		PostgresWireAddr:       env("KEEPPAM_PG_WIRE_ADDR", ":15432"),
 		MySQLWireAddr:          env("KEEPPAM_MYSQL_WIRE_ADDR", ":13306"),
+		K8sAPIAddr:             env("KEEPPAM_K8S_API_ADDR", ":16443"),
+		K8sTLSCertFile:         env("KEEPPAM_K8S_TLS_CERT_FILE", ""),
+		K8sTLSKeyFile:          env("KEEPPAM_K8S_TLS_KEY_FILE", ""),
+		K8sTLSPath:             env("KEEPPAM_K8S_TLS_PATH", "/tmp/keeppam-k8s-tls.pem"),
+		K8sPublicURL:           env("KEEPPAM_K8S_PUBLIC_URL", ""),
 		TLSCertFile:            env("KEEPPAM_TLS_CERT_FILE", ""),
 		TLSKeyFile:             env("KEEPPAM_TLS_KEY_FILE", ""),
 		TLSClientCAFile:        env("KEEPPAM_TLS_CLIENT_CA_FILE", ""),

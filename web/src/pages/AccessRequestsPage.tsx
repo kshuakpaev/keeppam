@@ -236,6 +236,7 @@ export function AccessRequestsPage() {
                   <th>Актив</th>
                   <th>TTL</th>
                   <th>Ticket</th>
+                  <th>Risk</th>
                   <th>Причина</th>
                   <th>Статус</th>
                   <th />
@@ -252,6 +253,18 @@ export function AccessRequestsPage() {
                     </td>
                     <td className="mono">{r.duration_minutes} мин</td>
                     <td className="mono">{r.ticket_id || "—"}</td>
+                    <td className="mono" style={{ fontSize: "0.85rem" }}>
+                      {r.risk_score ? (
+                        <>
+                          {r.risk_score}
+                          {(r.risk_factors || []).length ? (
+                            <div className="muted">{(r.risk_factors || []).join(", ")}</div>
+                          ) : null}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>{r.reason || "—"}</td>
                     <td>
                       <span
@@ -287,7 +300,7 @@ export function AccessRequestsPage() {
                 ))}
                 {requests.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="muted">
+                    <td colSpan={9} className="muted">
                       Запросов нет{status ? ` со статусом ${status}` : ""}.
                     </td>
                   </tr>

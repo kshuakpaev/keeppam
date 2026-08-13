@@ -27,6 +27,7 @@ import (
 	"github.com/keeppam/auth/internal/dr"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
+	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
@@ -126,6 +127,7 @@ func main() {
 	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
+	var k8sGw *k8sproxy.Gateway
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
@@ -134,6 +136,12 @@ func main() {
 		}
 		if protocol == "https" {
 			appsSvc.IsolateStop(ctx, id)
+		}
+		if protocol == "kubectl" {
+			k8sproxy.ClearToken(ctx, sessions.Redis(), id)
+			if k8sGw != nil {
+				k8sGw.DropSession(id)
+			}
 		}
 		if row, err := sessSvc.Get(ctx, id); err == nil {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
@@ -219,6 +227,23 @@ func main() {
 					slog.Error("mysql wire", "err", err)
 				}
 			}()
+		}
+		if cfg.K8sAPIAddr != "" && cfg.K8sAPIAddr != "off" {
+			pub := cfg.K8sPublicURL
+			if pub == "" {
+				pub = k8sproxy.DefaultPublicURL(cfg.CORSOrigin, cfg.K8sAPIAddr)
+			}
+			cert, err := k8sproxy.LoadOrCreateTLS(cfg.K8sTLSCertFile, cfg.K8sTLSKeyFile, cfg.K8sTLSPath, pub)
+			if err != nil {
+				slog.Error("k8s tls", "err", err)
+			} else {
+				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
+				go func() {
+					if err := k8sGw.ListenAndServe(runCtx); err != nil && err != http.ErrServerClosed {
+						slog.Error("k8s api gateway", "err", err)
+					}
+				}()
+			}
 		}
 		go func() {
 			t := time.NewTicker(time.Minute)

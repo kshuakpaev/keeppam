@@ -17,6 +17,7 @@ type Session struct {
 	Username    string    `json:"username"`
 	Roles       []string  `json:"roles"`
 	Permissions []string  `json:"permissions"`
+	SAMLNameID  string    `json:"saml_name_id,omitempty"`
 }
 
 type Challenge struct {

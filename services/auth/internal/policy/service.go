@@ -32,6 +32,8 @@ type Binding struct {
 	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
 	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
 	SQLPolicyPackName     string     `json:"sql_policy_pack_name,omitempty"`
+	MaxRisk               int        `json:"max_risk"`
+	RiskAction            string     `json:"risk_action"`
 	CreatedAt             time.Time  `json:"created_at"`
 }
 
@@ -58,6 +60,8 @@ type CreateBindingInput struct {
 	AllowedCIDRs        []string   `json:"allowed_cidrs"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
 	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
+	MaxRisk             int        `json:"max_risk"`
+	RiskAction          string     `json:"risk_action"`
 }
 
 type AccessCheck struct {
@@ -70,6 +74,7 @@ type AccessCheck struct {
 	Reason       string
 	ClientIP     string
 	IgnoreTicket bool
+	SkipRisk     bool
 }
 
 func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding, error) {
@@ -80,7 +85,8 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 			b.days_of_week, b.expires_at, b.required_tags, b.require_ticket,
 			COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
 			b.command_policy_pack_id, COALESCE(p.name,''),
-			b.sql_policy_pack_id, COALESCE(sp.name,''), b.created_at
+			b.sql_policy_pack_id, COALESCE(sp.name,''),
+			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'), b.created_at
 		FROM asset_access_bindings b
 		LEFT JOIN users u ON u.id = b.user_id
 		LEFT JOIN roles r ON r.id = b.role_id
@@ -101,7 +107,8 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 		if err := rows.Scan(&b.ID, &b.AssetID, &b.UserID, &b.RoleID, &b.Username, &b.RoleName,
 			&ts, &te, &b.DaysOfWeek, &b.ExpiresAt, &tags, &b.RequireTicket,
 			&b.RequireReason, &cidrs,
-			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName, &b.CreatedAt); err != nil {
+			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName,
+			&b.MaxRisk, &b.RiskAction, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		b.TimeStart = emptyToNil(ts)
@@ -168,12 +175,22 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	if err != nil {
 		return Binding{}, err
 	}
+	if in.MaxRisk < 0 || in.MaxRisk > 100 {
+		return Binding{}, fmt.Errorf("max_risk must be 0..100")
+	}
+	riskAction := strings.ToLower(strings.TrimSpace(in.RiskAction))
+	if riskAction == "" {
+		riskAction = "deny"
+	}
+	if riskAction != "deny" && riskAction != "require_approval" {
+		return Binding{}, fmt.Errorf("risk_action must be deny or require_approval")
+	}
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, command_policy_pack_id, sql_policy_pack_id, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)`,
-		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, in.CommandPolicyPackID, in.SQLPolicyPackID, actorID)
+			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, command_policy_pack_id, sql_policy_pack_id, max_risk, risk_action, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),$17)`,
+		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, in.CommandPolicyPackID, in.SQLPolicyPackID, in.MaxRisk, riskAction, actorID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -182,6 +199,7 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 		"expires_at": expires, "required_tags": tags, "require_ticket": in.RequireTicket,
 		"require_reason": in.RequireReason, "allowed_cidrs": cidrs,
 		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
+		"max_risk": in.MaxRisk, "risk_action": riskAction,
 	})
 	list, err := s.ListByAsset(ctx, assetID)
 	if err != nil {

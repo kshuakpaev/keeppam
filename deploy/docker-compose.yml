@@ -33,11 +33,14 @@ services:
       - "8080:8080"
       - "15432:15432"
       - "13306:13306"
+      - "16443:16443"
     environment:
       KEEPPAM_MODE: "api"
       KEEPPAM_HTTP_ADDR: ":8080"
       KEEPPAM_PG_WIRE_ADDR: ":15432"
       KEEPPAM_MYSQL_WIRE_ADDR: ":13306"
+      KEEPPAM_K8S_API_ADDR: ":16443"
+      KEEPPAM_K8S_PUBLIC_URL: "https://localhost:16443"
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
       KEEPPAM_REDIS_URL: "redis://redis:6379/0"
       # 32-byte local-dev key (base64)

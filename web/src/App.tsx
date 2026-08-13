@@ -27,7 +27,7 @@ export function AppLayout() {
   const viewingSession = !!(
     sessionMatch?.params.id &&
     sessionMatch.params.kind &&
-    ["terminal", "sql", "desktop", "app"].includes(sessionMatch.params.kind)
+    ["terminal", "sql", "desktop", "app", "k8s"].includes(sessionMatch.params.kind)
   );
   const [pendingApprove, setPendingApprove] = useState(0);
   const [myPending, setMyPending] = useState(0);
@@ -99,6 +99,10 @@ export function AppLayout() {
   }
 
   async function logout() {
+    if (user?.auth_source === "saml") {
+      window.location.href = "/api/v1/auth/saml/slo";
+      return;
+    }
     await api.logout();
     setUser(null);
     nav("/login");

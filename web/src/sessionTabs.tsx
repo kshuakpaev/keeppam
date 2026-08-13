@@ -10,7 +10,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { api } from "./api";
 
-export type SessionTabKind = "terminal" | "sql" | "desktop" | "app";
+export type SessionTabKind = "terminal" | "sql" | "desktop" | "app" | "k8s";
 
 export type SessionTab = {
   id: string;
@@ -44,7 +44,7 @@ function loadPersisted(): Persisted {
     if (!Array.isArray(parsed.tabs)) return { tabs: [], activeId: null };
     return {
       tabs: parsed.tabs.filter(
-        (t) => t && t.id && ["terminal", "sql", "desktop", "app"].includes(t.kind),
+        (t) => t && t.id && ["terminal", "sql", "desktop", "app", "k8s"].includes(t.kind),
       ),
       activeId: parsed.activeId || null,
     };
@@ -67,6 +67,7 @@ export function kindForProtocol(protocol: string, isolated?: boolean): SessionTa
   if (protocol === "rdp" || protocol === "vnc") return "desktop";
   if (protocol === "postgres" || protocol === "mysql") return "sql";
   if (protocol === "https") return isolated ? "desktop" : "app";
+  if (protocol === "kubectl") return "k8s";
   return "terminal";
 }
 

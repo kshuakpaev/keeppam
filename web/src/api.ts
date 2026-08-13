@@ -122,6 +122,8 @@ export type AccessBinding = {
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
   sql_policy_pack_name?: string;
+  max_risk?: number;
+  risk_action?: string;
   created_at: string;
 };
 
@@ -156,6 +158,8 @@ export type AccessRequest = {
   asset_address?: string;
   requester_username?: string;
   approver_username?: string;
+  risk_score?: number;
+  risk_factors?: string[];
 };
 
 export type AuthSettings = {
@@ -196,8 +200,11 @@ export type AuthSettings = {
   saml_auto_provision: boolean;
   saml_skip_mfa: boolean;
   saml_default_role: string;
+  saml_group_attr?: string;
+  saml_group_role_map?: Record<string, string>;
   saml_acs_url?: string;
   saml_metadata_url?: string;
+  saml_slo_url?: string;
   updated_at?: string;
 };
 
@@ -363,6 +370,28 @@ export type AnalyticsOverview = {
   }[];
 };
 
+export type AnalyticsSLO = {
+  generated_at: string;
+  targets: {
+    auth_p95_seconds: number;
+    session_setup_p95_seconds: number;
+    audit_lag_seconds: number;
+  };
+  auth_p95_seconds?: number | null;
+  auth_samples: number;
+  auth_burn?: number;
+  session_setup_p95_seconds?: number | null;
+  session_setup_samples: number;
+  session_setup_burn?: number;
+  active_sessions: number;
+  audit_export_lag_seconds?: number | null;
+  audit_pending: number;
+  audit_lag_burn?: number;
+  siem_enabled: boolean;
+  siem_healthy: boolean;
+  breached: boolean;
+};
+
 function csrfToken(): string {
   const match = document.cookie.match(/(?:^|; )kp_csrf=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : "";
@@ -488,6 +517,7 @@ export const api = {
     const q = qs.toString();
     return request<AnalyticsOverview>(`/api/v1/admin/analytics/overview${q ? `?${q}` : ""}`);
   },
+  getAnalyticsSLO: () => request<AnalyticsSLO>(`/api/v1/admin/analytics/slo`),
   changePassword: (current_password: string, new_password: string) =>
     request<{ status: string }>("/api/v1/auth/password", {
       method: "POST",
@@ -722,6 +752,8 @@ export const api = {
       allowed_cidrs?: string[];
       command_policy_pack_id?: string;
       sql_policy_pack_id?: string;
+      max_risk?: number;
+      risk_action?: string;
     },
   ) =>
     request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl`, {
@@ -810,6 +842,10 @@ export const api = {
     );
   },
   getSession: (id: string) => request<PamSession>(`/api/v1/admin/sessions/${id}`),
+  getKubeconfig: (id: string) =>
+    request<{ kubeconfig: string; k8s_addr: string; k8s_token: string }>(
+      `/api/v1/admin/sessions/${id}/kubeconfig`,
+    ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
   getAppIntegration: (assetId: string) =>
     request<AppIntegration>(`/api/v1/admin/assets/${assetId}/app`),
@@ -1007,6 +1043,9 @@ export type PamSession = {
   wire_addr?: string;
   wire_user?: string;
   wire_hint?: string;
+  kubeconfig?: string;
+  k8s_addr?: string;
+  k8s_token?: string;
   db_privilege?: string;
   break_glass?: boolean;
 };

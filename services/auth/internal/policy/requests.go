@@ -29,6 +29,8 @@ type AccessRequest struct {
 	AssetAddress      string `json:"asset_address,omitempty"`
 	RequesterUsername string `json:"requester_username,omitempty"`
 	ApproverUsername  string `json:"approver_username,omitempty"`
+	RiskScore         int      `json:"risk_score"`
+	RiskFactors       []string `json:"risk_factors"`
 }
 
 type CreateRequestInput struct {
@@ -65,11 +67,28 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 		return AccessRequest{}, fmt.Errorf("asset not found")
 	}
 
+	now := time.Now()
+	roles, _ := s.userRoleNames(ctx, requesterID)
+	ev, err := s.Evaluate(ctx, AccessCheck{
+		UserID: requesterID, AssetID: assetID, RoleNames: roles, Now: now,
+		TicketID: ticket, Reason: reason, ClientIP: ip,
+	})
+	if err != nil {
+		return AccessRequest{}, err
+	}
+	score, factors := ev.RiskScore, ev.RiskFactors
+	if !ev.OK && !ev.DeniedByRisk {
+		score, factors = s.ScoreUser(ctx, requesterID, assetID, now)
+	}
+	if ev.DeniedByRisk && ev.RiskAction == "deny" {
+		return AccessRequest{}, fmt.Errorf("%s", ev.RiskDenyMessage())
+	}
+
 	id := store.NewID()
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO access_requests (id, asset_id, requester_id, reason, ticket_id, duration_minutes, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',NOW())`,
-		id, assetID, requesterID, reason, ticket, in.DurationMinutes)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO access_requests (id, asset_id, requester_id, reason, ticket_id, duration_minutes, status, created_at, risk_score, risk_factors)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',NOW(),$7,$8)`,
+		id, assetID, requesterID, reason, ticket, in.DurationMinutes, score, factors)
 	if err != nil {
 		if strings.Contains(err.Error(), "idx_access_requests_pending") || strings.Contains(err.Error(), "duplicate key") {
 			return AccessRequest{}, fmt.Errorf("pending request already exists for this asset")
@@ -78,6 +97,7 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 	}
 	_ = s.aud.Record(ctx, &requesterID, "access.request.created", "access_request", id.String(), ip, ua, map[string]any{
 		"asset_id": assetID.String(), "duration_minutes": in.DurationMinutes, "ticket_id": ticket,
+		"risk_score": score, "risk_factors": factors,
 	})
 	return s.GetRequest(ctx, id)
 }
@@ -268,7 +288,8 @@ func (s *Service) RequestsSummary(ctx context.Context, userID uuid.UUID, canAppr
 const accessRequestSelect = `
 	SELECT ar.id, ar.asset_id, ar.requester_id, ar.reason, ar.ticket_id, ar.duration_minutes, ar.status,
 		ar.approver_id, ar.decided_at, ar.binding_id, ar.created_at,
-		a.name, a.address, ru.username, COALESCE(au.username,'')
+		a.name, a.address, ru.username, COALESCE(au.username,''),
+		COALESCE(ar.risk_score,0), COALESCE(ar.risk_factors,'{}')
 	FROM access_requests ar
 	JOIN assets a ON a.id = ar.asset_id
 	JOIN users ru ON ru.id = ar.requester_id
@@ -284,7 +305,11 @@ func scanAccessRequest(row requestScannable) (AccessRequest, error) {
 		&r.ID, &r.AssetID, &r.RequesterID, &r.Reason, &r.TicketID, &r.DurationMinutes, &r.Status,
 		&r.ApproverID, &r.DecidedAt, &r.BindingID, &r.CreatedAt,
 		&r.AssetName, &r.AssetAddress, &r.RequesterUsername, &r.ApproverUsername,
+		&r.RiskScore, &r.RiskFactors,
 	)
+	if r.RiskFactors == nil {
+		r.RiskFactors = []string{}
+	}
 	return r, err
 }
 

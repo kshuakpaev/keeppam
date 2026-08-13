@@ -45,6 +45,8 @@ const empty: AuthSettings = {
   saml_auto_provision: true,
   saml_skip_mfa: true,
   saml_default_role: "operator",
+  saml_group_attr: "groups",
+  saml_group_role_map: {},
 };
 
 const emptySSH: SSHSettings = {
@@ -98,6 +100,7 @@ export function ConfigPage() {
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [groupMapText, setGroupMapText] = useState("");
   const canWrite = hasPerm(user, "settings.write");
 
   useEffect(() => {
@@ -112,6 +115,7 @@ export function ConfigPage() {
           api.getITSMSettings(),
         ]);
         setForm({ ...empty, ...s });
+        setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
         setSiem({ ...emptySIEM, ...si });
         setSsh({ ...emptySSH, ...sh });
         setInfra(inf);
@@ -144,8 +148,11 @@ export function ConfigPage() {
       delete body.has_saml_sp_key;
       delete body.saml_acs_url;
       delete body.saml_metadata_url;
+      delete body.saml_slo_url;
+      body.saml_group_role_map = parseGroupRoleMap(groupMapText);
       const saved = await api.putAuthSettings(body);
       setForm({ ...empty, ...saved, rotate_saml_sp_key: false });
+      setGroupMapText(formatGroupRoleMap(saved.saml_group_role_map));
       setSecret("");
       setLdapPass("");
       setMsg("Авторизация сохранена");
@@ -419,7 +426,11 @@ export function ConfigPage() {
               <br />
               ACS URL: <span className="mono">{form.saml_acs_url || `${form.public_base_url || "…"}/api/v1/auth/saml/acs`}</span>
               <br />
+              SLO URL: <span className="mono">{form.saml_slo_url || `${form.public_base_url || "…"}/api/v1/auth/saml/slo`}</span>
+              <br />
               SP key: {form.has_saml_sp_key ? "сгенерирован" : "будет создан при сохранении"}
+              <br />
+              IdP-initiated ACS принимается без предварительного /start. SLO на IdP — из metadata URL.
             </p>
             <label>IdP Metadata URL (предпочтительно)</label>
             <input
@@ -478,6 +489,19 @@ export function ConfigPage() {
             <input
               value={form.saml_default_role}
               onChange={(e) => setForm({ ...form, saml_default_role: e.target.value })}
+            />
+            <label>Attr groups</label>
+            <input
+              value={form.saml_group_attr || "groups"}
+              onChange={(e) => setForm({ ...form, saml_group_attr: e.target.value })}
+              placeholder="groups"
+            />
+            <label>Group → role (строка `group=role`, роли должны существовать)</label>
+            <textarea
+              value={groupMapText}
+              onChange={(e) => setGroupMapText(e.target.value)}
+              rows={4}
+              placeholder={"keeppam-admins=admin\nops=operator"}
             />
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -920,4 +944,24 @@ export function ConfigPage() {
       </form>
     </div>
   );
+}
+
+function formatGroupRoleMap(m?: Record<string, string>) {
+  return Object.entries(m || {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function parseGroupRoleMap(text: string) {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const i = t.indexOf("=");
+    if (i <= 0) continue;
+    const k = t.slice(0, i).trim();
+    const v = t.slice(i + 1).trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type AnalyticsOverview } from "../api";
+import { api, hasPerm, type AnalyticsOverview, type AnalyticsSLO } from "../api";
 import { useAuth } from "../auth";
 
 const WINDOWS = [24, 72, 168] as const;
@@ -12,6 +12,7 @@ export function AnalyticsPage() {
   const [hours, setHours] = useState<(typeof WINDOWS)[number]>(24);
   const [severity, setSeverity] = useState<(typeof SEVS)[number]>("");
   const [data, setData] = useState<AnalyticsOverview | null>(null);
+  const [slo, setSlo] = useState<AnalyticsSLO | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -19,8 +20,12 @@ export function AnalyticsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await api.getAnalyticsOverview(h, { severity: sev || undefined });
+      const [res, sloRes] = await Promise.all([
+        api.getAnalyticsOverview(h, { severity: sev || undefined }),
+        api.getAnalyticsSLO(),
+      ]);
       setData(res);
+      setSlo(sloRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка загрузки");
     } finally {
@@ -48,7 +53,7 @@ export function AnalyticsPage() {
       <div className="page-head">
         <div>
           <h1>Аналитика</h1>
-          <p className="muted">Аномалии, SIEM-корреляция и цепочки сигналов</p>
+          <p className="muted">SLO, аномалии, SIEM-корреляция и цепочки сигналов</p>
         </div>
         <div className="row gap">
           {WINDOWS.map((h) => (
@@ -83,6 +88,43 @@ export function AnalyticsPage() {
 
       {data && stats && (
         <>
+          {slo && (
+            <section className={`card${slo.breached ? " warn" : ""}`} style={{ marginBottom: "1.25rem" }}>
+              <h2>SLO</h2>
+              <p>
+                <span className={`badge sev-${slo.breached ? "high" : "low"}`}>
+                  {slo.breached ? "breached" : "ok"}
+                </span>{" "}
+                цели: auth p95 &lt; {fmtSec(slo.targets.auth_p95_seconds)} · session setup p95 &lt;{" "}
+                {fmtSec(slo.targets.session_setup_p95_seconds)} · audit lag &lt; {slo.targets.audit_lag_seconds}s
+              </p>
+              <div className="stats-grid" style={{ marginTop: "0.75rem" }}>
+                <Stat
+                  label={`Auth p95 (${slo.auth_samples})`}
+                  value={slo.auth_p95_seconds == null ? "—" : fmtSec(slo.auth_p95_seconds)}
+                  warn={!!slo.auth_burn && slo.auth_burn > 1}
+                />
+                <Stat
+                  label={`Session setup p95 (${slo.session_setup_samples})`}
+                  value={
+                    slo.session_setup_p95_seconds == null ? "—" : fmtSec(slo.session_setup_p95_seconds)
+                  }
+                  warn={!!slo.session_setup_burn && slo.session_setup_burn > 1}
+                />
+                <Stat label="Активные сессии" value={slo.active_sessions} />
+                <Stat
+                  label={slo.siem_enabled ? `Audit lag (pending ${slo.audit_pending})` : "Audit lag (SIEM off)"}
+                  value={
+                    slo.audit_export_lag_seconds == null ? "—" : `${slo.audit_export_lag_seconds}s`
+                  }
+                  warn={!!slo.audit_lag_burn && slo.audit_lag_burn > 1}
+                />
+              </div>
+              <p className="muted" style={{ marginTop: "0.5rem" }}>
+                Prometheus: <span className="mono">GET /metrics</span>
+              </p>
+            </section>
+          )}
           {data.siem && (
             <section className={`card${data.siem.healthy ? "" : " warn"}`} style={{ marginBottom: "1.25rem" }}>
               <h2>SIEM</h2>
@@ -262,11 +304,16 @@ export function AnalyticsPage() {
   );
 }
 
-function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+function Stat({ label, value, warn }: { label: string; value: number | string; warn?: boolean }) {
   return (
     <div className={`card stat-card${warn ? " warn" : ""}`}>
       <div className="stat-value">{value}</div>
       <div className="muted">{label}</div>
     </div>
   );
+}
+
+function fmtSec(v: number) {
+  if (v < 1) return `${Math.round(v * 1000)}ms`;
+  return `${v.toFixed(2)}s`;
 }

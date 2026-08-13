@@ -1,22 +1,37 @@
-# KeepPAM: K8s PAM lite
+# KeepPAM: K8s PAM
 
-## Что есть
+## Phase 1 — lease (vault checkout)
 
-Короткий lease kubeconfig / SA token из vault без kubectl-proxy.
+Короткий lease kubeconfig / SA token из vault без proxy.
 
 1. Актив: `asset_type=k8s`, `protocol=kubectl`, address = API server, port 6443.
 2. Учётка: `auth_method=kubeconfig|sa_token`, секрет в `secret_enc`.
-3. `POST /api/v1/admin/assets/{id}/k8s/access` — policy + ITSM (если включён) → lease TTL 15m, secret один раз в ответе.
-4. `POST /api/v1/admin/k8s/leases/{id}/consume` — пометить lease использованным.
+3. `POST /api/v1/admin/assets/{id}/k8s/access` — policy + ITSM → lease TTL 15m, secret один раз.
+4. `POST /api/v1/admin/k8s/leases/{id}/consume`.
 5. Аудит: `k8s.access.granted` / `denied` / `k8s.lease.consumed` **без тела секрета**.
 
-## UI
+UI: **Vault checkout** (вторичная кнопка).
 
-Активы → тип k8s → протокол kubectl. Добавить учётку с kubeconfig YAML или token. Кнопка **«Получить kubeconfig»** → modal: copy / download / consume.
+## Phase 2 — kubectl proxy
+
+Сессия через PAM: клиент ходит на `:16443`, PAM расшифровывает vault и проксирует API server.
+
+1. `POST /api/v1/admin/sessions` protocol=`kubectl` — policy + ITSM + break-glass/admin bypass.
+2. Ответ / `GET .../sessions/{id}/kubeconfig` — **переписанный** kubeconfig (server=PAM, token=`{session}.{wire}`). Vault SA **не** отдаётся.
+3. TLS listener `KEEPPAM_K8S_API_ADDR` (default `:16443`), self-signed в `KEEPPAM_K8S_TLS_PATH`.
+4. Аудит `session.k8s` + NDJSON `{recordings}/k8s/{id}.jsonl`: verb/resource/namespace/name/status, `body_redacted`.
+5. Deny: exec / attach / port-forward / HTTP Upgrade. Impersonate-заголовки клиента снимаются.
+
+```bash
+export KUBECONFIG=./keeppam-xxxxxxxx.kubeconfig
+kubectl get ns
+```
+
+Публичный URL: `KEEPPAM_K8S_PUBLIC_URL` (стенд: `https://localhost:16443`).
 
 ## Вне scope
 
-- kubectl/API proxy через PAM
-- in-cluster RBAC / namespace ACL со стороны PAM
-- эфемерные TokenRequest / auto-rotate SA
-- запись kubectl-команд
+- in-cluster RBAC / namespace ACL / impersonation PAM-пользователя
+- TokenRequest / auto-rotate SA
+- kubectl в браузере / запись тел Secret
+- SLO / IdP-initiated (это SAML)

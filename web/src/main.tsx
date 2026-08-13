@@ -23,6 +23,7 @@ import { JeaPage } from "./pages/JeaPage";
 import { AttackSimPage } from "./pages/AttackSimPage";
 import { SqlConsolePage } from "./pages/SqlConsolePage";
 import { AppSessionPage } from "./pages/AppSessionPage";
+import { K8sSessionPage } from "./pages/K8sSessionPage";
 import { UserEditPage } from "./pages/UserEditPage";
 import { UsersPage } from "./pages/UsersPage";
 import "./styles.css";
@@ -49,6 +50,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/sessions/:id/terminal" element={<TerminalPage />} />
               <Route path="/sessions/:id/sql" element={<SqlConsolePage />} />
               <Route path="/sessions/:id/app" element={<AppSessionPage />} />
+              <Route path="/sessions/:id/k8s" element={<K8sSessionPage />} />
               <Route path="/sessions/:id/desktop" element={<DesktopPage />} />
               <Route path="/sessions/:id/replay" element={<SessionReplayPage />} />
               <Route path="/sessions/:id/watch" element={<WatchPage />} />

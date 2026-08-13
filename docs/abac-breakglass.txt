@@ -12,6 +12,29 @@
 
 Deny-by-default: нет совпавшей привязки — отказ.
 
+## Risk-based access
+
+На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval`).
+
+Score 0–100 (сумма, cap 100) в момент connect / JIT request:
+
+| Factor | Когда | Баллы |
+|--------|--------|-------|
+| `off_hours` | UTC hour < 6 | 25 |
+| `break_glass` | активный break-glass на актив | 40 |
+| `failed_logins` | `user.login.failure` за 24ч: 1–2 / 3–7 / ≥8 | 15 / 30 / 45 |
+| `concurrent` | pending+active сессии: 3–4 / ≥5 | 10 / 20 |
+| `anom_brute` | ≥8 fail за 24ч | 20 |
+| `anom_multi` | ≥4 разных актива за 24ч | 15 |
+
+Если score > `max_risk`:
+- `deny` — отказ (в т.ч. создать JIT)
+- `require_approval` — отказ на connect, нужен JIT; после approve окно без порога
+
+Break-glass и admin bypass риск не применяют. JIT-binding (`expires_at`) тоже.
+
+Аудит: `access.risk.evaluated` (score, factors, decision). В `session.denied` / `*.access.denied` — `reason=risk`.
+
 ## 4-eyes
 
 JIT-запрос доступа **нельзя одобрить самому себе** (API + UI). То же для dual-control checkout секретов.

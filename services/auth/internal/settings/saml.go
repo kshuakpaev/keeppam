@@ -25,10 +25,12 @@ type samlRelayState struct {
 }
 
 type SAMLClaims struct {
-	Subject  string
-	Username string
-	Email    string
-	Name     string
+	Subject      string
+	Username     string
+	Email        string
+	Name         string
+	Groups       []string
+	IDPInitiated bool
 }
 
 func (s *Service) buildSAMLSP(ctx context.Context, cfg AuthSettings, needIDP bool) (*saml.ServiceProvider, error) {
@@ -62,18 +64,23 @@ func (s *Service) buildSAMLSP(ctx context.Context, cfg AuthSettings, needIDP boo
 
 	metadataURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/metadata")
 	acsURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/acs")
+	sloURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/slo")
 	entityID := cfg.SAMLSPEntityID
 	if entityID == "" {
 		entityID = metadataURL.String()
 	}
 
 	sp := &saml.ServiceProvider{
-		EntityID:          entityID,
-		Key:               rsaKey,
-		Certificate:       keyPair.Leaf,
-		MetadataURL:       *metadataURL,
-		AcsURL:            *acsURL,
-		AllowIDPInitiated: false,
+		EntityID:           entityID,
+		Key:                rsaKey,
+		Certificate:        keyPair.Leaf,
+		MetadataURL:        *metadataURL,
+		AcsURL:             *acsURL,
+		SloURL:             *sloURL,
+		LogoutBindings:     []string{saml.HTTPRedirectBinding, saml.HTTPPostBinding},
+		AllowIDPInitiated:  true,
+		AuthnNameIDFormat:  saml.UnspecifiedNameIDFormat,
+		DefaultRedirectURI: cfg.PublicBaseURL + "/",
 	}
 	if needIDP {
 		idpMeta, err := s.loadIDPMetadata(ctx, cfg)
@@ -208,34 +215,51 @@ func (s *Service) SAMLParseACS(ctx context.Context, rdb *redis.Client, cfg AuthS
 	if relay == "" {
 		relay = r.Form.Get("RelayState")
 	}
-	raw, err := rdb.GetDel(ctx, "saml:"+relay).Bytes()
-	if err != nil {
-		return SAMLClaims{}, fmt.Errorf("invalid or expired saml relay state")
+	possible := []string{""}
+	idpInitiated := true
+	if relay != "" {
+		raw, err := rdb.GetDel(ctx, "saml:"+relay).Bytes()
+		if err == nil {
+			var st samlRelayState
+			if json.Unmarshal(raw, &st) == nil && st.RequestID != "" {
+				possible = []string{st.RequestID}
+				idpInitiated = false
+			}
+		}
 	}
-	var st samlRelayState
-	if err := json.Unmarshal(raw, &st); err != nil || st.RequestID == "" {
-		return SAMLClaims{}, fmt.Errorf("invalid saml relay state")
-	}
-	assertion, err := sp.ParseResponse(r, []string{st.RequestID})
+	assertion, err := sp.ParseResponse(r, possible)
 	if err != nil {
 		return SAMLClaims{}, fmt.Errorf("saml assertion: %w", err)
 	}
-	return mapSAMLClaims(cfg, assertion), nil
+	claims := mapSAMLClaims(cfg, assertion)
+	claims.IDPInitiated = idpInitiated
+	return claims, nil
 }
 
 func mapSAMLClaims(cfg AuthSettings, a *saml.Assertion) SAMLClaims {
 	attrs := map[string]string{}
+	multi := map[string][]string{}
 	for _, stmt := range a.AttributeStatements {
 		for _, attr := range stmt.Attributes {
-			name := attr.Name
-			if name == "" {
-				name = attr.FriendlyName
+			names := []string{}
+			if attr.Name != "" {
+				names = append(names, attr.Name)
 			}
-			if len(attr.Values) > 0 {
-				attrs[name] = attr.Values[0].Value
-				if attr.FriendlyName != "" {
-					attrs[attr.FriendlyName] = attr.Values[0].Value
+			if attr.FriendlyName != "" {
+				names = append(names, attr.FriendlyName)
+			}
+			var vals []string
+			for _, v := range attr.Values {
+				if s := strings.TrimSpace(v.Value); s != "" {
+					vals = append(vals, s)
 				}
+			}
+			if len(vals) == 0 {
+				continue
+			}
+			for _, n := range names {
+				attrs[n] = vals[0]
+				multi[n] = append(multi[n], vals...)
 			}
 		}
 	}
@@ -254,6 +278,7 @@ func mapSAMLClaims(cfg AuthSettings, a *saml.Assertion) SAMLClaims {
 	username := get(cfg.SAMLAttrUsername, "uid", "username", "preferred_username", "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")
 	email := get(cfg.SAMLAttrEmail, "email", "mail", "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")
 	name := get(cfg.SAMLAttrDisplayName, "displayName", "cn", "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname")
+	groups := collectGroups(multi, cfg.SAMLGroupAttr, "groups", "memberOf", "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups")
 
 	subject := ""
 	if a.Subject != nil && a.Subject.NameID != nil {
@@ -277,7 +302,57 @@ func mapSAMLClaims(cfg AuthSettings, a *saml.Assertion) SAMLClaims {
 		Username: username,
 		Email:    email,
 		Name:     name,
+		Groups:   groups,
 	}
+}
+
+func collectGroups(multi map[string][]string, keys ...string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		for _, v := range multi[k] {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (s *Service) SAMLLogoutRedirect(ctx context.Context, cfg AuthSettings, nameID string) (*url.URL, error) {
+	nameID = strings.TrimSpace(nameID)
+	if nameID == "" {
+		return nil, nil
+	}
+	sp, err := s.buildSAMLSP(ctx, cfg, true)
+	if err != nil {
+		return nil, err
+	}
+	idpURL := sp.GetSLOBindingLocation(saml.HTTPRedirectBinding)
+	if idpURL == "" {
+		idpURL = sp.GetSLOBindingLocation(saml.HTTPPostBinding)
+	}
+	if idpURL == "" {
+		return nil, nil
+	}
+	return sp.MakeRedirectLogoutRequest(nameID, "")
+}
+
+func (s *Service) SAMLValidateLogoutResponse(ctx context.Context, cfg AuthSettings, r *http.Request) error {
+	sp, err := s.buildSAMLSP(ctx, cfg, true)
+	if err != nil {
+		return err
+	}
+	return sp.ValidateLogoutResponseRequest(r)
 }
 
 func SAMLErrorRedirect(base, msg string) string {

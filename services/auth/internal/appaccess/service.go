@@ -154,16 +154,24 @@ func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID 
 	if err != nil {
 		return Lease{}, err
 	}
-	ok, err := s.policy.Allowed(ctx, policy.AccessCheck{
+	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
 		TicketID: ticketID, Reason: reason, ClientIP: ip,
 	})
 	if err != nil {
 		return Lease{}, err
 	}
-	if !ok {
-		_ = s.aud.Record(ctx, &userID, "app.access.denied", "asset", assetID.String(), ip, ua, map[string]any{"reason": "policy"})
-		return Lease{}, fmt.Errorf("access denied by policy")
+	if !ev.OK {
+		payload := map[string]any{"reason": "policy"}
+		if ev.DeniedByRisk {
+			payload["reason"] = "risk"
+			payload["risk_score"] = ev.RiskScore
+			payload["risk_factors"] = ev.RiskFactors
+			payload["max_risk"] = ev.MaxRisk
+			payload["risk_action"] = ev.RiskAction
+		}
+		_ = s.aud.Record(ctx, &userID, "app.access.denied", "asset", assetID.String(), ip, ua, payload)
+		return Lease{}, fmt.Errorf("%s", ev.DenyMessage())
 	}
 
 	switch integ.AuthMode {
@@ -188,18 +196,24 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	if asset.Status != "active" {
 		return Lease{}, fmt.Errorf("asset disabled")
 	}
-	ok, err := s.policy.Allowed(ctx, policy.AccessCheck{
+	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
 		TicketID: ticketID, Reason: reason, ClientIP: ip,
 	})
 	if err != nil {
 		return Lease{}, err
 	}
-	if !ok {
-		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, map[string]any{
-			"reason": "policy", "ticket_id": ticketID,
-		})
-		return Lease{}, fmt.Errorf("access denied by policy")
+	if !ev.OK {
+		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
+		if ev.DeniedByRisk {
+			payload["reason"] = "risk"
+			payload["risk_score"] = ev.RiskScore
+			payload["risk_factors"] = ev.RiskFactors
+			payload["max_risk"] = ev.MaxRisk
+			payload["risk_action"] = ev.RiskAction
+		}
+		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, payload)
+		return Lease{}, fmt.Errorf("%s", ev.DenyMessage())
 	}
 	if accountID == uuid.Nil {
 		return Lease{}, fmt.Errorf("account_id required")
