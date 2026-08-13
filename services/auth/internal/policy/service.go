@@ -10,24 +10,26 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/store"
 )
 
 type Binding struct {
-	ID                   uuid.UUID  `json:"id"`
-	AssetID              uuid.UUID  `json:"asset_id"`
-	UserID               *uuid.UUID `json:"user_id,omitempty"`
-	RoleID               *uuid.UUID `json:"role_id,omitempty"`
-	Username             string     `json:"username,omitempty"`
-	RoleName             string     `json:"role_name,omitempty"`
-	TimeStart            *string    `json:"time_start,omitempty"`
-	TimeEnd              *string    `json:"time_end,omitempty"`
-	DaysOfWeek           int        `json:"days_of_week"`
-	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
-	RequiredTags         []string   `json:"required_tags"`
-	RequireTicket        bool       `json:"require_ticket"`
-	RequireReason        bool       `json:"require_reason"`
-	AllowedCIDRs         []string   `json:"allowed_cidrs"`
+	ID                    uuid.UUID  `json:"id"`
+	AssetID               uuid.UUID  `json:"asset_id"`
+	UserID                *uuid.UUID `json:"user_id,omitempty"`
+	RoleID                *uuid.UUID `json:"role_id,omitempty"`
+	Username              string     `json:"username,omitempty"`
+	RoleName              string     `json:"role_name,omitempty"`
+	TimeStart             *string    `json:"time_start,omitempty"`
+	TimeEnd               *string    `json:"time_end,omitempty"`
+	DaysOfWeek            int        `json:"days_of_week"`
+	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
+	RequiredTags          []string   `json:"required_tags"`
+	RequireTicket         bool       `json:"require_ticket"`
+	RequireReason         bool       `json:"require_reason"`
+	AllowedCIDRs          []string   `json:"allowed_cidrs"`
+	AllowedCountries      []string   `json:"allowed_countries"`
 	CommandPolicyPackID   *uuid.UUID `json:"command_policy_pack_id,omitempty"`
 	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
 	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
@@ -40,10 +42,26 @@ type Binding struct {
 type Service struct {
 	db  *store.DB
 	aud *audit.Service
+	geo *geoip.Lookup
 }
 
 func New(db *store.DB, aud *audit.Service) *Service {
-	return &Service{db: db, aud: aud}
+	return &Service{db: db, aud: aud, geo: geoip.New("")}
+}
+
+func (s *Service) SetGeo(l *geoip.Lookup) {
+	if l != nil {
+		s.geo = l
+	}
+}
+
+func (s *Service) Geo() *geoip.Lookup { return s.geo }
+
+func (s *Service) ClientCountry(ip string) string {
+	if s.geo == nil {
+		return geoip.Classify(ip)
+	}
+	return s.geo.Country(ip)
 }
 
 type CreateBindingInput struct {
@@ -58,6 +76,7 @@ type CreateBindingInput struct {
 	RequireTicket       bool       `json:"require_ticket"`
 	RequireReason       bool       `json:"require_reason"`
 	AllowedCIDRs        []string   `json:"allowed_cidrs"`
+	AllowedCountries    []string   `json:"allowed_countries"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
 	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
 	MaxRisk             int        `json:"max_risk"`
@@ -65,16 +84,17 @@ type CreateBindingInput struct {
 }
 
 type AccessCheck struct {
-	UserID       uuid.UUID
-	AssetID      uuid.UUID
-	RoleNames    []string
-	Bypass       bool
-	Now          time.Time
-	TicketID     string
-	Reason       string
-	ClientIP     string
-	IgnoreTicket bool
-	SkipRisk     bool
+	UserID        uuid.UUID
+	AssetID       uuid.UUID
+	RoleNames     []string
+	Bypass        bool
+	Now           time.Time
+	TicketID      string
+	Reason        string
+	ClientIP      string
+	ClientCountry string
+	IgnoreTicket  bool
+	SkipRisk      bool
 }
 
 func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding, error) {
@@ -84,6 +104,7 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 			to_char(b.time_start, 'HH24:MI'), to_char(b.time_end, 'HH24:MI'),
 			b.days_of_week, b.expires_at, b.required_tags, b.require_ticket,
 			COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
+			COALESCE(b.allowed_countries,'{}'),
 			b.command_policy_pack_id, COALESCE(p.name,''),
 			b.sql_policy_pack_id, COALESCE(sp.name,''),
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'), b.created_at
@@ -102,11 +123,11 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 	for rows.Next() {
 		var b Binding
 		var ts, te *string
-		var tags, cidrs []string
+		var tags, cidrs, countries []string
 		var packName, sqlPackName string
 		if err := rows.Scan(&b.ID, &b.AssetID, &b.UserID, &b.RoleID, &b.Username, &b.RoleName,
 			&ts, &te, &b.DaysOfWeek, &b.ExpiresAt, &tags, &b.RequireTicket,
-			&b.RequireReason, &cidrs,
+			&b.RequireReason, &cidrs, &countries,
 			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName,
 			&b.MaxRisk, &b.RiskAction, &b.CreatedAt); err != nil {
 			return nil, err
@@ -115,6 +136,7 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 		b.TimeEnd = emptyToNil(te)
 		b.RequiredTags = normalizeTags(tags)
 		b.AllowedCIDRs = normalizeCIDRs(cidrs)
+		b.AllowedCountries = geoip.NormalizeCountries(countries)
 		b.CommandPolicyPackName = packName
 		b.SQLPolicyPackName = sqlPackName
 		out = append(out, b)
@@ -175,6 +197,10 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	if err != nil {
 		return Binding{}, err
 	}
+	countries, err := geoip.ValidateCountries(in.AllowedCountries)
+	if err != nil {
+		return Binding{}, err
+	}
 	if in.MaxRisk < 0 || in.MaxRisk > 100 {
 		return Binding{}, fmt.Errorf("max_risk must be 0..100")
 	}
@@ -188,16 +214,16 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, command_policy_pack_id, sql_policy_pack_id, max_risk, risk_action, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),$17)`,
-		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, in.CommandPolicyPackID, in.SQLPolicyPackID, in.MaxRisk, riskAction, actorID)
+			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, command_policy_pack_id, sql_policy_pack_id, max_risk, risk_action, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),$18)`,
+		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, in.CommandPolicyPackID, in.SQLPolicyPackID, in.MaxRisk, riskAction, actorID)
 	if err != nil {
 		return Binding{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.acl.granted", "asset", assetID.String(), ip, ua, map[string]any{
 		"binding_id": id.String(), "user_id": in.UserID, "role_id": in.RoleID,
 		"expires_at": expires, "required_tags": tags, "require_ticket": in.RequireTicket,
-		"require_reason": in.RequireReason, "allowed_cidrs": cidrs,
+		"require_reason": in.RequireReason, "allowed_cidrs": cidrs, "allowed_countries": countries,
 		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
 		"max_risk": in.MaxRisk, "risk_action": riskAction,
 	})

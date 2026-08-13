@@ -42,6 +42,10 @@ export function AssetEditPage() {
     auth_method: "password",
     secret: "",
     description: "",
+    token_request_enabled: false,
+    k8s_sa_namespace: "",
+    k8s_sa_name: "",
+    token_ttl_seconds: 900,
   });
   const [aclForm, setAclForm] = useState({
     kind: "role" as "role" | "user",
@@ -55,6 +59,7 @@ export function AssetEditPage() {
     require_ticket: false,
     require_reason: false,
     allowed_cidrs: "",
+    allowed_countries: "",
     command_policy_pack_id: "",
     sql_policy_pack_id: "",
     max_risk: "0",
@@ -317,8 +322,21 @@ export function AssetEditPage() {
         auth_method: accForm.auth_method,
         secret: accForm.secret || undefined,
         description: accForm.description,
+        token_request_enabled: accForm.token_request_enabled,
+        k8s_sa_namespace: accForm.k8s_sa_namespace,
+        k8s_sa_name: accForm.k8s_sa_name,
+        token_ttl_seconds: accForm.token_ttl_seconds,
       });
-      setAccForm({ username: "", auth_method: "password", secret: "", description: "" });
+      setAccForm({
+        username: "",
+        auth_method: "password",
+        secret: "",
+        description: "",
+        token_request_enabled: false,
+        k8s_sa_namespace: "",
+        k8s_sa_name: "",
+        token_ttl_seconds: 900,
+      });
       setMsg("Учётная запись добавлена");
       await load();
     } catch (err) {
@@ -469,6 +487,10 @@ export function AssetEditPage() {
       rotate_on_checkin?: boolean;
       dual_control_checkout?: boolean;
       rotate_interval_hours?: number;
+      token_request_enabled?: boolean;
+      k8s_sa_namespace?: string;
+      k8s_sa_name?: string;
+      token_ttl_seconds?: number;
     },
   ) {
     if (!id || !canWrite) return;
@@ -508,6 +530,7 @@ export function AssetEditPage() {
         require_ticket?: boolean;
         require_reason?: boolean;
         allowed_cidrs?: string[];
+        allowed_countries?: string[];
         command_policy_pack_id?: string;
         sql_policy_pack_id?: string;
         max_risk?: number;
@@ -539,6 +562,11 @@ export function AssetEditPage() {
         .map((x) => x.trim())
         .filter(Boolean);
       if (cidrs.length) body.allowed_cidrs = cidrs;
+      const countries = aclForm.allowed_countries
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (countries.length) body.allowed_countries = countries;
       if (aclForm.command_policy_pack_id) {
         body.command_policy_pack_id = aclForm.command_policy_pack_id;
       }
@@ -564,6 +592,7 @@ export function AssetEditPage() {
         require_ticket: false,
         require_reason: false,
         allowed_cidrs: "",
+        allowed_countries: "",
         command_policy_pack_id: "",
         sql_policy_pack_id: "",
         max_risk: "0",
@@ -1026,6 +1055,66 @@ export function AssetEditPage() {
                       </button>
                     </span>
                   )}
+                  {(acc.auth_method === "kubeconfig" || acc.auth_method === "sa_token") && (
+                    <>
+                      <br />
+                      {canWrite ? (
+                        <span className="row" style={{ gap: "0.75rem", flexWrap: "wrap", marginTop: 4 }}>
+                          <label className="row" style={{ gap: 4, alignItems: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={!!acc.token_request_enabled}
+                              onChange={(e) =>
+                                void onToggleVaultPolicy(acc, { token_request_enabled: e.target.checked })
+                              }
+                            />
+                            TokenRequest
+                          </label>
+                          {acc.token_request_enabled && (
+                            <>
+                              <span className="mono" style={{ fontSize: "0.8rem" }}>
+                                {acc.k8s_sa_namespace || "default"}/{acc.k8s_sa_name || acc.username} ·{" "}
+                                {acc.token_ttl_seconds || 900}s
+                              </span>
+                              <button
+                                className="btn secondary"
+                                type="button"
+                                style={{ padding: "0.15rem 0.4rem", fontSize: "0.8rem" }}
+                                onClick={() => {
+                                  const ns = window.prompt(
+                                    "SA namespace (пусто = default):",
+                                    acc.k8s_sa_namespace || "",
+                                  );
+                                  if (ns === null) return;
+                                  const name = window.prompt(
+                                    "SA name (пусто = логин учётки):",
+                                    acc.k8s_sa_name || "",
+                                  );
+                                  if (name === null) return;
+                                  const ttl = window.prompt(
+                                    "Token TTL, секунды (60–86400):",
+                                    String(acc.token_ttl_seconds || 900),
+                                  );
+                                  if (ttl === null) return;
+                                  const n = Number(ttl);
+                                  if (Number.isNaN(n) || n < 60 || n > 86400) return;
+                                  void onToggleVaultPolicy(acc, {
+                                    k8s_sa_namespace: ns,
+                                    k8s_sa_name: name,
+                                    token_ttl_seconds: n,
+                                  });
+                                }}
+                              >
+                                SA…
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      ) : acc.token_request_enabled ? (
+                        <span>TokenRequest {acc.k8s_sa_namespace || "default"}/{acc.k8s_sa_name || acc.username}</span>
+                      ) : null}
+                    </>
+                  )}
                 </td>
                 <td>
                   <span className={`badge ${acc.status}`}>{acc.status}</span>
@@ -1225,6 +1314,48 @@ export function AssetEditPage() {
             value={accForm.description}
             onChange={(e) => setAccForm({ ...accForm, description: e.target.value })}
           />
+          {(accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token") && (
+            <>
+              <label className="row" style={{ gap: 8, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={accForm.token_request_enabled}
+                  onChange={(e) => setAccForm({ ...accForm, token_request_enabled: e.target.checked })}
+                />
+                TokenRequest (короткий SA-токен вместо выдачи vault)
+              </label>
+              {accForm.token_request_enabled && (
+                <>
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    Vault-секрет должен уметь <span className="mono">create token</span> на целевой SA.
+                    Пользователю уходит ephemeral JWT; privileged kubeconfig не покидает PAM.
+                  </p>
+                  <label>SA namespace</label>
+                  <input
+                    value={accForm.k8s_sa_namespace}
+                    onChange={(e) => setAccForm({ ...accForm, k8s_sa_namespace: e.target.value })}
+                    placeholder="default"
+                  />
+                  <label>SA name</label>
+                  <input
+                    value={accForm.k8s_sa_name}
+                    onChange={(e) => setAccForm({ ...accForm, k8s_sa_name: e.target.value })}
+                    placeholder="логин учётки"
+                  />
+                  <label>Token TTL (сек)</label>
+                  <input
+                    type="number"
+                    min={60}
+                    max={86400}
+                    value={accForm.token_ttl_seconds}
+                    onChange={(e) =>
+                      setAccForm({ ...accForm, token_ttl_seconds: Number(e.target.value) || 900 })
+                    }
+                  />
+                </>
+              )}
+            </>
+          )}
           <button className="btn" type="submit">
             Добавить
           </button>
@@ -1235,7 +1366,7 @@ export function AssetEditPage() {
         <div className="card" style={{ maxWidth: 720, marginBottom: "1.25rem" }}>
           <h2>K8s credential lease</h2>
           <p className="muted">
-            {k8sLease.username} · {k8sLease.auth_method || "secret"} · API{" "}
+            {k8sLease.username} · {k8sLease.auth_mode === "token_request" ? "TokenRequest" : k8sLease.auth_method || "secret"} · API{" "}
             <span className="mono">
               {k8sLease.cluster_address}
               {k8sLease.cluster_port ? `:${k8sLease.cluster_port}` : ""}
@@ -1383,6 +1514,7 @@ export function AssetEditPage() {
                   {b.require_ticket ? " · ticket" : ""}
                   {b.require_reason ? " · reason" : ""}
                   {(b.allowed_cidrs || []).length ? ` · ${b.allowed_cidrs!.join(",")}` : ""}
+                  {(b.allowed_countries || []).length ? ` · ${b.allowed_countries!.join(",")}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -1546,6 +1678,12 @@ export function AssetEditPage() {
             value={aclForm.allowed_cidrs}
             onChange={(e) => setAclForm({ ...aclForm, allowed_cidrs: e.target.value })}
             placeholder="10.0.0.0/8, 192.168.1.10"
+          />
+          <label>Allowed countries (ISO + LAN, пусто = любая)</label>
+          <input
+            value={aclForm.allowed_countries}
+            onChange={(e) => setAclForm({ ...aclForm, allowed_countries: e.target.value })}
+            placeholder="LAN, RU, KZ"
           />
           <label>JEA command pack (SSH, опц.)</label>
           <select

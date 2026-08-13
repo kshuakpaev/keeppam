@@ -72,6 +72,8 @@ services:
       KEEPPAM_ISO_IMAGE: "keeppam-iso-browser:local"
       KEEPPAM_ISO_NETWORK: "deploy_default"
       KEEPPAM_ISO_DOCKER_SOCK: "/var/run/docker.sock"
+      # GeoIP ABAC (docs/geoip.txt): без файла — только LAN
+      # KEEPPAM_GEOIP_DB: "/var/lib/keeppam/GeoLite2-Country.mmdb"
     depends_on:
       postgres:
         condition: service_healthy

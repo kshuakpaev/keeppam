@@ -5,6 +5,7 @@ import {
   type AuthSettings,
   type InfraStatus,
   type ITSMSettings,
+  type NotifySettings,
   type SIEMSettings,
   type SSHSettings,
 } from "../api";
@@ -84,11 +85,20 @@ const emptyITSM: ITSMSettings = {
   timeout_sec: 8,
 };
 
+const emptyNotify: NotifySettings = {
+  enabled: false,
+  webhook_url: "",
+  has_auth_header: false,
+  timeout_sec: 5,
+};
+
 export function ConfigPage() {
   const { user } = useAuth();
   const [form, setForm] = useState<AuthSettings>(empty);
   const [siem, setSiem] = useState<SIEMSettings>(emptySIEM);
   const [itsm, setItsm] = useState<ITSMSettings>(emptyITSM);
+  const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
+  const [notifyAuth, setNotifyAuth] = useState("");
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
   const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
@@ -107,12 +117,13 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it] = await Promise.all([
+        const [s, si, sh, inf, it, nt] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
           api.getInfraStatus(),
           api.getITSMSettings(),
+          api.getNotifySettings(),
         ]);
         setForm({ ...empty, ...s });
         setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
@@ -124,6 +135,7 @@ export function ConfigPage() {
           ...it,
           ok_statuses: it.ok_statuses?.length ? it.ok_statuses : emptyITSM.ok_statuses,
         });
+        setNotify({ ...emptyNotify, ...nt });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Ошибка загрузки");
       }
@@ -188,6 +200,26 @@ export function ConfigPage() {
       setMsg("ITSM сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения ITSM");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveNotify(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const body: Partial<NotifySettings> = { ...notify };
+      if (notifyAuth.trim()) body.auth_header = notifyAuth.trim();
+      delete body.has_auth_header;
+      const saved = await api.putNotifySettings(body);
+      setNotify({ ...emptyNotify, ...saved });
+      setNotifyAuth("");
+      setMsg("JIT webhook сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения webhook");
     } finally {
       setBusy(false);
     }
@@ -332,6 +364,16 @@ export function ConfigPage() {
           </p>
           <p>
             HTTP: <span className="mono">{infra.http_addr || "—"}</span>
+          </p>
+          <p>
+            GeoIP:{" "}
+            <span className="mono">
+              {infra.geoip_ready
+                ? infra.geoip_db || "ready"
+                : infra.geoip_db
+                  ? `${infra.geoip_db} (не загружена)`
+                  : "LAN only (нет MMDB)"}
+            </span>
           </p>
         </div>
       )}
@@ -827,6 +869,58 @@ export function ConfigPage() {
         {itsmCheck && <p className="muted mono">{itsmCheck}</p>}
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
           Сохранить ITSM
+        </button>
+      </form>
+
+      <form className="card" onSubmit={onSaveNotify} style={{ maxWidth: 640 }}>
+        <h2>JIT webhook</h2>
+        <p className="muted">
+          POST JSON на create/approve/deny JIT. Ошибка доставки не блокирует согласование. Checkout
+          только в in-app inbox.
+        </p>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={notify.enabled}
+            onChange={(e) => setNotify({ ...notify, enabled: e.target.checked })}
+          />
+          Включить webhook
+        </label>
+        <label>URL</label>
+        <input
+          value={notify.webhook_url}
+          onChange={(e) => setNotify({ ...notify, webhook_url: e.target.value })}
+          placeholder="https://hooks.example.com/keeppam"
+        />
+        <label>Authorization header {notify.has_auth_header ? "(задан)" : ""} — пусто = не менять</label>
+        <input
+          type="password"
+          value={notifyAuth}
+          onChange={(e) => setNotifyAuth(e.target.value)}
+          placeholder="Bearer … / X-Token: …"
+          autoComplete="new-password"
+        />
+        <label>Timeout (sec)</label>
+        <input
+          type="number"
+          min={1}
+          max={30}
+          value={notify.timeout_sec}
+          onChange={(e) => setNotify({ ...notify, timeout_sec: Number(e.target.value) })}
+        />
+        {(notify.last_sent_at || notify.last_error) && (
+          <p className="muted" style={{ marginTop: "0.75rem" }}>
+            Последняя отправка: {notify.last_sent_at ? new Date(notify.last_sent_at).toLocaleString() : "—"}
+            {notify.last_error ? (
+              <>
+                <br />
+                <span className="error">Ошибка: {notify.last_error}</span>
+              </>
+            ) : null}
+          </p>
+        )}
+        <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
+          Сохранить webhook
         </button>
       </form>
 

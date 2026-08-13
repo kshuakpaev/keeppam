@@ -39,6 +39,11 @@ Bucket должен быть создан с Object Lock enabled (MinIO: `mc mb 
 
 Рекомендуется `KEEPPAM_COOKIE_SECURE=true` при включённом TLS.
 
+## GeoIP (ABAC)
+
+`KEEPPAM_GEOIP_DB` — путь к MaxMind GeoLite2-Country.mmdb (api и session-worker).
+Без файла: только `LAN` (RFC1918 / loopback). См. `docs/geoip.txt`.
+
 ## UI
 
 Конфигурация → блок «Инфраструктура (env)» — read-only статус (`GET /api/v1/admin/settings/infra`, право `settings.write`).

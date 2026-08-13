@@ -61,7 +61,7 @@
 Было: RBAC + пример временного ограничения.
 Стало:
 - RBAC + ABAC (атрибуты пользователя, ресурса, окружения, риска).
-- Контекстные условия: geoip, managed-device, ticket-id, time-window, break-glass.
+- Контекстные условия: geoip (`allowed_countries` + LAN/MMDB), managed-device, ticket-id, time-window, break-glass.
 - Deny-by-default и explicit allow.
 
 Почему: RBAC недостаточен для enterprise-кейсов и SoD.

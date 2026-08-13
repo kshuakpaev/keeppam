@@ -1,0 +1,62 @@
+# KeepPAM: JIT-уведомления
+
+In-app inbox + опциональный webhook на заявки доступа.
+
+## Inbox
+
+Любой залогиненный пользователь видит **свои** уведомления.
+
+| Событие | Кому |
+|---------|------|
+| JIT create | все с `access.approve`, кроме requester |
+| JIT approve/deny | requester |
+| Dual-control checkout create | все с `assets.write`, кроме requester |
+| Checkout approve/deny | requester |
+
+Cancel / expire — без уведомлений.
+
+API (session + CSRF, без отдельного perm):
+
+- `GET /api/v1/notifications?limit=50` → `{notifications, unread}`
+- `GET /api/v1/notifications/unread-count`
+- `POST /api/v1/notifications/{id}/read`
+- `POST /api/v1/notifications/read-all`
+
+UI: колокольчик в sidebar, poll 25s, клик → `/access-requests`.
+
+## Webhook
+
+Конфиг → **JIT webhook** (`settings.write`).
+
+| Поле | Смысл |
+|------|--------|
+| `enabled` | мастер-выключатель |
+| `webhook_url` | HTTPS POST JSON |
+| `auth_header` | write-only, шифруется (`Authorization` или `Header: value`) |
+| `timeout_sec` | 1–30, default 5 |
+
+Только `jit.created` / `jit.approved` / `jit.denied`. Checkout в webhook не уходит.
+
+Ошибка доставки **не** блокирует approve. Аудит `notify.webhook.failed`, `last_error` в UI.
+
+Payload (без секретов):
+
+```json
+{
+  "source": "keeppam",
+  "event": "jit.created",
+  "id": "…",
+  "asset_id": "…",
+  "asset_name": "prod-db",
+  "requester_id": "…",
+  "requester_username": "alice",
+  "duration_minutes": 60,
+  "reason": "…",
+  "ticket_id": "INC-1",
+  "status": "pending",
+  "approver_id": null,
+  "ts": "2026-08-13T15:00:00Z"
+}
+```
+
+User-Agent: `KeepPAM-Notify/1.0`.

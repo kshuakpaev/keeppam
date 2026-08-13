@@ -172,6 +172,40 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, out)
 }
 
+func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	f := sessionsvc.EventSearchFilter{
+		Q:     r.URL.Query().Get("q"),
+		Type:  r.URL.Query().Get("type"),
+		Hours: 168,
+		Limit: 50,
+	}
+	if v := r.URL.Query().Get("hours"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.Hours = n
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.Limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.Offset = n
+		}
+	}
+	if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
+		f.OnlyUser = &sess.UserID
+	}
+	list, total, err := s.sessionsvc.SearchEvents(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": list, "total": total})
+}
+
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	f := sessionsvc.ListFilter{

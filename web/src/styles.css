@@ -78,6 +78,61 @@ h3 {
   letter-spacing: 0.04em;
 }
 
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.bell-btn {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  font-size: 1rem;
+}
+
+.bell-btn .nav-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.35rem;
+  margin-left: 0;
+}
+
+.notify-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.notify-item {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.4rem 0.35rem;
+  border-radius: var(--radius);
+}
+
+.notify-item:hover {
+  background: var(--bg);
+}
+
+.notify-item.unread {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.45rem;
+}
+
 .nav {
   display: flex;
   flex-direction: column;

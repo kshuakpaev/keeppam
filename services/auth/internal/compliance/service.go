@@ -389,12 +389,13 @@ func (s *Service) checkABAC(ctx context.Context) ControlResult {
 	_ = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM asset_access_bindings
 		WHERE COALESCE(cardinality(required_tags),0) > 0 OR require_ticket
-		   OR COALESCE(require_reason,false) OR COALESCE(cardinality(allowed_cidrs),0) > 0`).Scan(&n)
+		   OR COALESCE(require_reason,false) OR COALESCE(cardinality(allowed_cidrs),0) > 0
+		   OR COALESCE(cardinality(allowed_countries),0) > 0`).Scan(&n)
 	st := "warn"
 	if n > 0 {
 		st = "pass"
 	}
-	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR", Status: st,
+	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR/geo", Status: st,
 		Detail: fmt.Sprintf("bindings с ABAC-условиями: %d", n)}
 }
 

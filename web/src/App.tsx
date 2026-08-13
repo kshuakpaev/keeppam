@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
-import { api, hasPerm, type AccessRequest } from "./api";
+import { api, hasPerm, type AccessRequest, type InboxNotification } from "./api";
 import { useAuth } from "./auth";
 import { SessionKeepAliveHost } from "./components/SessionKeepAliveHost";
 import { SessionTabBar } from "./components/SessionTabBar";
@@ -32,6 +32,9 @@ export function AppLayout() {
   const [pendingApprove, setPendingApprove] = useState(0);
   const [myPending, setMyPending] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
+  const [inbox, setInbox] = useState<InboxNotification[]>([]);
+  const [inboxUnread, setInboxUnread] = useState(0);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const prevPending = useRef(0);
   const notifyAsked = useRef(false);
 
@@ -90,6 +93,27 @@ export function AppLayout() {
     };
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    async function tickInbox() {
+      try {
+        const data = await api.listNotifications(10);
+        if (cancelled) return;
+        setInbox(data.notifications || []);
+        setInboxUnread(data.unread || 0);
+      } catch {
+        /* ignore */
+      }
+    }
+    void tickInbox();
+    const id = window.setInterval(() => void tickInbox(), 25000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [user]);
+
   if (loading) {
     return <div className="auth-page muted">Загрузка…</div>;
   }
@@ -113,7 +137,66 @@ export function AppLayout() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">KeepPAM</div>
+        <div className="brand-row">
+          <div className="brand">KeepPAM</div>
+          <button
+            type="button"
+            className="bell-btn"
+            title="Уведомления"
+            onClick={() => setInboxOpen((v) => !v)}
+          >
+            <span aria-hidden>🔔</span>
+            {inboxUnread > 0 && <span className="nav-badge">{inboxUnread > 99 ? "99+" : inboxUnread}</span>}
+          </button>
+        </div>
+        {inboxOpen && (
+          <div className="notify-panel">
+            <div className="row" style={{ justifyContent: "space-between", marginBottom: "0.5rem" }}>
+              <strong>Уведомления</strong>
+              {inboxUnread > 0 && (
+                <button
+                  className="btn secondary"
+                  type="button"
+                  style={{ padding: "0.15rem 0.4rem", fontSize: "0.8rem" }}
+                  onClick={() => {
+                    void api.readAllNotifications().then(() => {
+                      setInboxUnread(0);
+                      setInbox((list) => list.map((n) => ({ ...n, read_at: n.read_at || new Date().toISOString() })));
+                    });
+                  }}
+                >
+                  Прочитать все
+                </button>
+              )}
+            </div>
+            {inbox.length === 0 && <p className="muted">Пусто</p>}
+            {inbox.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                className={`notify-item${n.read_at ? "" : " unread"}`}
+                onClick={() => {
+                  if (!n.read_at) {
+                    void api.readNotification(n.id).then(() => {
+                      setInboxUnread((c) => Math.max(0, c - 1));
+                      setInbox((list) => list.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)));
+                    });
+                  }
+                  setInboxOpen(false);
+                  nav("/access-requests");
+                }}
+              >
+                <div>{n.title}</div>
+                <div className="muted" style={{ fontSize: "0.8rem" }}>
+                  {n.body}
+                </div>
+              </button>
+            ))}
+            <Link to="/access-requests" className="muted" onClick={() => setInboxOpen(false)}>
+              Очередь запросов →
+            </Link>
+          </div>
+        )}
         <nav className="nav">
           <NavLink to="/" end>
             Обзор

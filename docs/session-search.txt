@@ -1,0 +1,30 @@
+# KeepPAM: forensic-поиск по сессиям
+
+Поиск по `session_events` (SQL, kubectl, JEA deny) без разбора asciicast/видео.
+
+## API
+
+`GET /api/v1/admin/sessions/events` (`sessions.read`)
+
+| Query | Смысл |
+|-------|--------|
+| `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
+| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command_denied`); `all` = любые; иначе точный тип |
+| `hours` | окно, default 168, max 2160 |
+| `limit` / `offset` | пагинация |
+
+Оператор видит только свои сессии; `audit.read` / `users.write` — все.
+
+Ответ: `{events: [{snippet, type, ts, session_id, username, asset_name, protocol, …}], total}`. Тела Secret/паролей в payload нет (k8s body_redacted).
+
+## UI
+
+Сессии → вкладка **События**. Клик по строке → replay / watch / recording.
+
+## Индекс
+
+Миграция `036`: `pg_trgm` GIN на `payload::text`, btree `(event_type, ts DESC)`.
+
+## Вне scope
+
+Полнотекст asciicast/RDP, маскирование колонок в сниппете (это SQL JEA), отдельный OpenSearch.

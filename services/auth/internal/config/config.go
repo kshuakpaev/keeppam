@@ -51,6 +51,7 @@ type Config struct {
 	WebAuthnRPID           string
 	WebAuthnRPDisplayName  string
 	WebAuthnOrigins        []string
+	GeoIPDB                string
 }
 
 func Load() (Config, error) {
@@ -93,6 +94,7 @@ func Load() (Config, error) {
 		TLSClientCAFile:        env("KEEPPAM_TLS_CLIENT_CA_FILE", ""),
 		TLSRequireClientCert:   boolEnv("KEEPPAM_TLS_REQUIRE_CLIENT_CERT", false),
 		WebAuthnRPDisplayName:  env("KEEPPAM_WEBAUTHN_RP_NAME", "KeepPAM"),
+		GeoIPDB:                env("KEEPPAM_GEOIP_DB", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

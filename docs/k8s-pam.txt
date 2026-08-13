@@ -12,6 +12,29 @@
 
 UI: **Vault checkout** (вторичная кнопка).
 
+Если на учётке включён TokenRequest — lease отдаёт ephemeral JWT (или kubeconfig с ним), не vault-секрет. TTL lease ≤ TTL токена.
+
+## Phase 1.5 — TokenRequest
+
+Короткий SA-токен через Kubernetes TokenRequest API. Vault хранит privileged kubeconfig / SA, который умеет `create token` на целевой SA.
+
+На учётке:
+
+| Поле | Смысл |
+|------|--------|
+| `token_request_enabled` | mint вместо выдачи vault |
+| `k8s_sa_namespace` | пусто → `default` |
+| `k8s_sa_name` | пусто → `username` учётки |
+| `token_ttl_seconds` | 60–86400, default 900 |
+
+`POST /api/v1/namespaces/{ns}/serviceaccounts/{sa}/token` с vault Bearer (или client cert). Ошибка mint → отказ lease/proxy, **без** fallback на privileged секрет.
+
+Proxy (`:16443`) подставляет ephemeral token upstream и перевыпускает за 30с до истечения. Клиентский kubeconfig по-прежнему `{session}.{wire}` на PAM.
+
+Аудит: `k8s.access.granted` (`auth_mode=token_request`, ns/sa/ttl, без JWT), `session.k8s.token_requested`.
+
+Checkout/Reveal по-прежнему показывает vault-секрет (`assets.write`).
+
 ## Phase 2 — kubectl proxy
 
 Сессия через PAM: клиент ходит на `:16443`, PAM расшифровывает vault и проксирует API server.
@@ -32,6 +55,5 @@ kubectl get ns
 ## Вне scope
 
 - in-cluster RBAC / namespace ACL / impersonation PAM-пользователя
-- TokenRequest / auto-rotate SA
+- auto-rotate SA / TokenRequest bound to PAM user
 - kubectl в браузере / запись тел Secret
-- SLO / IdP-initiated (это SAML)

@@ -33,6 +33,9 @@ func (s *Server) handleCheckoutAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.notify != nil && res.Pending != nil {
+		s.notify.OnCheckoutCreated(r.Context(), *res.Pending)
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -123,6 +126,11 @@ func (s *Server) handleApproveCheckoutRequest(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.notify != nil && res.Pending != nil {
+		decided := *res.Pending
+		decided.Status = "approved"
+		s.notify.OnCheckoutDecided(r.Context(), decided)
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -133,9 +141,13 @@ func (s *Server) handleDenyCheckoutRequest(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.assets.DenyCheckoutRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+	req, err := s.assets.DenyCheckoutRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if s.notify != nil {
+		s.notify.OnCheckoutDecided(r.Context(), req)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "denied"})
 }

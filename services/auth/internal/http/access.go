@@ -34,6 +34,9 @@ func (s *Server) handleCreateAccessRequest(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.notify != nil {
+		s.notify.OnJITCreated(r.Context(), req)
+	}
 	writeJSON(w, http.StatusCreated, req)
 }
 
@@ -93,6 +96,9 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.notify != nil {
+		s.notify.OnJITDecided(r.Context(), req)
+	}
 	writeJSON(w, http.StatusOK, req)
 }
 
@@ -111,6 +117,9 @@ func (s *Server) handleDenyAccessRequest(w http.ResponseWriter, r *http.Request)
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if s.notify != nil {
+		s.notify.OnJITDecided(r.Context(), req)
 	}
 	writeJSON(w, http.StatusOK, req)
 }

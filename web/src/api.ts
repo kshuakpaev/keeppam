@@ -64,6 +64,10 @@ export type AssetAccount = {
   rotate_interval_hours?: number;
   next_rotate_at?: string;
   dual_control_checkout?: boolean;
+  token_request_enabled?: boolean;
+  k8s_sa_namespace?: string;
+  k8s_sa_name?: string;
+  token_ttl_seconds?: number;
 };
 
 export type SecretCheckoutRequest = {
@@ -118,6 +122,7 @@ export type AccessBinding = {
   require_ticket: boolean;
   require_reason?: boolean;
   allowed_cidrs?: string[];
+  allowed_countries?: string[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -263,6 +268,28 @@ export type ITSMTicketInfo = {
   title?: string;
 };
 
+export type NotifySettings = {
+  enabled: boolean;
+  webhook_url: string;
+  auth_header?: string;
+  has_auth_header: boolean;
+  timeout_sec: number;
+  last_error?: string;
+  last_sent_at?: string;
+  updated_at?: string;
+};
+
+export type InboxNotification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  ref_type: string;
+  ref_id: string;
+  read_at?: string;
+  created_at: string;
+};
+
 export type InfraStatus = {
   data_key_source: string;
   recordings_backend: string;
@@ -278,6 +305,8 @@ export type InfraStatus = {
   s3_prefix?: string;
   http_addr?: string;
   cookie_secure?: boolean;
+  geoip_db?: string;
+  geoip_ready?: boolean;
 };
 
 export type DiscoveryJob = {
@@ -489,6 +518,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticket_id }),
     }),
+  getNotifySettings: () => request<NotifySettings>("/api/v1/admin/settings/notify"),
+  putNotifySettings: (body: Partial<NotifySettings>) =>
+    request<NotifySettings>("/api/v1/admin/settings/notify", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  listNotifications: (limit = 20) =>
+    request<{ notifications: InboxNotification[]; unread: number }>(
+      `/api/v1/notifications?limit=${limit}`,
+    ),
+  unreadNotifications: () => request<{ unread: number }>("/api/v1/notifications/unread-count"),
+  readNotification: (id: string) =>
+    request<{ status: string }>(`/api/v1/notifications/${id}/read`, { method: "POST" }),
+  readAllNotifications: () =>
+    request<{ status: string }>("/api/v1/notifications/read-all", { method: "POST" }),
   getInfraStatus: () => request<InfraStatus>("/api/v1/admin/settings/infra"),
   getSSHSettings: () => request<SSHSettings>("/api/v1/admin/settings/ssh"),
   putSSHSettings: (body: Partial<SSHSettings>) =>
@@ -643,6 +687,10 @@ export const api = {
       auth_method: string;
       secret?: string;
       description?: string;
+      token_request_enabled?: boolean;
+      k8s_sa_namespace?: string;
+      k8s_sa_name?: string;
+      token_ttl_seconds?: number;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts`, {
@@ -662,6 +710,10 @@ export const api = {
       rotate_on_checkin?: boolean;
       rotate_interval_hours?: number;
       dual_control_checkout?: boolean;
+      token_request_enabled?: boolean;
+      k8s_sa_namespace?: string;
+      k8s_sa_name?: string;
+      token_ttl_seconds?: number;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}`, {
@@ -750,6 +802,7 @@ export const api = {
       require_ticket?: boolean;
       require_reason?: boolean;
       allowed_cidrs?: string[];
+      allowed_countries?: string[];
       command_policy_pack_id?: string;
       sql_policy_pack_id?: string;
       max_risk?: number;
@@ -842,6 +895,24 @@ export const api = {
     );
   },
   getSession: (id: string) => request<PamSession>(`/api/v1/admin/sessions/${id}`),
+  searchSessionEvents: (params?: {
+    q?: string;
+    type?: string;
+    hours?: number;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set("q", params.q);
+    if (params?.type) qs.set("type", params.type);
+    if (params?.hours != null) qs.set("hours", String(params.hours));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<{ events: SessionEventHit[]; total: number }>(
+      `/api/v1/admin/sessions/events${q ? `?${q}` : ""}`,
+    );
+  },
   getKubeconfig: (id: string) =>
     request<{ kubeconfig: string; k8s_addr: string; k8s_token: string }>(
       `/api/v1/admin/sessions/${id}/kubeconfig`,
@@ -1016,6 +1087,21 @@ export type SQLPolicyPackInput = {
   tables: string[];
   mask_columns: string[];
   mask_replacement?: string;
+};
+
+export type SessionEventHit = {
+  id: string;
+  session_id: string;
+  ts: string;
+  type: string;
+  snippet: string;
+  payload?: Record<string, unknown>;
+  username?: string;
+  asset_name?: string;
+  asset_id: string;
+  protocol: string;
+  status: string;
+  break_glass?: boolean;
 };
 
 export type PamSession = {

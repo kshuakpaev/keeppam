@@ -17,6 +17,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -222,22 +223,39 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	if err != nil {
 		return Lease{}, err
 	}
-	if strings.TrimSpace(creds.Secret) == "" {
+	if strings.TrimSpace(creds.Secret) == "" && !creds.Account.TokenRequestEnabled {
+		return Lease{}, fmt.Errorf("account has no kubeconfig/token secret")
+	}
+	secret, authMode, tokenExp, trMeta, err := k8sproxy.MintEphemeral(ctx, creds)
+	if err != nil {
+		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, map[string]any{
+			"reason": "token_request", "error": truncateErr(err.Error(), 200),
+		})
+		return Lease{}, fmt.Errorf("token request: %w", err)
+	}
+	if strings.TrimSpace(secret) == "" {
 		return Lease{}, fmt.Errorf("account has no kubeconfig/token secret")
 	}
 	id := store.NewID()
 	now := time.Now().UTC()
 	exp := now.Add(15 * time.Minute)
+	if !tokenExp.IsZero() && tokenExp.Before(exp) {
+		exp = tokenExp
+	}
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO credential_leases (id, asset_id, account_id, user_id, status, expires_at, created_at)
 		VALUES ($1,$2,$3,$4,'active',$5,$6)`, id, assetID, accountID, userID, exp, now)
 	if err != nil {
 		return Lease{}, err
 	}
-	_ = s.aud.Record(ctx, &userID, "k8s.access.granted", "asset", assetID.String(), ip, ua, map[string]any{
+	payload := map[string]any{
 		"lease_id": id.String(), "account_id": accountID.String(), "auth_method": creds.AuthMethod,
-		"username": creds.Account.Username, "ticket_id": ticketID,
-	})
+		"username": creds.Account.Username, "ticket_id": ticketID, "auth_mode": authMode,
+	}
+	for k, v := range trMeta {
+		payload[k] = v
+	}
+	_ = s.aud.Record(ctx, &userID, "k8s.access.granted", "asset", assetID.String(), ip, ua, payload)
 	apiURL := fmt.Sprintf("https://%s", asset.Address)
 	if asset.Port > 0 && asset.Port != 443 {
 		apiURL = fmt.Sprintf("https://%s:%d", asset.Address, asset.Port)
@@ -245,11 +263,18 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	return Lease{
 		ID: id, AssetID: assetID, AccountID: accountID, UserID: userID,
 		Status: "active", ExpiresAt: exp, CreatedAt: now,
-		Secret: creds.Secret, Username: creds.Account.Username,
-		AuthMode: "vault_kubeconfig", AuthMethod: creds.AuthMethod,
+		Secret: secret, Username: creds.Account.Username,
+		AuthMode: authMode, AuthMethod: creds.AuthMethod,
 		Kind: "k8s", ClusterAddress: asset.Address, ClusterPort: asset.Port,
 		LoginURL: apiURL, OpenURL: apiURL,
 	}, nil
+}
+
+func truncateErr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 func (s *Service) createLease(ctx context.Context, userID, assetID, accountID uuid.UUID, integ Integration, ip, ua string) (Lease, error) {

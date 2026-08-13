@@ -25,10 +25,12 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/geoip"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/migrate"
+	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/session"
@@ -112,12 +114,14 @@ func main() {
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
 	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
+	notifySvc := notify.New(db, auditSvc, env)
 	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
 	usersSvc := users.New(db, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
 	sshCASvc := sshca.New(db, env, auditSvc)
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
+	policySvc.SetGeo(geoip.New(cfg.GeoIPDB))
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
 	live := sessionsvc.NewLiveHub(sessions.Redis())
@@ -165,7 +169,9 @@ func main() {
 		p := pack
 		return &dbproxy.SQLGuard{
 			Allow: func(stmt string) (bool, string) { return policy.MatchSQL(p, stmt) },
-			Mask:  func(cols []string, rows [][]string) ([]string, [][]string) { return policy.MaskSQLResult(p, cols, rows) },
+			Mask: func(cols []string, rows [][]string) ([]string, [][]string) {
+				return policy.MaskSQLResult(p, cols, rows)
+			},
 		}, nil
 	}
 	attackSimSvc := attacksim.New(db, auditSvc, policySvc, cfg.HTTPAddr)
@@ -184,7 +190,7 @@ func main() {
 
 	var srv *http.Server
 	if runHTTP {
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {

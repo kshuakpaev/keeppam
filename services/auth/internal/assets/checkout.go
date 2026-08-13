@@ -375,27 +375,34 @@ func (s *Service) ApproveCheckoutRequest(ctx context.Context, actorID, requestID
 		"request_id": requestID.String(), "requester_id": req.RequesterID.String(),
 	})
 	s.recordCheckoutEvent(ctx, req.AssetID, req.AccountID, &req.RequesterID, "checkout", map[string]any{"via": "dual_control"})
-	return CheckoutResult{Account: out, Status: "checked_out"}, nil
+	req.Status = "approved"
+	req.ApproverID = &actorID
+	req.DecidedAt = &now
+	return CheckoutResult{Account: out, Status: "checked_out", Pending: &req}, nil
 }
 
-func (s *Service) DenyCheckoutRequest(ctx context.Context, actorID, requestID uuid.UUID, ip, ua string) error {
+func (s *Service) DenyCheckoutRequest(ctx context.Context, actorID, requestID uuid.UUID, ip, ua string) (CheckoutRequest, error) {
 	req, err := s.getCheckoutRequest(ctx, requestID)
 	if err != nil {
-		return err
+		return CheckoutRequest{}, err
 	}
 	if req.Status != "pending" {
-		return fmt.Errorf("request is %s", req.Status)
+		return CheckoutRequest{}, fmt.Errorf("request is %s", req.Status)
 	}
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE secret_checkout_requests SET status='denied', approver_id=$2, decided_at=NOW() WHERE id=$1`, requestID, actorID)
 	if err != nil {
-		return err
+		return CheckoutRequest{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.account.checkout.denied", "asset_account", req.AccountID.String(), ip, ua, map[string]any{
 		"request_id": requestID.String(),
 	})
 	s.recordCheckoutEvent(ctx, req.AssetID, req.AccountID, &actorID, "checkout_denied", map[string]any{"request_id": requestID.String()})
-	return nil
+	now := time.Now().UTC()
+	req.Status = "denied"
+	req.ApproverID = &actorID
+	req.DecidedAt = &now
+	return req, nil
 }
 
 // ExpireCheckouts clears overdue holds and pending dual-control requests.

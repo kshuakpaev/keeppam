@@ -83,6 +83,10 @@ type Account struct {
 	RotateIntervalHours  int        `json:"rotate_interval_hours"`
 	NextRotateAt         *time.Time `json:"next_rotate_at,omitempty"`
 	DualControlCheckout  bool       `json:"dual_control_checkout"`
+	TokenRequestEnabled  bool       `json:"token_request_enabled"`
+	K8sSANamespace       string     `json:"k8s_sa_namespace"`
+	K8sSAName            string     `json:"k8s_sa_name"`
+	TokenTTLSeconds      int        `json:"token_ttl_seconds"`
 }
 
 type CreateAssetInput struct {
@@ -111,10 +115,14 @@ type UpdateAssetInput struct {
 }
 
 type CreateAccountInput struct {
-	Username    string `json:"username"`
-	AuthMethod  string `json:"auth_method"`
-	Secret      string `json:"secret"`
-	Description string `json:"description"`
+	Username            string `json:"username"`
+	AuthMethod          string `json:"auth_method"`
+	Secret              string `json:"secret"`
+	Description         string `json:"description"`
+	TokenRequestEnabled bool   `json:"token_request_enabled"`
+	K8sSANamespace      string `json:"k8s_sa_namespace"`
+	K8sSAName           string `json:"k8s_sa_name"`
+	TokenTTLSeconds     int    `json:"token_ttl_seconds"`
 }
 
 type UpdateAccountInput struct {
@@ -127,6 +135,10 @@ type UpdateAccountInput struct {
 	RotateOnCheckin       *bool   `json:"rotate_on_checkin"`
 	RotateIntervalHours   *int    `json:"rotate_interval_hours"`
 	DualControlCheckout   *bool   `json:"dual_control_checkout"`
+	TokenRequestEnabled   *bool   `json:"token_request_enabled"`
+	K8sSANamespace        *string `json:"k8s_sa_namespace"`
+	K8sSAName             *string `json:"k8s_sa_name"`
+	TokenTTLSeconds       *int    `json:"token_ttl_seconds"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
@@ -342,12 +354,18 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 		}
 		secretEnc = enc
 	}
+	ttl, err := normalizeTokenTTL(in.TokenTTLSeconds)
+	if err != nil {
+		return Account{}, err
+	}
 	now := time.Now().UTC()
 	id := store.NewID()
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO asset_accounts (id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9)`,
-		id, assetID, in.Username, in.AuthMethod, secretEnc, in.Description, now, now, actorID)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO asset_accounts (id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by,
+			token_request_enabled, k8s_sa_namespace, k8s_sa_name, token_ttl_seconds)
+		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13)`,
+		id, assetID, in.Username, in.AuthMethod, secretEnc, in.Description, now, now, actorID,
+		in.TokenRequestEnabled, strings.TrimSpace(in.K8sSANamespace), strings.TrimSpace(in.K8sSAName), ttl)
 	if err != nil {
 		return Account{}, err
 	}
@@ -370,6 +388,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	rotateOnCheckin := acc.RotateOnCheckin
 	interval := acc.RotateIntervalHours
 	dual := acc.DualControlCheckout
+	trOn := acc.TokenRequestEnabled
+	saNS := acc.K8sSANamespace
+	saName := acc.K8sSAName
+	ttlSec := acc.TokenTTLSeconds
 	if in.Username != nil {
 		username = *in.Username
 	}
@@ -402,6 +424,24 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 		}
 		interval = *in.RotateIntervalHours
 	}
+	if in.TokenRequestEnabled != nil {
+		trOn = *in.TokenRequestEnabled
+	}
+	if in.K8sSANamespace != nil {
+		saNS = strings.TrimSpace(*in.K8sSANamespace)
+	}
+	if in.K8sSAName != nil {
+		saName = strings.TrimSpace(*in.K8sSAName)
+	}
+	if in.TokenTTLSeconds != nil {
+		n, err := normalizeTokenTTL(*in.TokenTTLSeconds)
+		if err != nil {
+			return Account{}, err
+		}
+		ttlSec = n
+	} else if n, err := normalizeTokenTTL(ttlSec); err == nil {
+		ttlSec = n
+	}
 	var nextRotate any
 	if interval > 0 {
 		if acc.NextRotateAt != nil && acc.RotateIntervalHours == interval {
@@ -421,10 +461,11 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 		_, err = s.db.Pool.Exec(ctx, `
 			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6,
 				rotate_after_session=$7, rotate_on_checkin=$8, rotate_interval_hours=$9, next_rotate_at=$10,
-				dual_control_checkout=$11, updated_at=$12
+				dual_control_checkout=$11, token_request_enabled=$12, k8s_sa_namespace=$13, k8s_sa_name=$14,
+				token_ttl_seconds=$15, updated_at=$16
 			WHERE id=$1`,
 			accountID, username, authMethod, enc, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -432,10 +473,11 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 		_, err = s.db.Pool.Exec(ctx, `
 			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5,
 				rotate_after_session=$6, rotate_on_checkin=$7, rotate_interval_hours=$8, next_rotate_at=$9,
-				dual_control_checkout=$10, updated_at=$11
+				dual_control_checkout=$10, token_request_enabled=$11, k8s_sa_namespace=$12, k8s_sa_name=$13,
+				token_ttl_seconds=$14, updated_at=$15
 			WHERE id=$1`,
 			accountID, username, authMethod, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -443,6 +485,7 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	_ = s.aud.Record(ctx, &actorID, "asset.account.updated", "asset_account", accountID.String(), ip, ua, map[string]any{
 		"username": username, "status": status,
 		"rotate_after_session": rotateAfter, "rotate_interval_hours": interval,
+		"token_request_enabled": trOn,
 	})
 	return s.getAccount(ctx, accountID)
 }
@@ -467,7 +510,9 @@ func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Accoun
 			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
 			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
-			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
+			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
+			COALESCE(a.token_ttl_seconds,900)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 ORDER BY a.username`, assetID)
@@ -497,7 +542,9 @@ func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username s
 			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
 			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
-			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
+			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
+			COALESCE(a.token_ttl_seconds,900)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 AND a.username=$2`, assetID, username)
@@ -515,7 +562,9 @@ func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error)
 			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
 			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
-			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false)
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
+			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
+			COALESCE(a.token_ttl_seconds,900)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.id=$1`, id)
@@ -538,12 +587,23 @@ func scanAccountRow(row accountScanner) (Account, error) {
 		&a.Description, &a.Status, &a.LastRotatedAt, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy,
 		&a.CheckoutUserID, &a.CheckoutUsername, &a.CheckoutAt, &a.CheckoutExpiresAt, &a.CheckoutReason,
 		&a.RotateAfterSession, &a.RotateOnCheckin, &a.RotateIntervalHours, &a.NextRotateAt, &a.DualControlCheckout,
+		&a.TokenRequestEnabled, &a.K8sSANamespace, &a.K8sSAName, &a.TokenTTLSeconds,
 	)
 	if err != nil {
 		return a, err
 	}
 	a.CheckedOut = a.CheckoutUserID != nil
 	return a, nil
+}
+
+func normalizeTokenTTL(sec int) (int, error) {
+	if sec == 0 {
+		return 900, nil
+	}
+	if sec < 60 || sec > 86400 {
+		return 0, fmt.Errorf("token_ttl_seconds must be 60..86400 (0 = 900)")
+	}
+	return sec, nil
 }
 
 // TargetCreds returns decrypted credentials for a session proxy (never expose via HTTP).
@@ -565,10 +625,13 @@ func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UU
 	var secretEnc []byte
 	var acc Account
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by
+		SELECT id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by,
+			COALESCE(token_request_enabled,false), COALESCE(k8s_sa_namespace,''), COALESCE(k8s_sa_name,''),
+			COALESCE(token_ttl_seconds,900)
 		FROM asset_accounts WHERE id=$1 AND asset_id=$2`, accountID, assetID).Scan(
 		&acc.ID, &acc.AssetID, &acc.Username, &acc.AuthMethod, &secretEnc,
-		&acc.Description, &acc.Status, &acc.CreatedAt, &acc.UpdatedAt, &acc.CreatedBy)
+		&acc.Description, &acc.Status, &acc.CreatedAt, &acc.UpdatedAt, &acc.CreatedBy,
+		&acc.TokenRequestEnabled, &acc.K8sSANamespace, &acc.K8sSAName, &acc.TokenTTLSeconds)
 	if err != nil {
 		return TargetCreds{}, err
 	}

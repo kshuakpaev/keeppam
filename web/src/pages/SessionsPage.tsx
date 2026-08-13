@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type PamSession } from "../api";
+import { api, hasPerm, type PamSession, type SessionEventHit } from "../api";
 import { useAuth } from "../auth";
 import { kindForProtocol, useSessionTabs } from "../sessionTabs";
 
 const PAGE_SIZE = 50;
 
-type Tab = "all" | "live";
+type Tab = "all" | "live" | "events";
 
 export function SessionsPage() {
   const { user } = useAuth();
@@ -20,6 +20,10 @@ export function SessionsPage() {
   const [q, setQ] = useState("");
   const [appliedQ, setAppliedQ] = useState("");
   const [offset, setOffset] = useState(0);
+  const [eventType, setEventType] = useState("");
+  const [hours, setHours] = useState(168);
+  const [events, setEvents] = useState<SessionEventHit[]>([]);
+  const [eventTotal, setEventTotal] = useState(0);
   const canRead = hasPerm(user, "sessions.read");
   const canWatch = hasPerm(user, "sessions.read");
 
@@ -27,20 +31,32 @@ export function SessionsPage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.listSessions({
-        status: effectiveStatus || undefined,
-        protocol: protocol || undefined,
-        q: appliedQ || undefined,
-        limit: PAGE_SIZE,
-        offset,
-      });
-      setSessions(res.sessions || []);
-      setTotal(res.total || 0);
+      if (tab === "events") {
+        const res = await api.searchSessionEvents({
+          q: appliedQ || undefined,
+          type: eventType || undefined,
+          hours,
+          limit: PAGE_SIZE,
+          offset,
+        });
+        setEvents(res.events || []);
+        setEventTotal(res.total || 0);
+      } else {
+        const res = await api.listSessions({
+          status: effectiveStatus || undefined,
+          protocol: protocol || undefined,
+          q: appliedQ || undefined,
+          limit: PAGE_SIZE,
+          offset,
+        });
+        setSessions(res.sessions || []);
+        setTotal(res.total || 0);
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
     }
-  }, [effectiveStatus, protocol, appliedQ, offset]);
+  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours]);
 
   async function onEnd(id: string) {
     setError("");
@@ -67,8 +83,9 @@ export function SessionsPage() {
     return <p className="error">Недостаточно прав</p>;
   }
 
+  const listTotal = tab === "events" ? eventTotal : total;
   const page = Math.floor(offset / PAGE_SIZE) + 1;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(listTotal / PAGE_SIZE));
 
   return (
     <div>
@@ -76,8 +93,7 @@ export function SessionsPage() {
         <div>
           <h1>Сессии</h1>
           <p className="muted">
-            Привилегированные подключения и записи · также{" "}
-            <span className="mono">ssh -p 2222 user@host</span>
+            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / JEA deny
           </p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
@@ -106,6 +122,16 @@ export function SessionsPage() {
         >
           Все
         </button>
+        <button
+          className={`btn secondary${tab === "events" ? " active" : ""}`}
+          type="button"
+          onClick={() => {
+            setTab("events");
+            setOffset(0);
+          }}
+        >
+          События
+        </button>
       </div>
 
       <form
@@ -129,21 +155,50 @@ export function SessionsPage() {
             </select>
           </label>
         )}
-        <label>
-          Протокол
-          <select value={protocol} onChange={(e) => { setProtocol(e.target.value); setOffset(0); }}>
-            <option value="">все</option>
-            <option value="ssh">ssh</option>
-            <option value="rdp">rdp</option>
-            <option value="vnc">vnc</option>
-          </select>
-        </label>
+        {tab === "events" ? (
+          <>
+            <label>
+              Тип
+              <select value={eventType} onChange={(e) => { setEventType(e.target.value); setOffset(0); }}>
+                <option value="">forensic</option>
+                <option value="sql">sql</option>
+                <option value="sql_denied">sql_denied</option>
+                <option value="k8s">k8s</option>
+                <option value="command_denied">command_denied</option>
+                <option value="all">все типы</option>
+              </select>
+            </label>
+            <label>
+              Окно
+              <select value={hours} onChange={(e) => { setHours(Number(e.target.value)); setOffset(0); }}>
+                <option value={24}>24ч</option>
+                <option value={72}>3д</option>
+                <option value={168}>7д</option>
+                <option value={720}>30д</option>
+              </select>
+            </label>
+          </>
+        ) : (
+          <label>
+            Протокол
+            <select value={protocol} onChange={(e) => { setProtocol(e.target.value); setOffset(0); }}>
+              <option value="">все</option>
+              <option value="ssh">ssh</option>
+              <option value="rdp">rdp</option>
+              <option value="vnc">vnc</option>
+              <option value="postgres">postgres</option>
+              <option value="mysql">mysql</option>
+              <option value="kubectl">kubectl</option>
+              <option value="https">https</option>
+            </select>
+          </label>
+        )}
         <label style={{ flex: 1, minWidth: 160 }}>
           Поиск
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="user / актив / адрес"
+            placeholder={tab === "events" ? "SELECT / kubectl / rm -rf" : "user / актив / адрес"}
           />
         </label>
         <button className="btn secondary" type="submit">
@@ -157,6 +212,8 @@ export function SessionsPage() {
             setAppliedQ("");
             setStatus("");
             setProtocol("");
+            setEventType("");
+            setHours(168);
             setOffset(0);
           }}
         >
@@ -165,6 +222,90 @@ export function SessionsPage() {
       </form>
 
       {error && <p className="error">{error}</p>}
+      {tab === "events" ? (
+      <div className="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Тип</th>
+              <th>Сниппет</th>
+              <th>Кто / куда</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {events.map((e) => (
+              <tr key={e.id}>
+                <td className="mono">{new Date(e.ts).toLocaleString()}</td>
+                <td className="mono">{e.type}</td>
+                <td className="mono" style={{ maxWidth: 420, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {e.snippet}
+                </td>
+                <td>
+                  {e.username}
+                  <div className="muted">
+                    <Link to={`/assets/${e.asset_id}`}>{e.asset_name}</Link>
+                    {" · "}
+                    <span className="mono">{e.protocol}</span>
+                    {e.break_glass ? " · glass" : ""}
+                  </div>
+                </td>
+                <td>
+                  <div className="row">
+                    {(e.status === "active" || e.status === "pending") && (
+                      <Link className="btn secondary" to={`/sessions/${e.session_id}/watch`}>
+                        Watch
+                      </Link>
+                    )}
+                    {(e.status === "ended" || e.status === "failed") &&
+                      (e.protocol === "postgres" || e.protocol === "mysql" || e.protocol === "kubectl" ? (
+                        <a className="btn secondary" href={api.getRecordingUrl(e.session_id)}>
+                          Recording
+                        </a>
+                      ) : (
+                        <Link className="btn secondary" to={`/sessions/${e.session_id}/replay`}>
+                          Replay
+                        </Link>
+                      ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {events.length === 0 && (
+              <tr>
+                <td colSpan={5} className="muted">
+                  Нет событий за выбранное окно. SQL / kubectl / JEA deny попадают сюда; интерактивный SSH — в replay.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div className="row" style={{ marginTop: "0.75rem", justifyContent: "space-between" }}>
+          <span className="muted">
+            {listTotal === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${listTotal}`}
+          </span>
+          <div className="row">
+            <button
+              className="btn secondary"
+              type="button"
+              disabled={offset <= 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            >
+              ←
+            </button>
+            <button
+              className="btn secondary"
+              type="button"
+              disabled={offset + PAGE_SIZE >= listTotal}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              →
+            </button>
+          </div>
+        </div>
+      </div>
+      ) : (
       <div className="card">
         <table>
           <thead>
@@ -288,7 +429,7 @@ export function SessionsPage() {
         </table>
         <div className="row" style={{ marginTop: "0.75rem", justifyContent: "space-between" }}>
           <span className="muted">
-            {total === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${total}`}
+            {listTotal === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${listTotal}`}
           </span>
           <div className="row">
             <button
@@ -302,7 +443,7 @@ export function SessionsPage() {
             <button
               className="btn secondary"
               type="button"
-              disabled={offset + PAGE_SIZE >= total}
+              disabled={offset + PAGE_SIZE >= listTotal}
               onClick={() => setOffset(offset + PAGE_SIZE)}
             >
               →
@@ -310,6 +451,7 @@ export function SessionsPage() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

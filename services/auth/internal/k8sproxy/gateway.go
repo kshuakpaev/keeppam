@@ -36,9 +36,15 @@ type Gateway struct {
 }
 
 type sessionUpstream struct {
-	up   *Upstream
-	rec  *Recorder
-	row  sessionsvc.Session
+	up       *Upstream
+	vaultTok string
+	trOn     bool
+	tokenExp time.Time
+	saNS     string
+	saName   string
+	ttl      time.Duration
+	rec      *Recorder
+	row      sessionsvc.Session
 }
 
 func New(addr, publicURL string, cert tls.Certificate, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service, aud *audit.Service, live *sessionsvc.LiveHub) *Gateway {
@@ -202,7 +208,13 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) ensureUpstream(ctx context.Context, row sessionsvc.Session) (*sessionUpstream, error) {
 	g.mu.Lock()
 	if u, ok := g.upstreams[row.ID]; ok {
+		refresh := u.trOn && time.Now().After(u.tokenExp.Add(-30*time.Second))
 		g.mu.Unlock()
+		if refresh {
+			if err := g.remint(ctx, u); err != nil {
+				return nil, err
+			}
+		}
 		return u, nil
 	}
 	g.mu.Unlock()
@@ -215,11 +227,27 @@ func (g *Gateway) ensureUpstream(ctx context.Context, row sessionsvc.Session) (*
 	if err != nil {
 		return nil, err
 	}
+	su := &sessionUpstream{up: up, vaultTok: up.Token, row: row}
+	if creds.Account.TokenRequestEnabled {
+		ns, name := ResolveSA(creds.Account)
+		ttl := ClampTokenTTL(creds.Account.TokenTTLSeconds)
+		tr, err := RequestToken(ctx, up, TokenRequestSpec{Namespace: ns, Name: name, TTL: ttl})
+		if err != nil {
+			return nil, fmt.Errorf("token request: %w", err)
+		}
+		up.Token = tr.Token
+		su.trOn = true
+		su.tokenExp = tr.ExpiresAt
+		su.saNS, su.saName, su.ttl = ns, name, ttl
+		_ = g.audit.Record(ctx, &row.UserID, "session.k8s.token_requested", "session", row.ID.String(), "", "k8s", map[string]any{
+			"sa_namespace": ns, "sa_name": name, "expires_at": tr.ExpiresAt.UTC().Format(time.RFC3339),
+		})
+	}
 	rec, err := NewRecorder(row.RecordingPath, row.ID)
 	if err != nil {
 		slog.Warn("k8s recorder", "err", err)
 	}
-	su := &sessionUpstream{up: up, rec: rec, row: row}
+	su.rec = rec
 	g.mu.Lock()
 	if existing, ok := g.upstreams[row.ID]; ok {
 		g.mu.Unlock()
@@ -231,6 +259,23 @@ func (g *Gateway) ensureUpstream(ctx context.Context, row sessionsvc.Session) (*
 	g.upstreams[row.ID] = su
 	g.mu.Unlock()
 	return su, nil
+}
+
+func (g *Gateway) remint(ctx context.Context, u *sessionUpstream) error {
+	mint := *u.up
+	mint.Token = u.vaultTok
+	tr, err := RequestToken(ctx, &mint, TokenRequestSpec{Namespace: u.saNS, Name: u.saName, TTL: u.ttl})
+	if err != nil {
+		return fmt.Errorf("token request: %w", err)
+	}
+	g.mu.Lock()
+	u.up.Token = tr.Token
+	u.tokenExp = tr.ExpiresAt
+	g.mu.Unlock()
+	_ = g.audit.Record(ctx, &u.row.UserID, "session.k8s.token_requested", "session", u.row.ID.String(), "", "k8s", map[string]any{
+		"sa_namespace": u.saNS, "sa_name": u.saName, "expires_at": tr.ExpiresAt.UTC().Format(time.RFC3339), "refresh": true,
+	})
+	return nil
 }
 
 func (g *Gateway) DropSession(id uuid.UUID) {

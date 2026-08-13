@@ -1,0 +1,32 @@
+# KeepPAM: GeoIP ABAC
+
+Страна клиента — ещё одно условие ACL, рядом с CIDR.
+
+## ACL
+
+`allowed_countries` (TEXT[]): ISO 3166-1 alpha-2 (`RU`, `KZ`, `US`) и/или `LAN`.
+
+Пусто = любая страна (как пустой CIDR).
+
+`LAN` = loopback / RFC1918 / link-local. На локальном стенде клиент почти всегда `LAN`.
+
+Если список задан, а страну определить нельзя (публичный IP без MMDB) — **отказ** (fail closed).
+
+## Резолв
+
+1. Частный IP → `LAN` (без базы).
+2. Иначе `KEEPPAM_GEOIP_DB` = путь к MaxMind **GeoLite2-Country.mmdb**.
+3. Нет файла / ошибка открытия → публичные IP дают пустую страну.
+
+```bash
+# пример
+KEEPPAM_GEOIP_DB=/var/lib/keeppam/GeoLite2-Country.mmdb
+```
+
+Статус: Конфиг → Инфраструктура (`geoip_db`, `geoip_ready`).
+
+## UI
+
+Карточка актива → ACL → «Allowed countries». Пример: `LAN, RU`.
+
+Проверка на connect / JIT / SSH `:2222` / app / k8s — тот же `policy.Evaluate`.

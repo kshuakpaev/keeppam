@@ -27,6 +27,7 @@ import (
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/itsm"
+	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/session"
@@ -65,10 +66,11 @@ type Server struct {
 	attacksim  *attacksim.Service
 	sshca      *sshca.Service
 	itsm       *itsm.Service
+	notify     *notify.Service
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -128,6 +130,15 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				})
 			})
 
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireSession)
+				r.Use(s.requireCSRF)
+				r.Get("/notifications", s.handleListNotifications)
+				r.Get("/notifications/unread-count", s.handleUnreadNotifications)
+				r.Post("/notifications/read-all", s.handleReadAllNotifications)
+				r.Post("/notifications/{id}/read", s.handleReadNotification)
+			})
+
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(s.requireSession)
 				r.Use(s.requireCSRF)
@@ -137,6 +148,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Put("/settings/siem", s.handlePutSIEMSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/itsm", s.handleGetITSMSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/itsm", s.handlePutITSMSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/notify", s.handleGetNotifySettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/notify", s.handlePutNotifySettings)
 				r.With(s.requirePerm("settings.write")).Post("/itsm/validate", s.handleITSMValidate)
 				r.With(s.requirePerm("settings.write")).Get("/settings/ssh", s.handleGetSSHSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
@@ -233,6 +246,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions", s.handleCreateSession)
 				r.Post("/sessions/{id}/end", s.handleEndSession)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/kubeconfig", s.handleGetKubeconfig)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
