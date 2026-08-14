@@ -24,6 +24,7 @@ type TokenRequestSpec struct {
 	Namespace string
 	Name      string
 	TTL       time.Duration
+	Bound     *BoundRef
 }
 
 type TokenRequestResult struct {
@@ -59,17 +60,28 @@ func ClampTokenTTL(sec int) time.Duration {
 
 // MintEphemeral replaces the vault Bearer with a TokenRequest JWT when enabled.
 // Vault secret is never returned. On failure there is no fallback to the vault token.
-func MintEphemeral(ctx context.Context, creds assets.TargetCreds) (secret, authMode string, exp time.Time, meta map[string]any, err error) {
+func MintEphemeral(ctx context.Context, creds assets.TargetCreds, pamUser string) (secret, authMode string, exp time.Time, meta map[string]any, err error) {
 	if !creds.Account.TokenRequestEnabled {
 		return creds.Secret, "vault_kubeconfig", time.Time{}, nil, nil
+	}
+	if creds.Account.K8sBindUser && strings.TrimSpace(pamUser) == "" {
+		return "", "", time.Time{}, nil, fmt.Errorf("bind-user: PAM username required")
 	}
 	up, err := BuildUpstream(creds)
 	if err != nil {
 		return "", "", time.Time{}, nil, err
 	}
-	ns, name := ResolveSA(creds.Account)
-	ttl := ClampTokenTTL(creds.Account.TokenTTLSeconds)
-	tr, err := RequestToken(ctx, up, TokenRequestSpec{Namespace: ns, Name: name, TTL: ttl})
+	ns, name := BindSAName(creds.Account, pamUser)
+	spec := TokenRequestSpec{Namespace: ns, Name: name, TTL: ClampTokenTTL(creds.Account.TokenTTLSeconds)}
+	if creds.Account.K8sBindUser {
+		uid, created, err := EnsureSA(ctx, up, ns, name, pamUser)
+		if err != nil {
+			return "", "", time.Time{}, nil, err
+		}
+		spec.Bound = &BoundRef{Kind: "ServiceAccount", APIVersion: "v1", Name: name, UID: uid}
+		_ = created
+	}
+	tr, err := RequestToken(ctx, up, spec)
 	if err != nil {
 		return "", "", time.Time{}, nil, err
 	}
@@ -78,11 +90,16 @@ func MintEphemeral(ctx context.Context, creds assets.TargetCreds) (secret, authM
 		secret = RenderKubeconfig(up.Server.String(), tr.Token)
 	}
 	meta = map[string]any{
-		"token_request":      true,
-		"sa_namespace":       ns,
-		"sa_name":            name,
-		"token_ttl_seconds":  int(ttl.Seconds()),
-		"token_expires_at":   tr.ExpiresAt.UTC().Format(time.RFC3339),
+		"token_request":     true,
+		"sa_namespace":      ns,
+		"sa_name":           name,
+		"token_ttl_seconds": int(spec.TTL.Seconds()),
+		"token_expires_at":  tr.ExpiresAt.UTC().Format(time.RFC3339),
+		"bind_user":         creds.Account.K8sBindUser,
+	}
+	if spec.Bound != nil {
+		meta["bound_kind"] = spec.Bound.Kind
+		meta["bound_name"] = spec.Bound.Name
 	}
 	return secret, "token_request", tr.ExpiresAt, meta, nil
 }
@@ -106,13 +123,30 @@ func RequestToken(ctx context.Context, up *Upstream, spec TokenRequestSpec) (Tok
 	if ttl > maxTokenTTL {
 		ttl = maxTokenTTL
 	}
-	body, err := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"apiVersion": "authentication.k8s.io/v1",
 		"kind":       "TokenRequest",
 		"spec": map[string]any{
 			"expirationSeconds": int64(ttl.Seconds()),
 		},
-	})
+	}
+	if spec.Bound != nil && spec.Bound.Name != "" && spec.Bound.UID != "" {
+		kind := spec.Bound.Kind
+		if kind == "" {
+			kind = "Secret"
+		}
+		apiVer := spec.Bound.APIVersion
+		if apiVer == "" {
+			apiVer = "v1"
+		}
+		bodyMap["spec"].(map[string]any)["boundObjectRef"] = map[string]any{
+			"kind":       kind,
+			"apiVersion": apiVer,
+			"name":       spec.Bound.Name,
+			"uid":        spec.Bound.UID,
+		}
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return TokenRequestResult{}, err
 	}

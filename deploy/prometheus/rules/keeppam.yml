@@ -1,0 +1,62 @@
+groups:
+  - name: keeppam-slo
+    rules:
+      - alert: KeepPAMAPIDown
+        expr: up{job="keeppam-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: KeepPAM API scrape is down
+          description: Prometheus cannot reach api:8080/metrics for 1m.
+
+      - alert: KeepPAMAuthP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(keeppam_auth_login_seconds_bucket[5m]))) > 0.5
+          and sum(rate(keeppam_auth_login_seconds_count[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Auth p95 above 500ms SLO
+          description: histogram_quantile 5m window exceeded 0.5s.
+
+      - alert: KeepPAMSessionSetupP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(keeppam_session_setup_seconds_bucket[5m]))) > 2
+          and sum(rate(keeppam_session_setup_seconds_count[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Session setup p95 above 2s SLO
+          description: histogram_quantile 5m window exceeded 2s.
+
+      - alert: KeepPAMSIEMLagHigh
+        expr: keeppam_audit_export_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: SIEM export lag above 60s SLO
+          description: Audit export cursor lag {{ $value }}s.
+
+      - alert: KeepPAMHTTP5xx
+        expr: |
+          sum(rate(keeppam_http_requests_total{code=~"5.."}[5m]))
+          / clamp_min(sum(rate(keeppam_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: HTTP 5xx share above 5%
+          description: Error ratio {{ $value | humanizePercentage }}.
+
+      - alert: KeepPAMSessionSpike
+        expr: keeppam_active_sessions > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Active PAM sessions above 50
+          description: keeppam_active_sessions={{ $value }}.

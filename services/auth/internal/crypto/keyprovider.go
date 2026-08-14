@@ -136,7 +136,7 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// NewKeyProviderFromEnv picks env|file|vault based on KEEPPAM_DATA_KEY_SOURCE.
+// NewKeyProviderFromEnv picks env|file|vault|aws|gcp|azure based on KEEPPAM_DATA_KEY_SOURCE.
 func NewKeyProviderFromEnv() (KeyProvider, error) {
 	src := strings.ToLower(strings.TrimSpace(os.Getenv("KEEPPAM_DATA_KEY_SOURCE")))
 	switch src {
@@ -158,7 +158,65 @@ func NewKeyProviderFromEnv() (KeyProvider, error) {
 			Token: os.Getenv("KEEPPAM_VAULT_TOKEN"),
 			Path:  os.Getenv("KEEPPAM_VAULT_TRANSIT_PATH"),
 		}, nil
+	case "aws":
+		ct, err := requireCiphertext()
+		if err != nil {
+			return nil, err
+		}
+		ak := firstEnv("KEEPPAM_AWS_ACCESS_KEY", "KEEPPAM_AWS_ACCESS_KEY_ID")
+		sk := firstEnv("KEEPPAM_AWS_SECRET_KEY", "KEEPPAM_AWS_SECRET_ACCESS_KEY")
+		if ak == "" || sk == "" {
+			return nil, fmt.Errorf("KEEPPAM_AWS_ACCESS_KEY and KEEPPAM_AWS_SECRET_KEY required when SOURCE=aws")
+		}
+		return AWSKMSProvider{
+			Region:     firstEnv("KEEPPAM_AWS_REGION", "KEEPPAM_S3_REGION"),
+			AccessKey:  ak,
+			SecretKey:  sk,
+			SessionTok: os.Getenv("KEEPPAM_AWS_SESSION_TOKEN"),
+			Endpoint:   os.Getenv("KEEPPAM_AWS_KMS_ENDPOINT"),
+			KeyID:      firstEnv("KEEPPAM_AWS_KMS_KEY_ID", "KEEPPAM_KMS_KEY_ID"),
+			Ciphertext: ct,
+		}, nil
+	case "gcp":
+		ct, err := requireCiphertext()
+		if err != nil {
+			return nil, err
+		}
+		key := os.Getenv("KEEPPAM_GCP_KMS_KEY")
+		if strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("KEEPPAM_GCP_KMS_KEY required when SOURCE=gcp")
+		}
+		return GCPKMSProvider{
+			KeyName:     key,
+			AccessToken: os.Getenv("KEEPPAM_GCP_ACCESS_TOKEN"),
+			Endpoint:    os.Getenv("KEEPPAM_GCP_KMS_ENDPOINT"),
+			MetadataURL: os.Getenv("KEEPPAM_GCP_METADATA_URL"),
+			Ciphertext:  ct,
+		}, nil
+	case "azure":
+		ct, err := requireCiphertext()
+		if err != nil {
+			return nil, err
+		}
+		vault := os.Getenv("KEEPPAM_AZURE_VAULT_URL")
+		name := os.Getenv("KEEPPAM_AZURE_KEY_NAME")
+		if strings.TrimSpace(vault) == "" || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("KEEPPAM_AZURE_VAULT_URL and KEEPPAM_AZURE_KEY_NAME required when SOURCE=azure")
+		}
+		return AzureKVProvider{
+			VaultURL:     vault,
+			KeyName:      name,
+			KeyVersion:   os.Getenv("KEEPPAM_AZURE_KEY_VERSION"),
+			Op:           os.Getenv("KEEPPAM_AZURE_KMS_OP"),
+			Alg:          os.Getenv("KEEPPAM_AZURE_KMS_ALG"),
+			Token:        os.Getenv("KEEPPAM_AZURE_TOKEN"),
+			TokenURL:     os.Getenv("KEEPPAM_AZURE_TOKEN_URL"),
+			TenantID:     os.Getenv("KEEPPAM_AZURE_TENANT_ID"),
+			ClientID:     os.Getenv("KEEPPAM_AZURE_CLIENT_ID"),
+			ClientSecret: os.Getenv("KEEPPAM_AZURE_CLIENT_SECRET"),
+			Ciphertext:   ct,
+		}, nil
 	default:
-		return nil, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault")
+		return nil, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure")
 	}
 }

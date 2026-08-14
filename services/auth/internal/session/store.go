@@ -18,6 +18,7 @@ type Session struct {
 	Roles       []string  `json:"roles"`
 	Permissions []string  `json:"permissions"`
 	SAMLNameID  string    `json:"saml_name_id,omitempty"`
+	Devices     []string  `json:"devices,omitempty"`
 }
 
 type Challenge struct {
@@ -80,6 +81,21 @@ func (s *Store) Get(ctx context.Context, token string) (Session, error) {
 	}
 	err = json.Unmarshal(data, &sess)
 	return sess, err
+}
+
+func (s *Store) Update(ctx context.Context, token string, sess Session) error {
+	ttl, err := s.rdb.TTL(ctx, "sess:"+token).Result()
+	if err != nil {
+		return err
+	}
+	if ttl <= 0 {
+		ttl = 8 * time.Hour
+	}
+	data, err := json.Marshal(sess)
+	if err != nil {
+		return err
+	}
+	return s.rdb.Set(ctx, "sess:"+token, data, ttl).Err()
 }
 
 func (s *Store) Delete(ctx context.Context, token string) error {

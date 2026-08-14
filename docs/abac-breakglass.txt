@@ -9,6 +9,8 @@
 - `require_reason` — при сессии нужна текстовая причина
 - `allowed_cidrs` — IP клиента (или CIDR); пусто = любой
 - `allowed_countries` — ISO 3166-1 (`RU`) и/или `LAN`; пусто = любая; без MMDB публичный IP → отказ. См. `docs/geoip.txt`
+- `allowed_devices` — `TLS` / `WEBAUTHN` / `SSH` / fingerprint; пусто = любое. См. `docs/managed-device.txt`
+- `allowed_namespaces` — kubectl proxy; пусто = любой ns. См. `docs/k8s-pam.txt`
 - окно времени / дни недели / JIT `expires_at`
 
 Deny-by-default: нет совпавшей привязки — отказ.

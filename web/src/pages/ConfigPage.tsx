@@ -90,6 +90,14 @@ const emptyNotify: NotifySettings = {
   webhook_url: "",
   has_auth_header: false,
   timeout_sec: 5,
+  smtp_enabled: false,
+  smtp_host: "",
+  smtp_port: 587,
+  smtp_tls: "starttls",
+  smtp_tls_insecure: false,
+  smtp_username: "",
+  has_smtp_password: false,
+  smtp_from: "",
 };
 
 export function ConfigPage() {
@@ -99,6 +107,7 @@ export function ConfigPage() {
   const [itsm, setItsm] = useState<ITSMSettings>(emptyITSM);
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
+  const [notifySmtpPass, setNotifySmtpPass] = useState("");
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
   const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
@@ -213,13 +222,32 @@ export function ConfigPage() {
     try {
       const body: Partial<NotifySettings> = { ...notify };
       if (notifyAuth.trim()) body.auth_header = notifyAuth.trim();
+      if (notifySmtpPass) body.smtp_password = notifySmtpPass;
       delete body.has_auth_header;
+      delete body.has_smtp_password;
       const saved = await api.putNotifySettings(body);
       setNotify({ ...emptyNotify, ...saved });
       setNotifyAuth("");
-      setMsg("JIT webhook сохранён");
+      setNotifySmtpPass("");
+      setMsg("Уведомления сохранены");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения webhook");
+      setError(err instanceof Error ? err.message : "Ошибка сохранения уведомлений");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onTestNotifyEmail() {
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      await api.testNotifyEmail();
+      setMsg("Тестовое письмо отправлено на email текущего пользователя");
+      const nt = await api.getNotifySettings();
+      setNotify({ ...emptyNotify, ...nt });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка SMTP");
     } finally {
       setBusy(false);
     }
@@ -352,7 +380,9 @@ export function ConfigPage() {
             <span className="mono">
               {infra.data_key_source === "vault"
                 ? "vault (HSM-capable)"
-                : infra.data_key_source}
+                : ["aws", "gcp", "azure"].includes(infra.data_key_source)
+                  ? `${infra.data_key_source} (KMS)`
+                  : infra.data_key_source}
             </span>
           </p>
           <p>
@@ -873,11 +903,12 @@ export function ConfigPage() {
       </form>
 
       <form className="card" onSubmit={onSaveNotify} style={{ maxWidth: 640 }}>
-        <h2>JIT webhook</h2>
+        <h2>Уведомления</h2>
         <p className="muted">
-          POST JSON на create/approve/deny JIT. Ошибка доставки не блокирует согласование. Checkout
-          только в in-app inbox.
+          Inbox всегда. Webhook — только JIT. SMTP — JIT и checkout, тем же получателям.
+          Ошибка доставки не блокирует согласование.
         </p>
+        <h3>JIT webhook</h3>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
@@ -910,7 +941,7 @@ export function ConfigPage() {
         />
         {(notify.last_sent_at || notify.last_error) && (
           <p className="muted" style={{ marginTop: "0.75rem" }}>
-            Последняя отправка: {notify.last_sent_at ? new Date(notify.last_sent_at).toLocaleString() : "—"}
+            Webhook: {notify.last_sent_at ? new Date(notify.last_sent_at).toLocaleString() : "—"}
             {notify.last_error ? (
               <>
                 <br />
@@ -919,9 +950,89 @@ export function ConfigPage() {
             ) : null}
           </p>
         )}
-        <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
-          Сохранить webhook
-        </button>
+        <h3 style={{ marginTop: "1.25rem" }}>SMTP</h3>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={!!notify.smtp_enabled}
+            onChange={(e) => setNotify({ ...notify, smtp_enabled: e.target.checked })}
+          />
+          Включить почту
+        </label>
+        <label>Host</label>
+        <input
+          value={notify.smtp_host || ""}
+          onChange={(e) => setNotify({ ...notify, smtp_host: e.target.value })}
+          placeholder="smtp.example.com"
+        />
+        <label>Port</label>
+        <input
+          type="number"
+          min={1}
+          max={65535}
+          value={notify.smtp_port ?? 587}
+          onChange={(e) => setNotify({ ...notify, smtp_port: Number(e.target.value) })}
+        />
+        <label>TLS</label>
+        <select
+          value={notify.smtp_tls || "starttls"}
+          onChange={(e) => setNotify({ ...notify, smtp_tls: e.target.value })}
+        >
+          <option value="starttls">STARTTLS (587)</option>
+          <option value="tls">TLS (465)</option>
+          <option value="none">none (локальный relay)</option>
+        </select>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={!!notify.smtp_tls_insecure}
+            onChange={(e) => setNotify({ ...notify, smtp_tls_insecure: e.target.checked })}
+          />
+          Не проверять сертификат (self-signed)
+        </label>
+        <label>From</label>
+        <input
+          value={notify.smtp_from || ""}
+          onChange={(e) => setNotify({ ...notify, smtp_from: e.target.value })}
+          placeholder="keeppam@example.com"
+        />
+        <label>Username (опц.)</label>
+        <input
+          value={notify.smtp_username || ""}
+          onChange={(e) => setNotify({ ...notify, smtp_username: e.target.value })}
+          autoComplete="off"
+        />
+        <label>Password {notify.has_smtp_password ? "(задан)" : ""} — пусто = не менять</label>
+        <input
+          type="password"
+          value={notifySmtpPass}
+          onChange={(e) => setNotifySmtpPass(e.target.value)}
+          autoComplete="new-password"
+        />
+        {(notify.smtp_last_sent_at || notify.smtp_last_error) && (
+          <p className="muted" style={{ marginTop: "0.75rem" }}>
+            SMTP: {notify.smtp_last_sent_at ? new Date(notify.smtp_last_sent_at).toLocaleString() : "—"}
+            {notify.smtp_last_error ? (
+              <>
+                <br />
+                <span className="error">Ошибка: {notify.smtp_last_error}</span>
+              </>
+            ) : null}
+          </p>
+        )}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "1rem" }}>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить уведомления
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void onTestNotifyEmail()}
+          >
+            Тестовое письмо
+          </button>
+        </div>
       </form>
 
       <form className="card" onSubmit={onSaveSIEM} style={{ maxWidth: 640 }}>

@@ -1,0 +1,60 @@
+# KeepPAM: cloud KMS unwrap (data key)
+
+Локальный AES-GCM Envelope не меняется: KMS только расшифровывает 32-байтный DEK при старте API / session-worker.
+
+`KEEPPAM_DATA_KEY_SOURCE=aws|gcp|azure` (плюс уже существующие `env|file|vault`).
+
+Общий ciphertext (base64 обёртки DEK):
+
+- `KEEPPAM_KMS_CIPHERTEXT` (для vault по-прежнему можно `KEEPPAM_VAULT_CIPHERTEXT`)
+
+Один и тот же ciphertext нужен и api, и session-worker.
+
+## AWS KMS
+
+`Decrypt` через SigV4 (`TrentService.Decrypt`), без AWS SDK.
+
+| Env | Назначение |
+|-----|------------|
+| `KEEPPAM_AWS_REGION` | регион (иначе `KEEPPAM_S3_REGION` / `us-east-1`) |
+| `KEEPPAM_AWS_ACCESS_KEY` | или `KEEPPAM_AWS_ACCESS_KEY_ID` |
+| `KEEPPAM_AWS_SECRET_KEY` | или `KEEPPAM_AWS_SECRET_ACCESS_KEY` |
+| `KEEPPAM_AWS_SESSION_TOKEN` | optional STS |
+| `KEEPPAM_AWS_KMS_KEY_ID` | optional KeyId в Decrypt |
+| `KEEPPAM_AWS_KMS_ENDPOINT` | тесты / LocalStack (иначе `https://kms.{region}.amazonaws.com`) |
+
+Заранее: `aws kms encrypt --key-id alias/keeppam --plaintext fileb://dek.bin` → CiphertextBlob в `KEEPPAM_KMS_CIPHERTEXT`.
+
+## GCP Cloud KMS
+
+REST `POST /v1/{name}:decrypt`.
+
+| Env | Назначение |
+|-----|------------|
+| `KEEPPAM_GCP_KMS_KEY` | `projects/P/locations/L/keyRings/R/cryptoKeys/K` |
+| `KEEPPAM_GCP_ACCESS_TOKEN` | Bearer (стенд / тесты) |
+| `KEEPPAM_GCP_METADATA_URL` | иначе GCE metadata `.../service-accounts/default/token` |
+| `KEEPPAM_GCP_KMS_ENDPOINT` | тесты (иначе `https://cloudkms.googleapis.com`) |
+
+На GCE/GKE достаточно IAM на ключ + metadata; `ACCESS_TOKEN` не нужен.
+
+## Azure Key Vault
+
+По умолчанию `unwrapkey` (`RSA-OAEP-256`). Можно `KEEPPAM_AZURE_KMS_OP=decrypt`.
+
+| Env | Назначение |
+|-----|------------|
+| `KEEPPAM_AZURE_VAULT_URL` | `https://xxx.vault.azure.net` |
+| `KEEPPAM_AZURE_KEY_NAME` | имя ключа |
+| `KEEPPAM_AZURE_KEY_VERSION` | optional |
+| `KEEPPAM_AZURE_TOKEN` | готовый Bearer |
+| `KEEPPAM_AZURE_TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET` | client credentials |
+| `KEEPPAM_AZURE_TOKEN_URL` | тесты (иначе login.microsoftonline.com) |
+| `KEEPPAM_AZURE_KMS_ALG` | default `RSA-OAEP-256` |
+
+## Compliance / UI
+
+Контроль `kms_hsm_key`: pass для `vault|aws|gcp|azure`, warn `file`, fail `env`.
+Конфигурация → «Инфраструктура»: `aws/gcp/azure (KMS)`.
+
+Стенд compose остаётся на `env`. PKCS#11 по-прежнему не встроен.

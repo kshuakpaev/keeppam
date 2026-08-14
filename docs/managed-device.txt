@@ -1,0 +1,32 @@
+# KeepPAM: managed-device ABAC
+
+Контекст устройства на ACL, рядом с CIDR и GeoIP.
+
+## ACL
+
+`allowed_devices` (TEXT[]):
+
+| Значение | Смысл |
+|----------|--------|
+| пусто | любое устройство |
+| `TLS` | клиентский сертификат (mTLS на API) |
+| `WEBAUTHN` | сессия после входа Passkey |
+| `SSH` | SSH publickey на `:2222` |
+| `sha256:<64 hex>` | отпечаток клиентского TLS-серта |
+| `SHA256:<base64>` | fingerprint ключа OpenSSH |
+
+Список задан, а устройство не совпало / неизвестно — **отказ**.
+
+## Откуда берётся устройство
+
+1. **WebAuthn login** — в Redis-сессию пишется `WEBAUTHN`.
+2. **mTLS** — `r.TLS.PeerCertificates[0]` → `TLS` + sha256(DER). Терминация TLS должна быть на API (`KEEPPAM_TLS_CLIENT_CA_FILE`). Nginx на стенде сертификат не прокидывает.
+3. **SSH publickey** — `SSH` + `ssh.FingerprintSHA256`.
+
+Password-only SSH / логин паролем без passkey — устройства нет.
+
+Проверка на connect / JIT / app / k8s / SSH — тот же `policy.Evaluate` (devices в context).
+
+## UI
+
+Карточка актива → ACL → «Allowed devices». Пример: `WEBAUTHN, TLS`.

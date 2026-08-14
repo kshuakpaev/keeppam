@@ -31,6 +31,7 @@ import (
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/notify"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/session"
@@ -64,6 +65,20 @@ func main() {
 	}
 	cfg.DataKey = key
 	cfg.DataKeySource = kp.Source()
+
+	traceStop, err := obs.InitTracing(context.Background(), cfg.OTELEndpoint, "keeppam-api")
+	if err != nil {
+		slog.Error("tracing", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceStop(c)
+	}()
+	if cfg.OTELEndpoint != "" {
+		slog.Info("tracing otlp", "endpoint", obs.NormalizeOTLPEndpoint(cfg.OTELEndpoint))
+	}
 
 	recStore, err := recstore.NewFromEnv(cfg.RecordingsDir)
 	if err != nil {
@@ -111,6 +126,7 @@ func main() {
 	}
 
 	auditSvc := audit.New(db)
+	auditSvc.SetMAC(env)
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
 	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
@@ -180,6 +196,7 @@ func main() {
 	defer runCancel()
 
 	go live.Listen(runCtx)
+	go auditSvc.RunSealer(runCtx)
 
 	if runHTTP {
 		if err := authSvc.Bootstrap(ctx); err != nil {
@@ -190,7 +207,31 @@ func main() {
 
 	var srv *http.Server
 	if runHTTP {
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc)
+		if cfg.K8sAPIAddr != "" && cfg.K8sAPIAddr != "off" {
+			pub := cfg.K8sPublicURL
+			if pub == "" {
+				pub = k8sproxy.DefaultPublicURL(cfg.CORSOrigin, cfg.K8sAPIAddr)
+			}
+			cert, err := k8sproxy.LoadOrCreateTLS(cfg.K8sTLSCertFile, cfg.K8sTLSKeyFile, cfg.K8sTLSPath, pub)
+			if err != nil {
+				slog.Error("k8s tls", "err", err)
+			} else {
+				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
+				k8sGw.SetRoles(func(ctx context.Context, userID uuid.UUID) []string {
+					u, err := db.GetUserByID(ctx, userID)
+					if err != nil {
+						return nil
+					}
+					return u.Roles
+				})
+				go func() {
+					if err := k8sGw.ListenAndServe(runCtx); err != nil && err != http.ErrServerClosed {
+						slog.Error("k8s api gateway", "err", err)
+					}
+				}()
+			}
+		}
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -233,23 +274,6 @@ func main() {
 					slog.Error("mysql wire", "err", err)
 				}
 			}()
-		}
-		if cfg.K8sAPIAddr != "" && cfg.K8sAPIAddr != "off" {
-			pub := cfg.K8sPublicURL
-			if pub == "" {
-				pub = k8sproxy.DefaultPublicURL(cfg.CORSOrigin, cfg.K8sAPIAddr)
-			}
-			cert, err := k8sproxy.LoadOrCreateTLS(cfg.K8sTLSCertFile, cfg.K8sTLSKeyFile, cfg.K8sTLSPath, pub)
-			if err != nil {
-				slog.Error("k8s tls", "err", err)
-			} else {
-				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
-				go func() {
-					if err := k8sGw.ListenAndServe(runCtx); err != nil && err != http.ErrServerClosed {
-						slog.Error("k8s api gateway", "err", err)
-					}
-				}()
-			}
 		}
 		go func() {
 			t := time.NewTicker(time.Minute)

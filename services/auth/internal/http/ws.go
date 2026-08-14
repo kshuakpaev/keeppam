@@ -121,15 +121,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var sqlPackID *uuid.UUID
+	var k8sNS []string
 	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
 		if ev.OK && ev.SQLPolicyPackID != nil {
 			sqlPackID = ev.SQLPolicyPackID
 		}
 	}
+	if creds.Asset.Protocol == "kubectl" && ev.OK {
+		k8sNS = ev.AllowedNamespaces
+	}
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
-		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID,
+		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID, K8sNamespaces: k8sNS,
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 	}, r.UserAgent())
 	if err != nil {
@@ -142,7 +146,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"recording_path": created.RecordingPath, "created_at": created.CreatedAt,
 		"has_recording": created.HasRecording, "ticket_id": created.TicketID, "reason": created.Reason,
 		"db_privilege": created.DBPrivilege, "database_name": created.DatabaseName, "isolated": created.Isolated,
-		"break_glass": created.BreakGlass,
+		"break_glass": created.BreakGlass, "k8s_namespaces": created.K8sNamespaces,
 	}
 	if created.Protocol == "postgres" || created.Protocol == "mysql" {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
@@ -403,6 +407,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		authSess.Roles = u.Roles
 		authSess.Permissions = u.Permissions
 	}
+	r = s.bindSession(r, authSess)
 	if !rbac.HasPermission(authSess.Permissions, "sessions.connect") {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return

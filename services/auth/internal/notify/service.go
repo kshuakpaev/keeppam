@@ -11,6 +11,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -27,14 +28,31 @@ type Notification struct {
 }
 
 type Settings struct {
-	Enabled       bool       `json:"enabled"`
-	WebhookURL    string     `json:"webhook_url"`
-	AuthHeader    string     `json:"auth_header,omitempty"`
-	HasAuthHeader bool       `json:"has_auth_header"`
-	TimeoutSec    int        `json:"timeout_sec"`
-	LastError     string     `json:"last_error,omitempty"`
-	LastSentAt    *time.Time `json:"last_sent_at,omitempty"`
-	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	Enabled         bool       `json:"enabled"`
+	WebhookURL      string     `json:"webhook_url"`
+	AuthHeader      string     `json:"auth_header,omitempty"`
+	HasAuthHeader   bool       `json:"has_auth_header"`
+	TimeoutSec      int        `json:"timeout_sec"`
+	LastError       string     `json:"last_error,omitempty"`
+	LastSentAt      *time.Time `json:"last_sent_at,omitempty"`
+	SMTPEnabled     bool       `json:"smtp_enabled"`
+	SMTPHost        string     `json:"smtp_host"`
+	SMTPPort        int        `json:"smtp_port"`
+	SMTPTLS         string     `json:"smtp_tls"`
+	SMTPTLSInsecure bool       `json:"smtp_tls_insecure"`
+	SMTPUsername    string     `json:"smtp_username"`
+	SMTPPassword    string     `json:"smtp_password,omitempty"`
+	HasSMTPPassword bool       `json:"has_smtp_password"`
+	SMTPFrom        string     `json:"smtp_from"`
+	SMTPLastError   string     `json:"smtp_last_error,omitempty"`
+	SMTPLastSentAt  *time.Time `json:"smtp_last_sent_at,omitempty"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
+}
+
+type storedSettings struct {
+	Settings
+	authEnc []byte
+	smtpEnc []byte
 }
 
 type Service struct {
@@ -148,8 +166,10 @@ func (s *Service) OnJITCreated(ctx context.Context, req policy.AccessRequest) {
 	body := fmt.Sprintf("%s запросил доступ к %s на %d мин",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()), req.DurationMinutes)
-	s.insert(ctx, FilterRecipients(ids, req.RequesterID), "jit.created", title, body, "access_request", req.ID.String())
+	to := FilterRecipients(ids, req.RequesterID)
+	s.insert(ctx, to, "jit.created", title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload("jit.created", req))
+	s.fireMail(ctx, to, title, body)
 }
 
 func (s *Service) OnJITDecided(ctx context.Context, req policy.AccessRequest) {
@@ -162,6 +182,34 @@ func (s *Service) OnJITDecided(ctx context.Context, req policy.AccessRequest) {
 	body := fmt.Sprintf("%s: %s", nonEmpty(req.AssetName, req.AssetID.String()), req.Status)
 	s.insert(ctx, []uuid.UUID{req.RequesterID}, kind, title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload(kind, req))
+	s.fireMail(ctx, []uuid.UUID{req.RequesterID}, title, body)
+}
+
+func (s *Service) OnAlertmanager(ctx context.Context, evs []obs.AlertEvent) {
+	if s == nil || len(evs) == 0 {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "audit.read")
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	for _, ev := range evs {
+		kind := "obs.alert.firing"
+		title := ev.Name
+		if ev.Status == "resolved" {
+			kind = "obs.alert.resolved"
+			title = ev.Name + " resolved"
+		}
+		body := ev.Summary
+		if ev.Description != "" && ev.Description != ev.Summary {
+			body = ev.Summary + " — " + ev.Description
+		}
+		ref := ev.Fingerprint
+		if ref == "" {
+			ref = ev.Name
+		}
+		s.insert(ctx, ids, kind, title, body, "alert", ref)
+	}
 }
 
 func (s *Service) OnCheckoutCreated(ctx context.Context, req assets.CheckoutRequest) {
@@ -174,7 +222,9 @@ func (s *Service) OnCheckoutCreated(ctx context.Context, req assets.CheckoutRequ
 		nonEmpty(req.RequesterName, req.RequesterID.String()),
 		nonEmpty(req.Username, req.AccountID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()))
-	s.insert(ctx, FilterRecipients(ids, req.RequesterID), "checkout.created", title, body, "secret_checkout_request", req.ID.String())
+	to := FilterRecipients(ids, req.RequesterID)
+	s.insert(ctx, to, "checkout.created", title, body, "secret_checkout_request", req.ID.String())
+	s.fireMail(ctx, to, title, body)
 }
 
 func (s *Service) OnCheckoutDecided(ctx context.Context, req assets.CheckoutRequest) {
@@ -188,6 +238,7 @@ func (s *Service) OnCheckoutDecided(ctx context.Context, req assets.CheckoutRequ
 		nonEmpty(req.Username, req.AccountID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()), req.Status)
 	s.insert(ctx, []uuid.UUID{req.RequesterID}, kind, title, body, "secret_checkout_request", req.ID.String())
+	s.fireMail(ctx, []uuid.UUID{req.RequesterID}, title, body)
 }
 
 func JITPayload(event string, req policy.AccessRequest) map[string]any {
@@ -225,24 +276,36 @@ func (s *Service) insert(ctx context.Context, users []uuid.UUID, kind, title, bo
 	}
 }
 
-func (s *Service) GetSettings(ctx context.Context) (Settings, []byte, error) {
-	var out Settings
-	var authEnc []byte
+func (s *Service) load(ctx context.Context) (storedSettings, error) {
+	var out storedSettings
 	var updatedAt time.Time
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT enabled, webhook_url, auth_header_enc, timeout_sec, last_error, last_sent_at, updated_at
+		SELECT enabled, webhook_url, auth_header_enc, timeout_sec, last_error, last_sent_at,
+			smtp_enabled, smtp_host, smtp_port, smtp_tls, smtp_tls_insecure, smtp_username,
+			smtp_password_enc, smtp_from, smtp_last_error, smtp_last_sent_at, updated_at
 		FROM notify_settings WHERE id=1`).Scan(
-		&out.Enabled, &out.WebhookURL, &authEnc, &out.TimeoutSec, &out.LastError, &out.LastSentAt, &updatedAt)
+		&out.Enabled, &out.WebhookURL, &out.authEnc, &out.TimeoutSec, &out.LastError, &out.LastSentAt,
+		&out.SMTPEnabled, &out.SMTPHost, &out.SMTPPort, &out.SMTPTLS, &out.SMTPTLSInsecure, &out.SMTPUsername,
+		&out.smtpEnc, &out.SMTPFrom, &out.SMTPLastError, &out.SMTPLastSentAt, &updatedAt)
 	if err != nil {
-		return Settings{}, nil, err
+		return storedSettings{}, err
 	}
-	out.HasAuthHeader = len(authEnc) > 0
+	out.HasAuthHeader = len(out.authEnc) > 0
+	out.HasSMTPPassword = len(out.smtpEnc) > 0
 	out.UpdatedAt = &updatedAt
-	return out, authEnc, nil
+	return out, nil
+}
+
+func (s *Service) GetSettings(ctx context.Context) (Settings, error) {
+	raw, err := s.load(ctx)
+	if err != nil {
+		return Settings{}, err
+	}
+	return raw.Settings, nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, actorID uuid.UUID, in Settings, ip, ua string) (Settings, error) {
-	cur, authEnc, err := s.GetSettings(ctx)
+	cur, err := s.load(ctx)
 	if err != nil {
 		return Settings{}, err
 	}
@@ -254,6 +317,7 @@ func (s *Service) UpdateSettings(ctx context.Context, actorID uuid.UUID, in Sett
 		timeout = 30
 	}
 	url := strings.TrimSpace(in.WebhookURL)
+	authEnc := cur.authEnc
 	if in.AuthHeader != "" {
 		enc, err := s.env.Encrypt([]byte(strings.TrimSpace(in.AuthHeader)))
 		if err != nil {
@@ -261,34 +325,185 @@ func (s *Service) UpdateSettings(ctx context.Context, actorID uuid.UUID, in Sett
 		}
 		authEnc = enc
 	}
+	tlsMode, err := normalizeSMTPTLS(in.SMTPTLS)
+	if err != nil {
+		return Settings{}, err
+	}
+	port := in.SMTPPort
+	if port <= 0 {
+		port = 587
+	}
+	if port > 65535 {
+		return Settings{}, fmt.Errorf("smtp_port must be 1..65535")
+	}
+	host := strings.TrimSpace(in.SMTPHost)
+	from := strings.TrimSpace(in.SMTPFrom)
+	user := strings.TrimSpace(in.SMTPUsername)
+	if in.SMTPEnabled {
+		if host == "" {
+			return Settings{}, fmt.Errorf("smtp_host required")
+		}
+		if from == "" || !strings.Contains(from, "@") {
+			return Settings{}, fmt.Errorf("smtp_from must be an email")
+		}
+	}
+	smtpEnc := cur.smtpEnc
+	if in.SMTPPassword != "" {
+		enc, err := s.env.Encrypt([]byte(in.SMTPPassword))
+		if err != nil {
+			return Settings{}, err
+		}
+		smtpEnc = enc
+	}
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE notify_settings SET enabled=$1, webhook_url=$2, auth_header_enc=$3, timeout_sec=$4,
-			updated_at=NOW(), updated_by=$5 WHERE id=1`,
-		in.Enabled, url, authEnc, timeout, actorID)
+			smtp_enabled=$5, smtp_host=$6, smtp_port=$7, smtp_tls=$8, smtp_tls_insecure=$9,
+			smtp_username=$10, smtp_password_enc=$11, smtp_from=$12,
+			updated_at=NOW(), updated_by=$13 WHERE id=1`,
+		in.Enabled, url, authEnc, timeout,
+		in.SMTPEnabled, host, port, tlsMode, in.SMTPTLSInsecure,
+		user, smtpEnc, from, actorID)
 	if err != nil {
 		return Settings{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "settings.notify.updated", "notify_settings", "1", ip, ua, map[string]any{
 		"enabled": in.Enabled, "has_url": url != "",
+		"smtp_enabled": in.SMTPEnabled, "smtp_host": host, "smtp_tls": tlsMode,
 	})
-	out, _, err := s.GetSettings(ctx)
+	return s.GetSettings(ctx)
+}
+
+func (s *Service) SendTest(ctx context.Context, userID uuid.UUID) error {
+	raw, err := s.load(ctx)
 	if err != nil {
-		return cur, err
+		return err
 	}
-	return out, nil
+	if !raw.SMTPEnabled {
+		return fmt.Errorf("SMTP выключен")
+	}
+	u, err := s.db.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !UsableEmail(u.Email) {
+		return fmt.Errorf("у пользователя нет реального email")
+	}
+	cfg, err := s.smtpConfig(raw)
+	if err != nil {
+		return err
+	}
+	if err := sendMailFn(cfg, []string{u.Email}, "KeepPAM SMTP test", "Проверка доставки уведомлений KeepPAM."); err != nil {
+		_, _ = s.db.Pool.Exec(ctx, `UPDATE notify_settings SET smtp_last_error=$1 WHERE id=1`, truncate(err.Error(), 400))
+		return err
+	}
+	_, _ = s.db.Pool.Exec(ctx, `UPDATE notify_settings SET smtp_last_error='', smtp_last_sent_at=NOW() WHERE id=1`)
+	return nil
+}
+
+func (s *Service) smtpConfig(raw storedSettings) (SMTPConfig, error) {
+	pass := ""
+	if len(raw.smtpEnc) > 0 && s.env != nil {
+		plain, err := s.env.Decrypt(raw.smtpEnc)
+		if err != nil {
+			return SMTPConfig{}, fmt.Errorf("smtp password decrypt")
+		}
+		pass = string(plain)
+	}
+	timeout := time.Duration(raw.TimeoutSec) * time.Second
+	if timeout < 5*time.Second {
+		timeout = 15 * time.Second
+	}
+	if timeout > 60*time.Second {
+		timeout = 60 * time.Second
+	}
+	return SMTPConfig{
+		Host: raw.SMTPHost, Port: raw.SMTPPort, TLS: raw.SMTPTLS, Insecure: raw.SMTPTLSInsecure,
+		Username: raw.SMTPUsername, Password: pass, From: raw.SMTPFrom, Timeout: timeout,
+	}, nil
+}
+
+func (s *Service) emailsFor(ctx context.Context, users []uuid.UUID) []string {
+	if len(users) == 0 {
+		return nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `SELECT email FROM users WHERE id = ANY($1::uuid[]) AND status='active'`, users)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	seen := map[string]struct{}{}
+	var out []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			continue
+		}
+		if !UsableEmail(email) {
+			continue
+		}
+		email = strings.TrimSpace(email)
+		key := strings.ToLower(email)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, email)
+	}
+	return out
+}
+
+func (s *Service) fireMail(ctx context.Context, users []uuid.UUID, title, body string) {
+	raw, err := s.load(ctx)
+	if err != nil || !raw.SMTPEnabled {
+		return
+	}
+	emails := s.emailsFor(ctx, users)
+	if len(emails) == 0 {
+		return
+	}
+	cfg, err := s.smtpConfig(raw)
+	if err != nil {
+		return
+	}
+	go func() {
+		var lastErr error
+		ok := 0
+		for _, em := range emails {
+			if err := sendMailFn(cfg, []string{em}, title, body); err != nil {
+				lastErr = err
+				continue
+			}
+			ok++
+		}
+		errText := ""
+		if lastErr != nil {
+			errText = truncate(lastErr.Error(), 400)
+			_ = s.aud.Record(context.Background(), nil, "notify.smtp.failed", "notify_settings", "1", "", "notify", map[string]any{
+				"error": truncate(lastErr.Error(), 200), "sent": ok,
+			})
+		}
+		if ok > 0 {
+			_, _ = s.db.Pool.Exec(context.Background(), `
+				UPDATE notify_settings SET smtp_last_error=$1, smtp_last_sent_at=NOW() WHERE id=1`, errText)
+		} else if errText != "" {
+			_, _ = s.db.Pool.Exec(context.Background(), `
+				UPDATE notify_settings SET smtp_last_error=$1 WHERE id=1`, errText)
+		}
+	}()
 }
 
 func (s *Service) fireWebhook(ctx context.Context, payload map[string]any) {
-	cfg, authEnc, err := s.GetSettings(ctx)
-	if err != nil || !cfg.Enabled || strings.TrimSpace(cfg.WebhookURL) == "" {
+	raw, err := s.load(ctx)
+	if err != nil || !raw.Enabled || strings.TrimSpace(raw.WebhookURL) == "" {
 		return
 	}
 	auth := ""
-	if len(authEnc) > 0 && s.env != nil {
-		if plain, err := s.env.Decrypt(authEnc); err == nil {
+	if len(raw.authEnc) > 0 && s.env != nil {
+		if plain, err := s.env.Decrypt(raw.authEnc); err == nil {
 			auth = string(plain)
 		}
 	}
+	cfg := raw.Settings
 	go func() {
 		wctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
 		defer cancel()

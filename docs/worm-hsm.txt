@@ -14,19 +14,18 @@ Immutable object storage через S3 Object Lock при sync записей:
 
 - Compliance purge: локальный файл может удалиться, S3 Object Lock → `skipped_worm`.
 - Legal hold на session → S3 Legal Hold ON; release → OFF.
-- Audit events по-прежнему append-only в Postgres (hash-chain), purge их не трогает.
+- Audit events по-прежнему append-only в Postgres (hash-chain + HMAC-батчи, см. `docs/audit-chain.txt`), purge их не трогает.
 
 ## HSM posture (data key)
 
-Полноценный PKCS#11 в MVP не встроен. Принятый путь:
+Полноценный PKCS#11 в MVP не встроен. Принятые пути:
 
-`KEEPPAM_DATA_KEY_SOURCE=vault` → Transit decrypt DEK.
-
-Vault с HSM seal / Transit seal wrap = enterprise HSM без смены кода KeepPAM.
+- `KEEPPAM_DATA_KEY_SOURCE=vault` → Transit decrypt DEK (HSM seal Vault снаружи)
+- `aws` / `gcp` / `azure` → cloud KMS unwrap DEK (см. `docs/kms.txt`)
 
 ## Compliance controls
 
 - `worm_recordings` — pass если backend=s3 и Object Lock mode задан
-- `kms_hsm_key` — pass для `vault`, warn для `file`, fail для `env`
+- `kms_hsm_key` — pass для `vault|aws|gcp|azure`, warn для `file`, fail для `env`
 
 См. также `docs/prod-infra.txt`.

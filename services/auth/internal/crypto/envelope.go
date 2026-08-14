@@ -3,9 +3,13 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type Envelope struct {
@@ -49,4 +53,13 @@ func (e *Envelope) Decrypt(ciphertext []byte) ([]byte, error) {
 	}
 	nonce, data := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
 	return gcm.Open(nil, nonce, data, nil)
+}
+
+func (e *Envelope) HMACHex(parts ...string) string {
+	if e == nil {
+		return ""
+	}
+	mac := hmac.New(sha256.New, e.key)
+	_, _ = io.WriteString(mac, strings.Join(parts, "|"))
+	return hex.EncodeToString(mac.Sum(nil))
 }

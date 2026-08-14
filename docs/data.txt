@@ -31,7 +31,7 @@ C) Session Management
 
 D) Audit and Compliance
 - audit_events (append-only)
-- audit_batches (подписанные батчи, hash-chain)
+- audit_batches (HMAC на data key, hash-chain; `docs/audit-chain.txt`)
 - retention_policies
 - legal_holds
 

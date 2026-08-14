@@ -52,9 +52,13 @@ services:
       KEEPPAM_RECORDINGS_DIR: "/tmp/recordings"
       KEEPPAM_DATA_KEY_SOURCE: "env"
       KEEPPAM_RECORDINGS_BACKEND: "local"
-      # Prod (см. docs/prod-infra.txt):
+      KEEPPAM_ALERT_WEBHOOK_TOKEN: "keeppam-alert-stand"
+      KEEPPAM_OTEL_ENDPOINT: "http://jaeger:4318"
+      # Prod (см. docs/prod-infra.txt, docs/kms.txt):
       # KEEPPAM_DATA_KEY_SOURCE: "file"
       # KEEPPAM_DATA_KEY_FILE: "/run/secrets/keeppam-data-key"
+      # KEEPPAM_DATA_KEY_SOURCE: "vault"   # или aws | gcp | azure
+      # KEEPPAM_KMS_CIPHERTEXT: "..."
       # KEEPPAM_RECORDINGS_BACKEND: "s3"
       # KEEPPAM_S3_ENDPOINT: "http://minio:9000"
       # KEEPPAM_S3_BUCKET: "keeppam-recordings"
@@ -82,6 +86,8 @@ services:
       guacd:
         condition: service_started
       guacenc:
+        condition: service_started
+      jaeger:
         condition: service_started
 
   guacd:
@@ -119,6 +125,7 @@ services:
       KEEPPAM_DATA_KEY_SOURCE: "env"
       KEEPPAM_RECORDINGS_DIR: "/tmp/recordings"
       KEEPPAM_RECORDINGS_BACKEND: "local"
+      # Prod KMS: те же KEEPPAM_DATA_KEY_SOURCE / KEEPPAM_KMS_CIPHERTEXT, что у api (docs/kms.txt)
       KEEPPAM_SSH_ADDR: ":2222"
       KEEPPAM_SSH_HOST_KEY: "/var/lib/keeppam/ssh/hostkey"
     depends_on:
@@ -158,8 +165,83 @@ services:
     depends_on:
       - api
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+      - alertmanager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - amdata:/alertmanager
+    ports:
+      - "9093:9093"
+    depends_on:
+      - api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.64.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ChangeMeNow!1
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/keeppam.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   pgdata:
   recordings:
   sshhost:
   demo_pgdata:
+  promdata:
+  grafanadata:
+  amdata:

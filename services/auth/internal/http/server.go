@@ -24,10 +24,13 @@ import (
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/dbephemeral"
+	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/itsm"
+	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/notify"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/session"
@@ -67,14 +70,16 @@ type Server struct {
 	sshca      *sshca.Service
 	itsm       *itsm.Service
 	notify     *notify.Service
+	k8s        *k8sproxy.Gateway
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(obs.HTTPTracing)
 	r.Use(s.metricsMW)
 	r.Use(s.cors)
 
@@ -89,6 +94,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 		r.Get("/sessions/{id}/watch", s.handleSessionWatch)
 		r.Get("/sessions/{id}/guac", s.handleSessionGuac)
 		r.Get("/sessions/{id}/sql", s.handleSessionSQL)
+		r.Get("/sessions/{id}/k8s/exec", s.handleK8sExecWS)
 		r.Handle("/sessions/{id}/app", http.HandlerFunc(s.handleSessionApp))
 		r.Handle("/sessions/{id}/app/*", http.HandlerFunc(s.handleSessionApp))
 
@@ -101,6 +107,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(30 * time.Second))
+
+			r.Post("/alerts/webhook", s.handleAlertWebhook)
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
@@ -150,6 +158,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Put("/settings/itsm", s.handlePutITSMSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/notify", s.handleGetNotifySettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/notify", s.handlePutNotifySettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/notify/test-email", s.handleTestNotifyEmail)
 				r.With(s.requirePerm("settings.write")).Post("/itsm/validate", s.handleITSMValidate)
 				r.With(s.requirePerm("settings.write")).Get("/settings/ssh", s.handleGetSSHSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
@@ -171,6 +180,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("users.write")).Delete("/users/{id}/ssh-keys/{keyId}", s.handleDeleteUserSSHKey)
 				r.With(s.requirePerm("users.read")).Get("/users/{id}/webauthn", s.handleListUserWebAuthn)
 				r.With(s.requirePerm("users.read")).Get("/roles", s.handleListRoles)
+				r.With(s.requirePerm("audit.read")).Get("/audit-events/verify", s.handleVerifyAudit)
+				r.With(s.requirePerm("audit.read")).Get("/audit-events/batches", s.handleListAuditBatches)
+				r.With(s.requirePerm("audit.read")).Post("/audit-events/seal", s.handleSealAudit)
 				r.With(s.requirePerm("audit.read")).Get("/audit-events", s.handleListAudit)
 				r.With(s.requirePerm("audit.read")).Get("/analytics/overview", s.handleAnalyticsOverview)
 				r.With(s.requirePerm("audit.read")).Get("/analytics/slo", s.handleAnalyticsSLO)
@@ -249,6 +261,14 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/kubeconfig", s.handleGetKubeconfig)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/catalog", s.handleK8sCatalog)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/namespaces", s.handleK8sNamespaces)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/list", s.handleK8sList)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/get", s.handleK8sGet)
+				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/apply", s.handleK8sApply)
+				r.With(s.requirePerm("sessions.connect")).Put("/sessions/{id}/k8s/object", s.handleK8sReplace)
+				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/delete", s.handleK8sDelete)
+				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/exec", s.handleK8sExecOnce)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
 			})
@@ -297,8 +317,7 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 			sess.Roles = u.Roles
 			sess.Permissions = u.Permissions
 		}
-		ctx := context.WithValue(r.Context(), sessKey, sess)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, s.bindSession(r, sess))
 	})
 }
 
@@ -337,6 +356,35 @@ func (s *Server) requirePerm(perm string) func(http.Handler) http.Handler {
 
 func mustSess(r *http.Request) session.Session {
 	return r.Context().Value(sessKey).(session.Session)
+}
+
+func (s *Server) bindSession(r *http.Request, sess session.Session) *http.Request {
+	ctx := context.WithValue(r.Context(), sessKey, sess)
+	ctx = policy.WithDevices(ctx, device.Merge(device.FromTLS(r.TLS), sess.Devices))
+	return r.WithContext(ctx)
+}
+
+func (s *Server) stampDevice(r *http.Request, token string, extra ...string) {
+	if token == "" {
+		return
+	}
+	sess, err := s.sessions.Get(r.Context(), token)
+	if err != nil {
+		return
+	}
+	sess.Devices = device.Merge(device.FromTLS(r.TLS), extra)
+	_ = s.sessions.Update(r.Context(), token, sess)
+}
+
+func (s *Server) completeLogin(w http.ResponseWriter, r *http.Request, token string, extra ...string) error {
+	if token == "" {
+		return nil
+	}
+	if err := s.setSessionCookies(w, token); err != nil {
+		return err
+	}
+	s.stampDevice(r, token, extra...)
+	return nil
 }
 
 func (s *Server) setSessionCookies(w http.ResponseWriter, sessionToken string) error {
@@ -386,7 +434,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.SessionToken != "" {
-		if err := s.setSessionCookies(w, res.SessionToken); err != nil {
+		if err := s.completeLogin(w, r, res.SessionToken); err != nil {
 			writeErr(w, http.StatusInternalServerError, "session error")
 			return
 		}
@@ -408,7 +456,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	if err := s.setSessionCookies(w, res.SessionToken); err != nil {
+	if err := s.completeLogin(w, r, res.SessionToken); err != nil {
 		writeErr(w, http.StatusInternalServerError, "session error")
 		return
 	}
@@ -704,6 +752,39 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		"page":   page,
 		"pages":  pages,
 	})
+}
+
+func (s *Server) handleVerifyAudit(w http.ResponseWriter, r *http.Request) {
+	res, err := s.audit.Verify(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleListAuditBatches(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	list, err := s.audit.ListBatches(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"batches": list})
+}
+
+func (s *Server) handleSealAudit(w http.ResponseWriter, r *http.Request) {
+	n, err := s.audit.SealOnce(r.Context(), true)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sealed": n})
 }
 
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {

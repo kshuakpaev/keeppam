@@ -25,10 +25,10 @@ type AccessRequest struct {
 	BindingID       *uuid.UUID `json:"binding_id,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	// Joined
-	AssetName         string `json:"asset_name,omitempty"`
-	AssetAddress      string `json:"asset_address,omitempty"`
-	RequesterUsername string `json:"requester_username,omitempty"`
-	ApproverUsername  string `json:"approver_username,omitempty"`
+	AssetName         string   `json:"asset_name,omitempty"`
+	AssetAddress      string   `json:"asset_address,omitempty"`
+	RequesterUsername string   `json:"requester_username,omitempty"`
+	ApproverUsername  string   `json:"approver_username,omitempty"`
 	RiskScore         int      `json:"risk_score"`
 	RiskFactors       []string `json:"risk_factors"`
 }
@@ -40,10 +40,10 @@ type CreateRequestInput struct {
 }
 
 type ListRequestsFilter struct {
-	Status       string
-	RequesterID  *uuid.UUID
-	Limit        int
-	Offset       int
+	Status      string
+	RequesterID *uuid.UUID
+	Limit       int
+	Offset      int
 }
 
 func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.UUID, in CreateRequestInput, ip, ua string) (AccessRequest, error) {
@@ -248,9 +248,9 @@ func (s *Service) ExpirePending(ctx context.Context, olderThan time.Duration) (i
 }
 
 type RequestsSummary struct {
-	PendingApprove     int             `json:"pending_approve"`
-	MyPending          int             `json:"my_pending"`
-	MyRecentDecisions  []AccessRequest `json:"my_recent_decisions"`
+	PendingApprove    int             `json:"pending_approve"`
+	MyPending         int             `json:"my_pending"`
+	MyRecentDecisions []AccessRequest `json:"my_recent_decisions"`
 }
 
 func (s *Service) RequestsSummary(ctx context.Context, userID uuid.UUID, canApprove bool) (RequestsSummary, error) {

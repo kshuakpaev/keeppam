@@ -63,7 +63,7 @@ Wire/SQL: клиентский `database=` должен совпадать с `d
 
 ## Prod infra
 
-См. `docs/prod-infra.txt`: KeyProvider (`env|file|vault`), hybrid S3 recordings, optional API TLS/mTLS, UI статус в Конфигурация.
+См. `docs/prod-infra.txt`: KeyProvider (`env|file|vault|aws|gcp|azure`), hybrid S3 recordings, optional API TLS/mTLS, UI статус в Конфигурация.
 
 ## Vault checkout / rotation
 

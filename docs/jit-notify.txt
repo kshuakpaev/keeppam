@@ -1,6 +1,6 @@
 # KeepPAM: JIT-уведомления
 
-In-app inbox + опциональный webhook на заявки доступа.
+In-app inbox + опциональный webhook + SMTP на заявки доступа.
 
 ## Inbox
 
@@ -26,11 +26,11 @@ UI: колокольчик в sidebar, poll 25s, клик → `/access-requests`
 
 ## Webhook
 
-Конфиг → **JIT webhook** (`settings.write`).
+Конфиг → **Уведомления** (`settings.write`).
 
 | Поле | Смысл |
 |------|--------|
-| `enabled` | мастер-выключатель |
+| `enabled` | мастер-выключатель webhook |
 | `webhook_url` | HTTPS POST JSON |
 | `auth_header` | write-only, шифруется (`Authorization` или `Header: value`) |
 | `timeout_sec` | 1–30, default 5 |
@@ -60,3 +60,25 @@ Payload (без секретов):
 ```
 
 User-Agent: `KeepPAM-Notify/1.0`.
+
+## SMTP
+
+Те же события, что inbox (JIT **и** checkout). Письмо на `users.email`.
+
+Пропускаются пустые адреса и заглушки `@ldap.local` / `@oidc.local` / `@saml.local`.
+
+| Поле | Смысл |
+|------|--------|
+| `smtp_enabled` | выключатель почты |
+| `smtp_host` / `smtp_port` | default port 587 |
+| `smtp_tls` | `starttls` (587) / `tls` (465) / `none` (локальный relay) |
+| `smtp_tls_insecure` | не проверять сертификат |
+| `smtp_from` | From, обязателен при enabled |
+| `smtp_username` / `smtp_password` | AUTH PLAIN; пароль write-only, шифруется |
+| `timeout_sec` | общий с webhook, для SMTP минимум 15s |
+
+`POST /api/v1/admin/settings/notify/test-email` — письмо на email текущего админа.
+
+Ошибка SMTP не блокирует approve. Аудит `notify.smtp.failed`, `smtp_last_error` в UI.
+
+Тема = заголовок inbox, тело = текст inbox, UTF-8, без секретов.

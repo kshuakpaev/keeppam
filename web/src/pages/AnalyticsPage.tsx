@@ -121,7 +121,21 @@ export function AnalyticsPage() {
                 />
               </div>
               <p className="muted" style={{ marginTop: "0.5rem" }}>
-                Prometheus: <span className="mono">GET /metrics</span>
+                Prometheus: <a href="http://localhost:9090" target="_blank" rel="noreferrer">:9090</a>
+                {" · "}
+                Grafana:{" "}
+                <a href="http://localhost:3001/d/keeppam-slo" target="_blank" rel="noreferrer">
+                  KeepPAM SLO
+                </a>
+                {" · "}
+                Alertmanager: <a href="http://localhost:9093" target="_blank" rel="noreferrer">:9093</a>
+                {" · "}
+                Jaeger:{" "}
+                <a href="http://localhost:16686/search?service=keeppam-api" target="_blank" rel="noreferrer">
+                  traces
+                </a>
+                {" · "}
+                scrape <span className="mono">GET /metrics</span>
               </p>
             </section>
           )}

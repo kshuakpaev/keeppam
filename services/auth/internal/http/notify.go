@@ -86,12 +86,13 @@ func (s *Server) handleGetNotifySettings(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusServiceUnavailable, "notify unavailable")
 		return
 	}
-	cfg, _, err := s.notify.GetSettings(r.Context())
+	cfg, err := s.notify.GetSettings(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	cfg.AuthHeader = ""
+	cfg.SMTPPassword = ""
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -112,5 +113,19 @@ func (s *Server) handlePutNotifySettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	out.AuthHeader = ""
+	out.SMTPPassword = ""
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleTestNotifyEmail(w http.ResponseWriter, r *http.Request) {
+	if s.notify == nil {
+		writeErr(w, http.StatusServiceUnavailable, "notify unavailable")
+		return
+	}
+	sess := mustSess(r)
+	if err := s.notify.SendTest(r.Context(), sess.UserID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

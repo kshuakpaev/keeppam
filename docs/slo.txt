@@ -2,11 +2,22 @@
 
 ## Что есть
 
-In-process метрики + снимок SLO. Prometheus/Grafana в compose нет.
+In-process метрики + снимок SLO + Prometheus / Alertmanager / Grafana / Jaeger на стенде.
 
 1. `GET /metrics` — Prometheus text 0.0.4, без auth (как `/healthz`).
 2. `GET /api/v1/admin/analytics/slo` — JSON для UI, право `audit.read`.
 3. Карточка **SLO** на странице Аналитика.
+4. Compose: Prometheus `:9090`, Alertmanager `:9093`, Grafana `:3001`, Jaeger `:16686`.
+5. `POST /api/v1/alerts/webhook` — Alertmanager → inbox (`audit.read`) + аудит `obs.alert`. Bearer `KEEPPAM_ALERT_WEBHOOK_TOKEN` (пусто = webhook выключен).
+6. OpenTelemetry traces: HTTP spans → OTLP HTTP (`KEEPPAM_OTEL_ENDPOINT`, пусто = выкл). `/healthz`, `/metrics` и WebSocket не трейсятся. Тела запросов и секреты в spans не пишутся.
+
+Стенд:
+
+- Grafana: http://localhost:3001 (anonymous Viewer; admin / `ChangeMeNow!1`) — Prometheus + Jaeger
+- Prometheus: http://localhost:9090
+- Alertmanager: http://localhost:9093
+- Jaeger: http://localhost:16686 (`service=keeppam-api`)
+- API: `KEEPPAM_OTEL_ENDPOINT=http://jaeger:4318`
 
 ## Цели (константы, не settings)
 
@@ -17,6 +28,21 @@ In-process метрики + снимок SLO. Prometheus/Grafana в compose не
 | SIEM export lag (если SIEM включён) | 60s |
 
 Burn = observed / target. `breached` если любой burn > 1. Нет сэмплов → не breach.
+
+UI p95 — кольцо в процессе API + SQL за 24ч. Grafana p95 — `histogram_quantile` по scrape (5m). Это разные окна.
+
+## Алерты Prometheus
+
+Файл `deploy/prometheus/rules/keeppam.yml`:
+
+| Alert | Условие |
+|-------|---------|
+| KeepPAMAPIDown | scrape `up==0` 1m |
+| KeepPAMAuthP95High | p95 auth > 500ms, 10m |
+| KeepPAMSessionSetupP95High | p95 setup > 2s, 10m |
+| KeepPAMSIEMLagHigh | lag > 60s, 5m |
+| KeepPAMHTTP5xx | доля 5xx > 5%, 5m |
+| KeepPAMSessionSpike | active sessions > 50, 5m |
 
 ## Метрики `/metrics`
 
@@ -30,7 +56,7 @@ Burn = observed / target. `breached` если любой burn > 1. Нет сэм
 
 ## Вне scope
 
-- Prometheus/Grafana в docker-compose
-- трассировки / OpenTelemetry
+- spans на SQL/Redis/k8s upstream
+- Tempo / OpenTelemetry Collector
 - хранение гистограмм в Postgres
 - отдельные SLO settings

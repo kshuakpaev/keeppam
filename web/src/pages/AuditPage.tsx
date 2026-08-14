@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type AuditEvent } from "../api";
+import { api, type AuditEvent, type AuditVerify } from "../api";
 
 const DEFAULT_PAGE_SIZE = 50;
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 1000] as const;
@@ -27,6 +27,8 @@ export function AuditPage() {
   const [appliedPageSize, setAppliedPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [chain, setChain] = useState<AuditVerify | null>(null);
+  const [chainBusy, setChainBusy] = useState(false);
 
   const load = useCallback(
     async (nextPage: number, nextQ: string, nextField: string, nextLimit: number) => {
@@ -75,14 +77,71 @@ export function AuditPage() {
     void load(p, appliedQ, appliedField, appliedPageSize);
   }
 
+  async function onVerify() {
+    setChainBusy(true);
+    setError("");
+    try {
+      setChain(await api.verifyAudit());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка проверки цепочки");
+    } finally {
+      setChainBusy(false);
+    }
+  }
+
+  async function onSeal() {
+    setChainBusy(true);
+    setError("");
+    try {
+      await api.sealAudit();
+      setChain(await api.verifyAudit());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка подписи батча");
+    } finally {
+      setChainBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="toolbar">
         <div>
           <h1>Аудит</h1>
-          <p className="muted">События входа и администрирования</p>
+          <p className="muted">События входа и администрирования · hash-chain</p>
+        </div>
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <button className="btn secondary" type="button" disabled={chainBusy} onClick={() => void onVerify()}>
+            Проверить цепочку
+          </button>
+          <button className="btn secondary" type="button" disabled={chainBusy} onClick={() => void onSeal()}>
+            Подписать хвост
+          </button>
         </div>
       </div>
+
+      {chain && (
+        <div className="card" style={{ marginBottom: "1rem" }}>
+          <p style={{ margin: 0 }}>
+            Цепочка:{" "}
+            <span className={chain.ok ? "ok" : "error"}>{chain.ok ? "цела" : "нарушена"}</span>
+            {" · "}
+            {chain.events} событий · {chain.batches} батчей · хвост {chain.unsealed}
+            {chain.breaks?.length ? (
+              <>
+                <br />
+                <span className="error">
+                  Разрыв: {chain.breaks[0].reason} @ {chain.breaks[0].id}
+                </span>
+              </>
+            ) : null}
+          </p>
+          {chain.tail_hash && (
+            <p className="muted mono" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+              tail {chain.tail_hash.slice(0, 16)}…
+            </p>
+          )}
+        </div>
+      )}
 
       <form className="card search-bar" onSubmit={onSearch}>
         <select

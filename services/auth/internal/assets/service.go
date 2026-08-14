@@ -87,6 +87,9 @@ type Account struct {
 	K8sSANamespace       string     `json:"k8s_sa_namespace"`
 	K8sSAName            string     `json:"k8s_sa_name"`
 	TokenTTLSeconds      int        `json:"token_ttl_seconds"`
+	K8sImpersonate       bool       `json:"k8s_impersonate"`
+	K8sImpersonatePrefix string     `json:"k8s_impersonate_prefix"`
+	K8sBindUser          bool       `json:"k8s_bind_user"`
 }
 
 type CreateAssetInput struct {
@@ -123,6 +126,9 @@ type CreateAccountInput struct {
 	K8sSANamespace      string `json:"k8s_sa_namespace"`
 	K8sSAName           string `json:"k8s_sa_name"`
 	TokenTTLSeconds     int    `json:"token_ttl_seconds"`
+	K8sImpersonate      bool   `json:"k8s_impersonate"`
+	K8sImpersonatePrefix string `json:"k8s_impersonate_prefix"`
+	K8sBindUser         bool   `json:"k8s_bind_user"`
 }
 
 type UpdateAccountInput struct {
@@ -139,6 +145,9 @@ type UpdateAccountInput struct {
 	K8sSANamespace        *string `json:"k8s_sa_namespace"`
 	K8sSAName             *string `json:"k8s_sa_name"`
 	TokenTTLSeconds       *int    `json:"token_ttl_seconds"`
+	K8sImpersonate        *bool   `json:"k8s_impersonate"`
+	K8sImpersonatePrefix  *string `json:"k8s_impersonate_prefix"`
+	K8sBindUser           *bool   `json:"k8s_bind_user"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
@@ -358,14 +367,18 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 	if err != nil {
 		return Account{}, err
 	}
+	if err := requireBindUserTokenRequest(in.K8sBindUser, in.TokenRequestEnabled); err != nil {
+		return Account{}, err
+	}
 	now := time.Now().UTC()
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_accounts (id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by,
-			token_request_enabled, k8s_sa_namespace, k8s_sa_name, token_ttl_seconds)
-		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13)`,
+			token_request_enabled, k8s_sa_namespace, k8s_sa_name, token_ttl_seconds, k8s_impersonate, k8s_impersonate_prefix, k8s_bind_user)
+		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		id, assetID, in.Username, in.AuthMethod, secretEnc, in.Description, now, now, actorID,
-		in.TokenRequestEnabled, strings.TrimSpace(in.K8sSANamespace), strings.TrimSpace(in.K8sSAName), ttl)
+		in.TokenRequestEnabled, strings.TrimSpace(in.K8sSANamespace), strings.TrimSpace(in.K8sSAName), ttl,
+		in.K8sImpersonate, canonImpersonatePrefix(in.K8sImpersonatePrefix), in.K8sBindUser)
 	if err != nil {
 		return Account{}, err
 	}
@@ -392,6 +405,9 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	saNS := acc.K8sSANamespace
 	saName := acc.K8sSAName
 	ttlSec := acc.TokenTTLSeconds
+	impOn := acc.K8sImpersonate
+	impPrefix := acc.K8sImpersonatePrefix
+	bindUser := acc.K8sBindUser
 	if in.Username != nil {
 		username = *in.Username
 	}
@@ -442,6 +458,20 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	} else if n, err := normalizeTokenTTL(ttlSec); err == nil {
 		ttlSec = n
 	}
+	if in.K8sImpersonate != nil {
+		impOn = *in.K8sImpersonate
+	}
+	if in.K8sImpersonatePrefix != nil {
+		impPrefix = canonImpersonatePrefix(*in.K8sImpersonatePrefix)
+	} else {
+		impPrefix = canonImpersonatePrefix(impPrefix)
+	}
+	if in.K8sBindUser != nil {
+		bindUser = *in.K8sBindUser
+	}
+	if err := requireBindUserTokenRequest(bindUser, trOn); err != nil {
+		return Account{}, err
+	}
 	var nextRotate any
 	if interval > 0 {
 		if acc.NextRotateAt != nil && acc.RotateIntervalHours == interval {
@@ -462,10 +492,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6,
 				rotate_after_session=$7, rotate_on_checkin=$8, rotate_interval_hours=$9, next_rotate_at=$10,
 				dual_control_checkout=$11, token_request_enabled=$12, k8s_sa_namespace=$13, k8s_sa_name=$14,
-				token_ttl_seconds=$15, updated_at=$16
+				token_ttl_seconds=$15, k8s_impersonate=$16, k8s_impersonate_prefix=$17, k8s_bind_user=$18, updated_at=$19
 			WHERE id=$1`,
 			accountID, username, authMethod, enc, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -474,10 +504,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5,
 				rotate_after_session=$6, rotate_on_checkin=$7, rotate_interval_hours=$8, next_rotate_at=$9,
 				dual_control_checkout=$10, token_request_enabled=$11, k8s_sa_namespace=$12, k8s_sa_name=$13,
-				token_ttl_seconds=$14, updated_at=$15
+				token_ttl_seconds=$14, k8s_impersonate=$15, k8s_impersonate_prefix=$16, k8s_bind_user=$17, updated_at=$18
 			WHERE id=$1`,
 			accountID, username, authMethod, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -485,7 +515,7 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	_ = s.aud.Record(ctx, &actorID, "asset.account.updated", "asset_account", accountID.String(), ip, ua, map[string]any{
 		"username": username, "status": status,
 		"rotate_after_session": rotateAfter, "rotate_interval_hours": interval,
-		"token_request_enabled": trOn,
+		"token_request_enabled": trOn, "k8s_impersonate": impOn, "k8s_bind_user": bindUser,
 	})
 	return s.getAccount(ctx, accountID)
 }
@@ -512,7 +542,8 @@ func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Accoun
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
-			COALESCE(a.token_ttl_seconds,900)
+			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
+			COALESCE(a.k8s_bind_user,false)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 ORDER BY a.username`, assetID)
@@ -544,7 +575,8 @@ func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username s
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
-			COALESCE(a.token_ttl_seconds,900)
+			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
+			COALESCE(a.k8s_bind_user,false)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 AND a.username=$2`, assetID, username)
@@ -564,7 +596,8 @@ func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error)
 			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
-			COALESCE(a.token_ttl_seconds,900)
+			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
+			COALESCE(a.k8s_bind_user,false)
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.id=$1`, id)
@@ -588,12 +621,20 @@ func scanAccountRow(row accountScanner) (Account, error) {
 		&a.CheckoutUserID, &a.CheckoutUsername, &a.CheckoutAt, &a.CheckoutExpiresAt, &a.CheckoutReason,
 		&a.RotateAfterSession, &a.RotateOnCheckin, &a.RotateIntervalHours, &a.NextRotateAt, &a.DualControlCheckout,
 		&a.TokenRequestEnabled, &a.K8sSANamespace, &a.K8sSAName, &a.TokenTTLSeconds,
+		&a.K8sImpersonate, &a.K8sImpersonatePrefix, &a.K8sBindUser,
 	)
 	if err != nil {
 		return a, err
 	}
 	a.CheckedOut = a.CheckoutUserID != nil
 	return a, nil
+}
+
+func requireBindUserTokenRequest(bindUser, tokenRequest bool) error {
+	if bindUser && !tokenRequest {
+		return fmt.Errorf("k8s_bind_user requires token_request_enabled")
+	}
+	return nil
 }
 
 func normalizeTokenTTL(sec int) (int, error) {
@@ -604,6 +645,17 @@ func normalizeTokenTTL(sec int) (int, error) {
 		return 0, fmt.Errorf("token_ttl_seconds must be 60..86400 (0 = 900)")
 	}
 	return sec, nil
+}
+
+func canonImpersonatePrefix(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "keeppam:" {
+		return "keeppam:"
+	}
+	if p == "-" || strings.EqualFold(p, "none") {
+		return ""
+	}
+	return p
 }
 
 // TargetCreds returns decrypted credentials for a session proxy (never expose via HTTP).
@@ -627,11 +679,13 @@ func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UU
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by,
 			COALESCE(token_request_enabled,false), COALESCE(k8s_sa_namespace,''), COALESCE(k8s_sa_name,''),
-			COALESCE(token_ttl_seconds,900)
+			COALESCE(token_ttl_seconds,900), COALESCE(k8s_impersonate,false), COALESCE(k8s_impersonate_prefix,'keeppam:'),
+			COALESCE(k8s_bind_user,false)
 		FROM asset_accounts WHERE id=$1 AND asset_id=$2`, accountID, assetID).Scan(
 		&acc.ID, &acc.AssetID, &acc.Username, &acc.AuthMethod, &secretEnc,
 		&acc.Description, &acc.Status, &acc.CreatedAt, &acc.UpdatedAt, &acc.CreatedBy,
-		&acc.TokenRequestEnabled, &acc.K8sSANamespace, &acc.K8sSAName, &acc.TokenTTLSeconds)
+		&acc.TokenRequestEnabled, &acc.K8sSANamespace, &acc.K8sSAName, &acc.TokenTTLSeconds,
+		&acc.K8sImpersonate, &acc.K8sImpersonatePrefix, &acc.K8sBindUser)
 	if err != nil {
 		return TargetCreds{}, err
 	}

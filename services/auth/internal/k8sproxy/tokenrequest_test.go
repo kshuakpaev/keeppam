@@ -113,7 +113,7 @@ func TestMintEphemeralDisabled(t *testing.T) {
 		Secret:     "vault-plain",
 		AuthMethod: "sa_token",
 		Account:    assets.Account{TokenRequestEnabled: false},
-	})
+	}, "alice")
 	if err != nil {
 		t.Fatal(err)
 	}

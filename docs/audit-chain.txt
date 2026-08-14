@@ -1,0 +1,39 @@
+# KeepPAM: audit hash-chain
+
+Append-only `audit_events` + проверка целостности + HMAC-батчи.
+
+## Цепочка
+
+Каждое событие:
+
+`hash = SHA-256(prev_hash | id | ts(µs RFC3339Nano) | actor | action | resource_type | resource_id | json(payload))`
+
+`prev_hash` = `hash` предыдущего события (`ts ASC, id ASC`). Первое — пустая строка.
+
+Запись под `pg_advisory_xact_lock`, чтобы не было развилок.
+
+IP / User-Agent в хеш не входят (как раньше).
+
+## Verify
+
+`GET /api/v1/admin/audit-events/verify` (`audit.read`)
+
+- `ok` — нет разрывов `prev_hash` и HMAC батчей верен
+- `breaks` — до 20 разрывов (`first_prev` / `bad_prev`)
+- `digest_ok` / `digest_mismatch` — пересчёт содержимого (события до µs-truncation могут не совпасть)
+- `unsealed` — события после последнего батча
+
+UI: Аудит → «Проверить цепочку».
+
+## Батчи
+
+Таблица `audit_batches`. Sealer каждые 30с (или «Подписать хвост»): пачки по 100 событий, либо хвост старше 1 мин.
+
+`mac = HMAC-SHA256(data key, prev_mac|first_id|last_id|count|first_hash|last_hash)`
+
+Без data key подделать MAC нельзя (нужен тот же ключ, что и envelope).
+
+`GET /api/v1/admin/audit-events/batches`
+`POST /api/v1/admin/audit-events/seal` — сбросить хвост сейчас.
+
+Compliance control `audit_hash_chain`.

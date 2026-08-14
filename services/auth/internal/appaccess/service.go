@@ -226,7 +226,7 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	if strings.TrimSpace(creds.Secret) == "" && !creds.Account.TokenRequestEnabled {
 		return Lease{}, fmt.Errorf("account has no kubeconfig/token secret")
 	}
-	secret, authMode, tokenExp, trMeta, err := k8sproxy.MintEphemeral(ctx, creds)
+	secret, authMode, tokenExp, trMeta, err := k8sproxy.MintEphemeral(ctx, creds, s.pamUsername(ctx, userID))
 	if err != nil {
 		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, map[string]any{
 			"reason": "token_request", "error": truncateErr(err.Error(), 200),
@@ -372,4 +372,15 @@ func (s *Service) IsIsolated(ctx context.Context, assetID uuid.UUID) bool {
 func (s *Service) NeedsHTTPSSession(ctx context.Context, assetID uuid.UUID) bool {
 	in, err := s.GetIntegration(ctx, assetID)
 	return err == nil && (in.RecordingMode == "full" || in.RecordingMode == "isolated")
+}
+
+func (s *Service) pamUsername(ctx context.Context, userID uuid.UUID) string {
+	if s.db == nil {
+		return ""
+	}
+	u, err := s.db.GetUserByID(ctx, userID)
+	if err != nil {
+		return ""
+	}
+	return u.Username
 }

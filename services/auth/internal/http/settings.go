@@ -220,7 +220,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.SessionToken != "" {
-		_ = s.setSessionCookies(w, res.SessionToken)
+		_ = s.completeLogin(w, r, res.SessionToken)
 	}
 	if res.Status == "mfa_required" && res.ChallengeToken != "" {
 		http.Redirect(w, r, base+"/login?mfa="+res.ChallengeToken, http.StatusFound)
@@ -296,7 +296,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.SessionToken != "" {
-		_ = s.setSessionCookies(w, res.SessionToken)
+		_ = s.completeLogin(w, r, res.SessionToken)
 	}
 	if res.Status == "mfa_required" && res.ChallengeToken != "" {
 		http.Redirect(w, r, base+"/login?mfa="+res.ChallengeToken, http.StatusFound)

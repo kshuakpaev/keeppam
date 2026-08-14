@@ -42,6 +42,36 @@ export type AuditEvent = {
   payload: Record<string, unknown>;
 };
 
+export type AuditVerify = {
+  ok: boolean;
+  events: number;
+  digest_ok: number;
+  digest_mismatch: number;
+  breaks: { index: number; id: string; reason: string }[];
+  head_hash?: string;
+  tail_hash?: string;
+  unsealed: number;
+  batches: number;
+  batch_mac_ok: number;
+  batch_mac_fail: number;
+  batch_link_fail: number;
+};
+
+export type AuditBatch = {
+  id: string;
+  seq: number;
+  from_ts: string;
+  to_ts: string;
+  first_id: string;
+  last_id: string;
+  event_count: number;
+  first_hash: string;
+  last_hash: string;
+  prev_batch_mac: string;
+  mac: string;
+  created_at: string;
+};
+
 export type AssetAccount = {
   id: string;
   asset_id: string;
@@ -68,6 +98,9 @@ export type AssetAccount = {
   k8s_sa_namespace?: string;
   k8s_sa_name?: string;
   token_ttl_seconds?: number;
+  k8s_impersonate?: boolean;
+  k8s_impersonate_prefix?: string;
+  k8s_bind_user?: boolean;
 };
 
 export type SecretCheckoutRequest = {
@@ -123,6 +156,8 @@ export type AccessBinding = {
   require_reason?: boolean;
   allowed_cidrs?: string[];
   allowed_countries?: string[];
+  allowed_devices?: string[];
+  allowed_namespaces?: string[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -276,6 +311,17 @@ export type NotifySettings = {
   timeout_sec: number;
   last_error?: string;
   last_sent_at?: string;
+  smtp_enabled?: boolean;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_tls?: string;
+  smtp_tls_insecure?: boolean;
+  smtp_username?: string;
+  smtp_password?: string;
+  has_smtp_password?: boolean;
+  smtp_from?: string;
+  smtp_last_error?: string;
+  smtp_last_sent_at?: string;
   updated_at?: string;
 };
 
@@ -524,6 +570,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  testNotifyEmail: () =>
+    request<{ status: string }>("/api/v1/admin/settings/notify/test-email", { method: "POST" }),
   listNotifications: (limit = 20) =>
     request<{ notifications: InboxNotification[]; unread: number }>(
       `/api/v1/notifications?limit=${limit}`,
@@ -640,6 +688,10 @@ export const api = {
       pages: number;
     }>(`/api/v1/admin/audit-events${q ? `?${q}` : ""}`);
   },
+  verifyAudit: () => request<AuditVerify>("/api/v1/admin/audit-events/verify"),
+  sealAudit: () =>
+    request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
+  listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
   listAssets: () => request<{ assets: Asset[] }>("/api/v1/admin/assets"),
   getAsset: (id: string) => request<Asset>(`/api/v1/admin/assets/${id}`),
   createAsset: (body: {
@@ -691,6 +743,9 @@ export const api = {
       k8s_sa_namespace?: string;
       k8s_sa_name?: string;
       token_ttl_seconds?: number;
+      k8s_impersonate?: boolean;
+      k8s_impersonate_prefix?: string;
+      k8s_bind_user?: boolean;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts`, {
@@ -714,6 +769,9 @@ export const api = {
       k8s_sa_namespace?: string;
       k8s_sa_name?: string;
       token_ttl_seconds?: number;
+      k8s_impersonate?: boolean;
+      k8s_impersonate_prefix?: string;
+      k8s_bind_user?: boolean;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}`, {
@@ -803,6 +861,8 @@ export const api = {
       require_reason?: boolean;
       allowed_cidrs?: string[];
       allowed_countries?: string[];
+      allowed_devices?: string[];
+      allowed_namespaces?: string[];
       command_policy_pack_id?: string;
       sql_policy_pack_id?: string;
       max_risk?: number;
@@ -916,6 +976,52 @@ export const api = {
   getKubeconfig: (id: string) =>
     request<{ kubeconfig: string; k8s_addr: string; k8s_token: string }>(
       `/api/v1/admin/sessions/${id}/kubeconfig`,
+    ),
+  k8sCatalog: (id: string) =>
+    request<{ resources: K8sResourceKind[] }>(`/api/v1/admin/sessions/${id}/k8s/catalog`),
+  k8sNamespaces: (id: string) =>
+    request<{ namespaces: string[]; acl: boolean }>(`/api/v1/admin/sessions/${id}/k8s/namespaces`),
+  k8sList: (id: string, params: { resource: string; group?: string; namespace?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("resource", params.resource);
+    if (params.group) qs.set("group", params.group);
+    if (params.namespace) qs.set("namespace", params.namespace);
+    return request<{ resource: string; group?: string; items: K8sBrowseItem[] }>(
+      `/api/v1/admin/sessions/${id}/k8s/list?${qs}`,
+    );
+  },
+  k8sGet: (id: string, params: { resource: string; group?: string; namespace?: string; name: string }) => {
+    const qs = new URLSearchParams();
+    qs.set("resource", params.resource);
+    qs.set("name", params.name);
+    if (params.group) qs.set("group", params.group);
+    if (params.namespace) qs.set("namespace", params.namespace);
+    return request<{ resource: string; group?: string; object: unknown }>(
+      `/api/v1/admin/sessions/${id}/k8s/get?${qs}`,
+    );
+  },
+  k8sApply: (id: string, body: { manifest: string; namespace?: string }) =>
+    request<{ results: K8sApplyResult[] }>(`/api/v1/admin/sessions/${id}/k8s/apply`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  k8sReplace: (id: string, object: unknown) =>
+    request<{ object: unknown; status: number }>(`/api/v1/admin/sessions/${id}/k8s/object`, {
+      method: "PUT",
+      body: JSON.stringify({ object }),
+    }),
+  k8sDelete: (id: string, params: { resource: string; group?: string; namespace?: string; name: string }) =>
+    request<{ status: number }>(`/api/v1/admin/sessions/${id}/k8s/delete`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+  k8sExecOnce: (
+    id: string,
+    body: { namespace: string; pod: string; container?: string; command: string | string[] },
+  ) =>
+    request<{ stdout: string; stderr: string; message?: string; exit_code?: number }>(
+      `/api/v1/admin/sessions/${id}/k8s/exec`,
+      { method: "POST", body: JSON.stringify(body) },
     ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
   getAppIntegration: (assetId: string) =>
@@ -1134,6 +1240,33 @@ export type PamSession = {
   k8s_token?: string;
   db_privilege?: string;
   break_glass?: boolean;
+  k8s_namespaces?: string[];
+};
+
+export type K8sResourceKind = {
+  name: string;
+  resource: string;
+  group?: string;
+  version: string;
+  namespaced: boolean;
+};
+
+export type K8sBrowseItem = {
+  name: string;
+  namespace?: string;
+  kind?: string;
+  status?: string;
+  created_at?: string;
+};
+
+export type K8sApplyResult = {
+  verb: string;
+  resource: string;
+  group?: string;
+  namespace?: string;
+  name: string;
+  status: number;
+  error?: string;
 };
 
 export type AppIntegration = {

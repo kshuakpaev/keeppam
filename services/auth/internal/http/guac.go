@@ -46,6 +46,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	r = s.bindSession(r, authSess)
 	if !rbac.HasPermission(authSess.Permissions, "sessions.connect") {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -214,13 +215,13 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 	cfg.OptimalScreenHeight = height
 	cfg.AudioMimetypes = []string{"audio/L16", "rate=44100", "channels=2"}
 	cfg.Parameters = map[string]string{
-		"hostname":   address,
-		"port":       strconv.Itoa(port),
-		"username":   username,
-		"password":   password,
-		"width":      strconv.Itoa(width),
-		"height":     strconv.Itoa(height),
-		"dpi":        "96",
+		"hostname":    address,
+		"port":        strconv.Itoa(port),
+		"username":    username,
+		"password":    password,
+		"width":       strconv.Itoa(width),
+		"height":      strconv.Itoa(height),
+		"dpi":         "96",
 		"color-depth": "24",
 	}
 	switch protocol {

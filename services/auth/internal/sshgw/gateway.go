@@ -24,6 +24,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
@@ -88,6 +89,7 @@ func (g *Gateway) ListenAndServe() error {
 				return nil, err
 			}
 			p.Extensions["auth_method"] = "publickey"
+			p.Extensions["devices"] = strings.Join(device.FromSSHKey(key), ",")
 			return p, nil
 		},
 	}
@@ -156,6 +158,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	roles := splitCSV(ext["roles"])
 	perms := splitCSV(ext["perms"])
 	ip, _, _ := net.SplitHostPort(sc.RemoteAddr().String())
+	ctx := policy.WithDevices(context.Background(), device.Normalize(splitCSV(ext["devices"])))
 
 	type sessStart struct {
 		pty     ptyInfo
@@ -218,8 +221,6 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		_, _ = io.WriteString(ch, "timeout waiting for shell\n")
 		return
 	}
-
-	ctx := context.Background()
 
 	if ext["mfa"] == "true" {
 		_, _ = io.WriteString(ch, "TOTP: ")
@@ -614,12 +615,12 @@ func sshPerms(u store.User) (*ssh.Permissions, error) {
 	}
 	return &ssh.Permissions{
 		Extensions: map[string]string{
-			"user_id":    u.ID.String(),
-			"username":   u.Username,
-			"mfa":        strconv.FormatBool(u.MFAEnabled),
-			"roles":      strings.Join(u.Roles, ","),
-			"perms":      strings.Join(u.Permissions, ","),
-			"must_setup": strconv.FormatBool(u.MustChangePassword || !u.MFAEnabled),
+			"user_id":     u.ID.String(),
+			"username":    u.Username,
+			"mfa":         strconv.FormatBool(u.MFAEnabled),
+			"roles":       strings.Join(u.Roles, ","),
+			"perms":       strings.Join(u.Permissions, ","),
+			"must_setup":  strconv.FormatBool(u.MustChangePassword || !u.MFAEnabled),
 			"auth_method": "password",
 		},
 	}, nil

@@ -103,6 +103,7 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 		authSess.Roles = u.Roles
 		authSess.Permissions = u.Permissions
 	}
+	r = s.bindSession(r, authSess)
 	if !rbac.HasPermission(authSess.Permissions, "sessions.connect") {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return

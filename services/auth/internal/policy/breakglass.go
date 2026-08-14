@@ -17,18 +17,18 @@ type BreakGlassInput struct {
 }
 
 type BreakGlassEvent struct {
-	ID               uuid.UUID  `json:"id"`
-	AssetID          uuid.UUID  `json:"asset_id"`
-	UserID           uuid.UUID  `json:"user_id"`
-	Reason           string     `json:"reason"`
-	DurationMinutes  int        `json:"duration_minutes"`
-	BindingID        *uuid.UUID `json:"binding_id,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ExpiresAt        time.Time  `json:"expires_at"`
-	ClosedAt         *time.Time `json:"closed_at,omitempty"`
-	AssetName        string     `json:"asset_name,omitempty"`
-	Username         string     `json:"username,omitempty"`
-	Active           bool       `json:"active"`
+	ID              uuid.UUID  `json:"id"`
+	AssetID         uuid.UUID  `json:"asset_id"`
+	UserID          uuid.UUID  `json:"user_id"`
+	Reason          string     `json:"reason"`
+	DurationMinutes int        `json:"duration_minutes"`
+	BindingID       *uuid.UUID `json:"binding_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	AssetName       string     `json:"asset_name,omitempty"`
+	Username        string     `json:"username,omitempty"`
+	Active          bool       `json:"active"`
 }
 
 func (s *Service) OpenBreakGlass(ctx context.Context, actorID, assetID uuid.UUID, in BreakGlassInput, ip, ua string) (BreakGlassEvent, error) {
@@ -74,12 +74,12 @@ func (s *Service) OpenBreakGlass(ctx context.Context, actorID, assetID uuid.UUID
 		return BreakGlassEvent{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "access.breakglass.opened", "asset", assetID.String(), ip, ua, map[string]any{
-		"severity": "critical",
-		"reason": reason,
+		"severity":         "critical",
+		"reason":           reason,
 		"duration_minutes": dur,
-		"binding_id": b.ID.String(),
-		"event_id": id.String(),
-		"expires_at": exp.Format(time.RFC3339),
+		"binding_id":       b.ID.String(),
+		"event_id":         id.String(),
+		"expires_at":       exp.Format(time.RFC3339),
 	})
 	return s.GetBreakGlass(ctx, id)
 }

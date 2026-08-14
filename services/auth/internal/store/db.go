@@ -354,6 +354,19 @@ func (db *DB) InsertAudit(ctx context.Context, e AuditEvent) error {
 	return err
 }
 
+func (db *DB) InsertAuditTx(ctx context.Context, tx pgx.Tx, e AuditEvent) error {
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO audit_events (id, ts, actor_id, action, resource_type, resource_id, ip, user_agent, payload, prev_hash, hash)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		e.ID, e.TS, e.ActorID, e.Action, e.ResourceType, e.ResourceID, e.IP, e.UserAgent, payload, e.PrevHash, e.Hash,
+	)
+	return err
+}
+
 type AuditFilter struct {
 	ActorID     *uuid.UUID
 	Action      string

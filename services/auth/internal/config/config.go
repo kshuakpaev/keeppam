@@ -52,6 +52,8 @@ type Config struct {
 	WebAuthnRPDisplayName  string
 	WebAuthnOrigins        []string
 	GeoIPDB                string
+	AlertWebhookToken      string
+	OTELEndpoint           string
 }
 
 func Load() (Config, error) {
@@ -95,6 +97,8 @@ func Load() (Config, error) {
 		TLSRequireClientCert:   boolEnv("KEEPPAM_TLS_REQUIRE_CLIENT_CERT", false),
 		WebAuthnRPDisplayName:  env("KEEPPAM_WEBAUTHN_RP_NAME", "KeepPAM"),
 		GeoIPDB:                env("KEEPPAM_GEOIP_DB", ""),
+		AlertWebhookToken:      strings.TrimSpace(env("KEEPPAM_ALERT_WEBHOOK_TOKEN", "")),
+		OTELEndpoint:           strings.TrimSpace(env("KEEPPAM_OTEL_ENDPOINT", "")),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
@@ -112,9 +116,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("KEEPPAM_RECORDINGS_BACKEND must be local|s3")
 	}
 	switch cfg.DataKeySource {
-	case "env", "file", "vault":
+	case "env", "file", "vault", "aws", "gcp", "azure":
 	default:
-		return Config{}, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault")
+		return Config{}, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure")
 	}
 	switch strings.ToUpper(cfg.S3ObjectLockMode) {
 	case "", "OFF", "NONE":

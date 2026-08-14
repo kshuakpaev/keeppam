@@ -78,7 +78,7 @@ func (s *Server) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	if err := s.setSessionCookies(w, res.SessionToken); err != nil {
+	if err := s.completeLogin(w, r, res.SessionToken, "WEBAUTHN"); err != nil {
 		writeErr(w, http.StatusInternalServerError, "session cookie")
 		return
 	}

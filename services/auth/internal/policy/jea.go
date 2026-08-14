@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -37,6 +38,7 @@ type AccessResult struct {
 	BindingID           *uuid.UUID
 	CommandPolicyPackID *uuid.UUID
 	SQLPolicyPackID     *uuid.UUID
+	AllowedNamespaces   []string
 	RiskScore           int
 	MaxRisk             int
 	RiskAction          string
@@ -228,6 +230,9 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	if in.Bypass {
 		return AccessResult{OK: true}, nil
 	}
+	if len(in.ClientDevices) == 0 {
+		in.ClientDevices = DevicesFrom(ctx)
+	}
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -248,7 +253,8 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT b.id, b.user_id, b.role_id, b.time_start, b.time_end, b.days_of_week, b.expires_at,
 			b.required_tags, b.require_ticket, COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
-			COALESCE(b.allowed_countries,'{}'),
+			COALESCE(b.allowed_countries,'{}'), COALESCE(b.allowed_devices,'{}'),
+			COALESCE(b.allowed_namespaces,'{}'),
 			b.command_policy_pack_id, b.sql_policy_pack_id, r.name,
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny')
 		FROM asset_access_bindings b
@@ -273,11 +279,11 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var expires *time.Time
 		var days int
 		var roleName *string
-		var reqTags, cidrs, countries []string
+		var reqTags, cidrs, countries, devices, namespaces []string
 		var requireTicket, requireReason bool
 		var maxRisk int
 		var riskAction string
-		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &packID, &sqlPackID, &roleName, &maxRisk, &riskAction); err != nil {
+		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &packID, &sqlPackID, &roleName, &maxRisk, &riskAction); err != nil {
 			return AccessResult{}, err
 		}
 		match := false
@@ -320,9 +326,13 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		if !geoip.Allowed(geoip.NormalizeCountries(countries), cc) {
 			continue
 		}
+		if !device.Allowed(devices, in.ClientDevices) {
+			continue
+		}
 		idCopy := bid
 		res := AccessResult{
 			OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID,
+			AllowedNamespaces: normalizeNamespaces(namespaces),
 			MaxRisk: maxRisk, RiskAction: riskAction,
 		}
 		s.applyRisk(ctx, in, &res, expires)

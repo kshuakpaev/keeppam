@@ -9,8 +9,11 @@
 | `env` (default) | `KEEPPAM_DATA_KEY` | base64 of 32 raw bytes (AES-GCM envelope) |
 | `file` | `KEEPPAM_DATA_KEY_FILE` | file with base64 text or raw 32 bytes |
 | `vault` | `KEEPPAM_VAULT_ADDR`, `KEEPPAM_VAULT_TOKEN`, `KEEPPAM_VAULT_CIPHERTEXT`, optional `KEEPPAM_VAULT_TRANSIT_PATH` | POST transit decrypt; expects `{"data":{"plaintext":"<base64 32 bytes>"}}` |
+| `aws` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_AWS_ACCESS_KEY`, `KEEPPAM_AWS_SECRET_KEY`, `KEEPPAM_AWS_REGION` | AWS KMS Decrypt (SigV4, без SDK) |
+| `gcp` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_GCP_KMS_KEY`, token или GCE metadata | Cloud KMS `:decrypt` |
+| `azure` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_AZURE_VAULT_URL`, `KEEPPAM_AZURE_KEY_NAME`, token или client credentials | Key Vault unwrapkey / decrypt |
 
-Ключ по-прежнему питает локальный AES-GCM Envelope (секреты учёток / SIEM / SSH CA). Полноценный cloud KMS unwrap — следующий шаг.
+Ключ по-прежнему питает локальный AES-GCM Envelope (секреты учёток / SIEM / SSH CA / audit HMAC). Cloud unwrap — см. `docs/kms.txt`. PKCS#11 не встроен.
 
 ## Recordings store
 

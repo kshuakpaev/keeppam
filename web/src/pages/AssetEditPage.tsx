@@ -46,6 +46,9 @@ export function AssetEditPage() {
     k8s_sa_namespace: "",
     k8s_sa_name: "",
     token_ttl_seconds: 900,
+    k8s_impersonate: false,
+    k8s_impersonate_prefix: "keeppam:",
+    k8s_bind_user: false,
   });
   const [aclForm, setAclForm] = useState({
     kind: "role" as "role" | "user",
@@ -60,6 +63,8 @@ export function AssetEditPage() {
     require_reason: false,
     allowed_cidrs: "",
     allowed_countries: "",
+    allowed_devices: "",
+    allowed_namespaces: "",
     command_policy_pack_id: "",
     sql_policy_pack_id: "",
     max_risk: "0",
@@ -326,6 +331,9 @@ export function AssetEditPage() {
         k8s_sa_namespace: accForm.k8s_sa_namespace,
         k8s_sa_name: accForm.k8s_sa_name,
         token_ttl_seconds: accForm.token_ttl_seconds,
+        k8s_impersonate: accForm.k8s_impersonate,
+        k8s_impersonate_prefix: accForm.k8s_impersonate_prefix,
+        k8s_bind_user: accForm.k8s_bind_user,
       });
       setAccForm({
         username: "",
@@ -336,6 +344,9 @@ export function AssetEditPage() {
         k8s_sa_namespace: "",
         k8s_sa_name: "",
         token_ttl_seconds: 900,
+        k8s_impersonate: false,
+        k8s_impersonate_prefix: "keeppam:",
+        k8s_bind_user: false,
       });
       setMsg("Учётная запись добавлена");
       await load();
@@ -491,6 +502,9 @@ export function AssetEditPage() {
       k8s_sa_namespace?: string;
       k8s_sa_name?: string;
       token_ttl_seconds?: number;
+      k8s_impersonate?: boolean;
+      k8s_impersonate_prefix?: string;
+      k8s_bind_user?: boolean;
     },
   ) {
     if (!id || !canWrite) return;
@@ -531,6 +545,8 @@ export function AssetEditPage() {
         require_reason?: boolean;
         allowed_cidrs?: string[];
         allowed_countries?: string[];
+        allowed_devices?: string[];
+        allowed_namespaces?: string[];
         command_policy_pack_id?: string;
         sql_policy_pack_id?: string;
         max_risk?: number;
@@ -567,6 +583,16 @@ export function AssetEditPage() {
         .map((x) => x.trim())
         .filter(Boolean);
       if (countries.length) body.allowed_countries = countries;
+      const devices = aclForm.allowed_devices
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (devices.length) body.allowed_devices = devices;
+      const namespaces = aclForm.allowed_namespaces
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (namespaces.length) body.allowed_namespaces = namespaces;
       if (aclForm.command_policy_pack_id) {
         body.command_policy_pack_id = aclForm.command_policy_pack_id;
       }
@@ -593,6 +619,8 @@ export function AssetEditPage() {
         require_reason: false,
         allowed_cidrs: "",
         allowed_countries: "",
+        allowed_devices: "",
+        allowed_namespaces: "",
         command_policy_pack_id: "",
         sql_policy_pack_id: "",
         max_risk: "0",
@@ -1065,16 +1093,54 @@ export function AssetEditPage() {
                               type="checkbox"
                               checked={!!acc.token_request_enabled}
                               onChange={(e) =>
-                                void onToggleVaultPolicy(acc, { token_request_enabled: e.target.checked })
+                                void onToggleVaultPolicy(acc, {
+                                  token_request_enabled: e.target.checked,
+                                  k8s_bind_user: e.target.checked ? acc.k8s_bind_user : false,
+                                })
                               }
                             />
                             TokenRequest
                           </label>
+                          <label className="row" style={{ gap: 4, alignItems: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={!!acc.k8s_bind_user}
+                              onChange={(e) =>
+                                void onToggleVaultPolicy(acc, {
+                                  k8s_bind_user: e.target.checked,
+                                  token_request_enabled: e.target.checked ? true : acc.token_request_enabled,
+                                })
+                              }
+                            />
+                            Bind user
+                          </label>
+                          <label className="row" style={{ gap: 4, alignItems: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={!!acc.k8s_impersonate}
+                              onChange={(e) =>
+                                void onToggleVaultPolicy(acc, { k8s_impersonate: e.target.checked })
+                              }
+                            />
+                            Impersonate
+                          </label>
+                          {acc.k8s_impersonate && (
+                            <span className="mono" style={{ fontSize: "0.8rem" }}>
+                              {acc.k8s_impersonate_prefix === ""
+                                ? "<логин>"
+                                : `${acc.k8s_impersonate_prefix || "keeppam:"}<логин>`}
+                            </span>
+                          )}
                           {acc.token_request_enabled && (
                             <>
                               <span className="mono" style={{ fontSize: "0.8rem" }}>
-                                {acc.k8s_sa_namespace || "default"}/{acc.k8s_sa_name || acc.username} ·{" "}
-                                {acc.token_ttl_seconds || 900}s
+                                {acc.k8s_sa_namespace || "default"}/
+                                {acc.k8s_bind_user
+                                  ? acc.k8s_sa_name
+                                    ? `${acc.k8s_sa_name}-<логин>`
+                                    : "keeppam-<логин>"
+                                  : acc.k8s_sa_name || acc.username}{" "}
+                                · {acc.token_ttl_seconds || 900}s
                               </span>
                               <button
                                 className="btn secondary"
@@ -1110,8 +1176,20 @@ export function AssetEditPage() {
                             </>
                           )}
                         </span>
-                      ) : acc.token_request_enabled ? (
-                        <span>TokenRequest {acc.k8s_sa_namespace || "default"}/{acc.k8s_sa_name || acc.username}</span>
+                      ) : acc.token_request_enabled || acc.k8s_impersonate || acc.k8s_bind_user ? (
+                        <span>
+                          {acc.k8s_impersonate ? "impersonate " : ""}
+                          {acc.k8s_bind_user ? "bind-user " : ""}
+                          {acc.token_request_enabled
+                            ? `TokenRequest ${acc.k8s_sa_namespace || "default"}/${
+                                acc.k8s_bind_user
+                                  ? acc.k8s_sa_name
+                                    ? `${acc.k8s_sa_name}-<логин>`
+                                    : "keeppam-<логин>"
+                                  : acc.k8s_sa_name || acc.username
+                              }`
+                            : ""}
+                        </span>
                       ) : null}
                     </>
                   )}
@@ -1320,15 +1398,62 @@ export function AssetEditPage() {
                 <input
                   type="checkbox"
                   checked={accForm.token_request_enabled}
-                  onChange={(e) => setAccForm({ ...accForm, token_request_enabled: e.target.checked })}
+                  onChange={(e) =>
+                    setAccForm({
+                      ...accForm,
+                      token_request_enabled: e.target.checked,
+                      k8s_bind_user: e.target.checked ? accForm.k8s_bind_user : false,
+                    })
+                  }
                 />
                 TokenRequest (короткий SA-токен вместо выдачи vault)
               </label>
+              <label className="row" style={{ gap: 8, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={accForm.k8s_bind_user}
+                  onChange={(e) =>
+                    setAccForm({
+                      ...accForm,
+                      k8s_bind_user: e.target.checked,
+                      token_request_enabled: e.target.checked ? true : accForm.token_request_enabled,
+                    })
+                  }
+                />
+                Bind PAM-пользователя (SA keeppam-&lt;логин&gt;, JWT привязан к объекту)
+              </label>
+              <label className="row" style={{ gap: 8, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={accForm.k8s_impersonate}
+                  onChange={(e) => setAccForm({ ...accForm, k8s_impersonate: e.target.checked })}
+                />
+                Impersonate PAM-пользователя (proxy :16443)
+              </label>
+              {accForm.k8s_impersonate && (
+                <>
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    Vault SA должен уметь <span className="mono">impersonate</span> users/groups.
+                    В API уходит <span className="mono">Impersonate-User: {accForm.k8s_impersonate_prefix || "keeppam:"}&lt;логин&gt;</span>.
+                    TokenRequest для proxy не используется (lease/checkout — как раньше).
+                  </p>
+                  <label>Prefix пользователя (пусто / keeppam: ; «-» = без префикса)</label>
+                  <input
+                    value={accForm.k8s_impersonate_prefix}
+                    onChange={(e) => setAccForm({ ...accForm, k8s_impersonate_prefix: e.target.value })}
+                    placeholder="keeppam:"
+                  />
+                </>
+              )}
               {accForm.token_request_enabled && (
                 <>
                   <p className="muted" style={{ marginTop: 0 }}>
-                    Vault-секрет должен уметь <span className="mono">create token</span> на целевой SA.
+                    Vault-секрет должен уметь <span className="mono">create token</span> на целевой SA
+                    {accForm.k8s_bind_user ? ", плюс create ServiceAccount и create/delete Secret в том же namespace" : ""}.
                     Пользователю уходит ephemeral JWT; privileged kubeconfig не покидает PAM.
+                    {accForm.k8s_bind_user
+                      ? " Lease: JWT bound к ServiceAccount keeppam-<логин>. Proxy: bound к Secret сессии (удаляется при закрытии)."
+                      : ""}
                   </p>
                   <label>SA namespace</label>
                   <input
@@ -1340,7 +1465,7 @@ export function AssetEditPage() {
                   <input
                     value={accForm.k8s_sa_name}
                     onChange={(e) => setAccForm({ ...accForm, k8s_sa_name: e.target.value })}
-                    placeholder="логин учётки"
+                    placeholder={accForm.k8s_bind_user ? "пусто = keeppam-<логин>" : "логин учётки"}
                   />
                   <label>Token TTL (сек)</label>
                   <input
@@ -1472,7 +1597,7 @@ export function AssetEditPage() {
       <div className="card" style={{ marginBottom: "1.25rem" }}>
         <h2>Политика доступа</h2>
         <p className="muted">
-          Deny-by-default + ABAC: tags, ticket, reason, CIDR, risk. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
+          Deny-by-default + ABAC: tags, ticket, reason, CIDR, geo, device, K8s namespaces. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
           JEA: SSH command pack и SQL table/mask pack (см. <Link to="/jea">JEA</Link>).
         </p>
         <table>
@@ -1515,6 +1640,8 @@ export function AssetEditPage() {
                   {b.require_reason ? " · reason" : ""}
                   {(b.allowed_cidrs || []).length ? ` · ${b.allowed_cidrs!.join(",")}` : ""}
                   {(b.allowed_countries || []).length ? ` · ${b.allowed_countries!.join(",")}` : ""}
+                  {(b.allowed_devices || []).length ? ` · ${b.allowed_devices!.join(",")}` : ""}
+                  {(b.allowed_namespaces || []).length ? ` · ns=${b.allowed_namespaces!.join(",")}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -1684,6 +1811,18 @@ export function AssetEditPage() {
             value={aclForm.allowed_countries}
             onChange={(e) => setAclForm({ ...aclForm, allowed_countries: e.target.value })}
             placeholder="LAN, RU, KZ"
+          />
+          <label>Allowed devices (TLS / WEBAUTHN / SSH / fingerprint, пусто = любое)</label>
+          <input
+            value={aclForm.allowed_devices}
+            onChange={(e) => setAclForm({ ...aclForm, allowed_devices: e.target.value })}
+            placeholder="WEBAUTHN, TLS, SSH"
+          />
+          <label>Allowed namespaces (kubectl, пусто = любой)</label>
+          <input
+            value={aclForm.allowed_namespaces}
+            onChange={(e) => setAclForm({ ...aclForm, allowed_namespaces: e.target.value })}
+            placeholder="prod, kube-system"
           />
           <label>JEA command pack (SSH, опц.)</label>
           <select

@@ -323,6 +323,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Detail: fmt.Sprintf("активных holds: %d", st.LegalHoldCount),
 	})
 	st.Controls = append(st.Controls, s.checkAudit(ctx))
+	st.Controls = append(st.Controls, s.checkAuditChain(ctx))
 	st.Controls = append(st.Controls, s.checkWORM())
 	st.Controls = append(st.Controls, s.checkKMSHSM())
 	return st, nil
@@ -390,12 +391,14 @@ func (s *Service) checkABAC(ctx context.Context) ControlResult {
 		SELECT COUNT(*) FROM asset_access_bindings
 		WHERE COALESCE(cardinality(required_tags),0) > 0 OR require_ticket
 		   OR COALESCE(require_reason,false) OR COALESCE(cardinality(allowed_cidrs),0) > 0
-		   OR COALESCE(cardinality(allowed_countries),0) > 0`).Scan(&n)
+		   OR COALESCE(cardinality(allowed_countries),0) > 0
+		   OR COALESCE(cardinality(allowed_devices),0) > 0
+		   OR COALESCE(cardinality(allowed_namespaces),0) > 0`).Scan(&n)
 	st := "warn"
 	if n > 0 {
 		st = "pass"
 	}
-	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR/geo", Status: st,
+	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR/geo/device/ns", Status: st,
 		Detail: fmt.Sprintf("bindings с ABAC-условиями: %d", n)}
 }
 
@@ -406,6 +409,27 @@ func (s *Service) checkAudit(ctx context.Context) ControlResult {
 		return ControlResult{ID: "audit_trail", Title: "Audit trail", Status: "fail", Detail: "пусто"}
 	}
 	return ControlResult{ID: "audit_trail", Title: "Audit trail", Status: "pass", Detail: fmt.Sprintf("events: %d", n)}
+}
+
+func (s *Service) checkAuditChain(ctx context.Context) ControlResult {
+	if s.aud == nil {
+		return ControlResult{ID: "audit_hash_chain", Title: "Audit hash-chain", Status: "warn", Detail: "audit service недоступен"}
+	}
+	res, err := s.aud.Verify(ctx)
+	if err != nil {
+		return ControlResult{ID: "audit_hash_chain", Title: "Audit hash-chain", Status: "fail", Detail: err.Error()}
+	}
+	if !res.OK {
+		return ControlResult{ID: "audit_hash_chain", Title: "Audit hash-chain", Status: "fail",
+			Detail: fmt.Sprintf("breaks=%d batch_mac_fail=%d batch_link_fail=%d", len(res.Breaks), res.BatchMACFail, res.BatchLinkFail)}
+	}
+	st := "pass"
+	detail := fmt.Sprintf("events=%d batches=%d unsealed=%d", res.Events, res.Batches, res.Unsealed)
+	if res.Unsealed > 500 {
+		st = "warn"
+		detail += " (хвост не подписан)"
+	}
+	return ControlResult{ID: "audit_hash_chain", Title: "Audit hash-chain", Status: st, Detail: detail}
 }
 
 func (s *Service) checkWORM() ControlResult {
@@ -435,9 +459,18 @@ func (s *Service) checkKMSHSM() ControlResult {
 	case "vault":
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
 			Detail: "Vault Transit (HSM-backed Vault снаружи)"}
+	case "aws":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
+			Detail: "AWS KMS Decrypt"}
+	case "gcp":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
+			Detail: "GCP Cloud KMS decrypt"}
+	case "azure":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
+			Detail: "Azure Key Vault unwrap"}
 	case "file":
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "warn",
-			Detail: "file provider — лучше Vault/HSM"}
+			Detail: "file provider — лучше Vault/KMS/HSM"}
 	default:
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "fail",
 			Detail: "env data key — не для prod"}

@@ -31,7 +31,7 @@ func TestJITPayloadNoSecrets(t *testing.T) {
 	req := policy.AccessRequest{
 		ID: aid, AssetID: uuid.MustParse("00000000-0000-0000-0000-0000000000bb"),
 		RequesterID: uuid.MustParse("00000000-0000-0000-0000-0000000000cc"),
-		Reason: "need root", TicketID: "INC-1", DurationMinutes: 30,
+		Reason:      "need root", TicketID: "INC-1", DurationMinutes: 30,
 		Status: "pending", AssetName: "prod-db", RequesterUsername: "alice",
 	}
 	p := JITPayload("jit.created", req)

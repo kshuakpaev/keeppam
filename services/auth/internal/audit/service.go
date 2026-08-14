@@ -2,45 +2,61 @@ package audit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/store"
 )
 
 type Service struct {
-	db *store.DB
+	db  *store.DB
+	mac *crypto.Envelope
 }
 
 func New(db *store.DB) *Service {
 	return &Service{db: db}
 }
 
+func (s *Service) SetMAC(env *crypto.Envelope) {
+	s.mac = env
+}
+
 func (s *Service) Record(ctx context.Context, actorID *uuid.UUID, action, resourceType, resourceID, ip, ua string, payload map[string]any) error {
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	prev, err := s.db.LatestAuditHash(ctx)
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, auditLockKey); err != nil {
+		return err
+	}
+	prev := ""
+	err = tx.QueryRow(ctx, `SELECT hash FROM audit_events ORDER BY ts DESC, id DESC LIMIT 1`).Scan(&prev)
+	if err != nil && err != pgx.ErrNoRows {
+		return err
+	}
 	id := store.NewID()
-	ts := time.Now().UTC()
-	h := computeHash(prev, id, ts, actorID, action, resourceType, resourceID, payload)
-	err = s.db.InsertAudit(ctx, store.AuditEvent{
+	ts := time.Now().UTC().Truncate(time.Microsecond)
+	h := Hash(prev, id, ts, actorID, action, resourceType, resourceID, payload)
+	if err := s.db.InsertAuditTx(ctx, tx, store.AuditEvent{
 		ID: id, TS: ts, ActorID: actorID, Action: action,
 		ResourceType: resourceType, ResourceID: resourceID,
 		IP: ip, UserAgent: ua, Payload: payload, PrevHash: prev, Hash: h,
-	})
-	if err == nil {
-		obs.Default.IncAudit()
+	}); err != nil {
+		return err
 	}
-	return err
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	obs.Default.IncAudit()
+	return nil
 }
 
 func (s *Service) List(ctx context.Context, f store.AuditFilter) ([]store.AuditEvent, int, error) {
@@ -53,15 +69,4 @@ func (s *Service) List(ctx context.Context, f store.AuditFilter) ([]store.AuditE
 		return nil, 0, err
 	}
 	return events, total, nil
-}
-
-func computeHash(prev string, id uuid.UUID, ts time.Time, actorID *uuid.UUID, action, rt, rid string, payload map[string]any) string {
-	actor := ""
-	if actorID != nil {
-		actor = actorID.String()
-	}
-	pb, _ := json.Marshal(payload)
-	raw := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s", prev, id, ts.UTC().Format(time.RFC3339Nano), actor, action, rt, rid, string(pb))
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
 }

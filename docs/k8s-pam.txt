@@ -43,7 +43,7 @@ Checkout/Reveal по-прежнему показывает vault-секрет (`
 2. Ответ / `GET .../sessions/{id}/kubeconfig` — **переписанный** kubeconfig (server=PAM, token=`{session}.{wire}`). Vault SA **не** отдаётся.
 3. TLS listener `KEEPPAM_K8S_API_ADDR` (default `:16443`), self-signed в `KEEPPAM_K8S_TLS_PATH`.
 4. Аудит `session.k8s` + NDJSON `{recordings}/k8s/{id}.jsonl`: verb/resource/namespace/name/status, `body_redacted`.
-5. Deny: exec / attach / port-forward / HTTP Upgrade. Impersonate-заголовки клиента снимаются.
+5. Deny: exec / attach / port-forward / HTTP Upgrade **на :16443**. Impersonate-заголовки клиента снимаются. Exec из браузера (фаза 6) идёт через cookie API.
 
 ```bash
 export KUBECONFIG=./keeppam-xxxxxxxx.kubeconfig
@@ -52,8 +52,93 @@ kubectl get ns
 
 Публичный URL: `KEEPPAM_K8S_PUBLIC_URL` (стенд: `https://localhost:16443`).
 
+## Phase 3 — impersonation + namespace ACL
+
+### Namespace ACL
+
+На биндинге `allowed_namespaces` (пусто = любой ns, как CIDR/geo/device). Снимок на сессии (`k8s_namespaces`).
+
+Proxy (`:16443`):
+
+- запрос в разрешённый namespace — ок
+- `GET /api/v1/namespaces/{name}` — name должен быть в списке
+- cluster-wide list (`kubectl get pods -A`, `kubectl get ns`) — **403**
+- discovery (`/api`, `/apis`, `/version`) и `kubectl auth can-i` — ок
+- exec/attach/port-forward по-прежнему deny
+
+Lease/checkout (прямой токен в кластер) namespace ACL **не** режет — только RBAC SA.
+
+### Impersonation
+
+На учётке `k8s_impersonate`. Клиентские `Impersonate-*` снимаются. PAM ставит:
+
+| Header | Значение |
+|--------|----------|
+| `Impersonate-User` | `{prefix}{pam_username}` (default prefix `keeppam:`; `-`/`none` = без префикса) |
+| `Impersonate-Group` | `system:authenticated`, `keeppam:users`, `keeppam:role:{роль}` |
+| `Impersonate-Extra-keeppam-uid` | UUID пользователя PAM |
+
+Vault SA должен иметь RBAC `impersonate` на users/groups. ClusterRoleBinding в кластере — на `User: keeppam:alice` (или без префикса).
+
+Если impersonate включён, proxy **не** делает TokenRequest (нужен privileged token). Lease/checkout TokenRequest без изменений.
+
+Аудит: `session.k8s.impersonate`, `session.k8s.denied` (`namespace_acl` / `cluster_scope_denied`).
+
+## Phase 4 — kubectl в браузере
+
+Read-only эксплорер в карточке сессии (cookie PAM, не kubeconfig в JS к `:16443`):
+
+| Метод | Путь |
+|-------|------|
+| GET | `/api/v1/admin/sessions/{id}/k8s/catalog` |
+| GET | `/api/v1/admin/sessions/{id}/k8s/namespaces` |
+| GET | `/api/v1/admin/sessions/{id}/k8s/list?resource=&group=&namespace=` |
+| GET | `/api/v1/admin/sessions/{id}/k8s/get?resource=&group=&namespace=&name=` |
+
+Тот же upstream, impersonate и namespace ACL, что у proxy. Только GET. `Secret.data` / `stringData` → `***`.
+
+`kubectl get ns` при ACL: proxy **не** ходит в кластер, отдаёт синтетический NamespaceList/Table из allowlist (нужен JSON; protobuf не фильтруем). Watch cluster-wide по-прежнему 403.
+
+## Phase 5 — TokenRequest bound to PAM user
+
+На учётке `k8s_bind_user` (требует TokenRequest). SA на PAM-логин, JWT привязан к объекту кластера.
+
+Имя SA:
+
+- пустой `k8s_sa_name` → `keeppam-<dns1123(логин PAM)>`
+- задан `k8s_sa_name` → `{k8s_sa_name}-{логин}`
+- namespace — `k8s_sa_namespace` / `default`
+
+`EnsureSA`: GET, 404 → POST с labels `app.kubernetes.io/managed-by=keeppam`, `keeppam.io/user=...`.
+
+| Канал | Bound object | Жизнь JWT |
+|-------|----------------|-----------|
+| Proxy (`:16443`) | Opaque Secret `kp-<session-uuid без дефисов>` | Secret удаляется при закрытии сессии → JWT умирает. Remint переиспользует тот же Secret/UID. |
+| Lease/checkout | ServiceAccount | только TTL токена |
+
+Impersonate на proxy по-прежнему побеждает (TokenRequest не делается). Bind-user на lease всегда; на proxy — если impersonate выключен.
+
+Vault SA: `create token` + create ServiceAccount + create/delete Secret в namespace.
+
+Аудит: `session.k8s.token_requested` (`bind_user`, `bound_kind`, `bound_name`).
+
+## Phase 6 — write + exec в браузере
+
+Cookie API (не kubeconfig к `:16443`):
+
+| Метод | Путь |
+|-------|------|
+| POST | `/api/v1/admin/sessions/{id}/k8s/apply` `{manifest, namespace}` |
+| PUT | `/api/v1/admin/sessions/{id}/k8s/object` `{object}` |
+| POST | `/api/v1/admin/sessions/{id}/k8s/delete` `{resource, group, namespace, name}` |
+| POST | `/api/v1/admin/sessions/{id}/k8s/exec` one-shot `{namespace, pod, container, command}` |
+| GET WS | `/api/v1/sessions/{id}/k8s/exec?namespace=&pod=&container=&command=` |
+
+Apply: YAML/JSON (в т.ч. `---`). POST create, 409 → GET resourceVersion + PUT. Namespace ACL как у proxy. `deletecollection` запрещён. Secret с `***` сохранить нельзя — только Apply с реальными значениями. Ответ Secret по-прежнему `***`. Recording `body_redacted`.
+
+Exec: SPDY/Upgrade на `:16443` **deny**. В браузере PAM открывает Kubernetes channel websocket (`v4.channel.k8s.io`), xterm в карточке сессии. Аудит `session.k8s.exec` (pod/container/command, без stdout).
+
 ## Вне scope
 
-- in-cluster RBAC / namespace ACL / impersonation PAM-пользователя
-- auto-rotate SA / TokenRequest bound to PAM user
-- kubectl в браузере / запись тел Secret
+- запись тел Secret в recording (по-прежнему `body_redacted`)
+- attach / port-forward
