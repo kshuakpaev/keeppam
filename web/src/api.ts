@@ -259,13 +259,22 @@ export type SSHSettings = {
 
 export type SIEMSettings = {
   enabled: boolean;
-  transport: "off" | "syslog_udp" | "syslog_tcp" | "webhook" | string;
+  transport: "off" | "syslog_udp" | "syslog_tcp" | "webhook" | "kafka" | "nats" | string;
   syslog_addr: string;
   syslog_tag: string;
   syslog_facility: number;
   webhook_url: string;
   webhook_auth_header?: string;
   has_webhook_auth_header: boolean;
+  kafka_brokers?: string;
+  kafka_topic?: string;
+  kafka_username?: string;
+  kafka_password?: string;
+  has_kafka_password?: boolean;
+  nats_url?: string;
+  nats_subject?: string;
+  nats_token?: string;
+  has_nats_token?: boolean;
   format: "json" | "cef" | string;
   batch_size: number;
   poll_interval_sec: number;
@@ -353,6 +362,9 @@ export type InfraStatus = {
   cookie_secure?: boolean;
   geoip_db?: string;
   geoip_ready?: boolean;
+  opa_policy?: string;
+  opa_ready?: boolean;
+  opa_package?: string;
 };
 
 export type DiscoveryJob = {

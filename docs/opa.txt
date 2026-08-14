@@ -1,0 +1,66 @@
+# KeepPAM: OPA / Rego extra deny
+
+Go `policy.Evaluate` остаётся источником allow (deny-by-default ACL). OPA может **только запретить** уже разрешённое.
+
+## Включение
+
+`KEEPPAM_OPA_POLICY` — путь к `.rego`. Пусто = выкл (как раньше).
+
+Файл задан, но отсутствует / не компилируется → процесс **не стартует**.
+
+Стенд: `deploy/opa/keeppam.rego` смонтирован, правил deny нет.
+
+Перезапуск api и session-worker подхватывает файл (оба читают один путь).
+
+## Контракт
+
+Пакет по умолчанию `keeppam.authz` (берётся из `package ...`). Запрос `data.<package>.deny`.
+
+```
+package keeppam.authz
+
+deny[msg] {
+  input.asset.protocol == "kubectl"
+  input.request.ticket_id == ""
+  msg := "kubectl requires ticket_id"
+}
+```
+
+Или boolean: `default deny = false` + `deny { ... }`.
+
+Синтаксис **Rego v0** (встроен OPA 0.68): `deny[msg] { ... }`, не `deny contains msg if`.
+
+Пустой/undefined deny → allow.
+
+## Input
+
+| Поле | Смысл |
+|------|--------|
+| `user.id` / `username` / `roles` / `tags` | PAM-пользователь |
+| `asset.id` / `name` / `type` / `protocol` / `tags` | актив |
+| `binding.id` / `max_risk` / `risk_action` / `allowed_namespaces` | совпавший ACL |
+| `request.ticket_id` / `reason` / `client_ip` / `client_country` / `client_devices` | контекст |
+| `request.risk_score` / `risk_factors` | уже посчитанный риск |
+
+Тела секретов и команд в input нет. JEA/SQL pack OPA не заменяет.
+
+## Что не режет OPA
+
+- admin bypass (`users.write`)
+- break-glass (как и Go ACL после открытия glass)
+- отсутствие совпавшего ACL (OPA не выдаёт allow)
+
+JIT-запрос при OPA-deny не создаётся.
+
+## Аудит / UI
+
+- `access.opa.denied` (`opa_reason`)
+- `session.denied` / `*.access.denied` с `reason=opa`
+- Сообщение клиенту: `access denied by opa: …`
+- Конфиг → Инфраструктура: `opa_policy`, `opa_ready`, `opa_package`
+
+## Вне scope
+
+- Rego из UI/БД (только файл)
+- OPA на SQL/JEA/k8s verb
+- Gatekeeper/Kyverno в кластере

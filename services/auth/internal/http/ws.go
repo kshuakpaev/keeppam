@@ -101,15 +101,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		payload := map[string]any{"reason": "policy", "ticket_id": body.TicketID}
-		msg := "access denied by policy"
-		if ev.DeniedByRisk {
-			payload["reason"] = "risk"
-			payload["risk_score"] = ev.RiskScore
-			payload["risk_factors"] = ev.RiskFactors
-			payload["max_risk"] = ev.MaxRisk
-			payload["risk_action"] = ev.RiskAction
-			msg = ev.DenyMessage()
-		}
+		ev.FillDenyPayload(payload)
+		msg := ev.DenyMessage()
 		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), clientIP(r), r.UserAgent(), payload)
 		writeErr(w, http.StatusForbidden, msg)
 		return

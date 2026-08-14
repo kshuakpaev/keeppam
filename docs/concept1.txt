@@ -130,10 +130,10 @@
 ## 5. Рекомендуемый целевой стек (уточненный)
 
 - Core services: Go.
-- Policy engine: OPA/Rego (или эквивалент с верифицируемыми политиками).
+- Policy engine: OPA/Rego extra deny поверх Go ACL (`docs/opa.txt`).
 - Identity: OIDC/SAML + WebAuthn.
 - Secrets: HashiCorp Vault / cloud KMS + HSM.
-- Messaging: Kafka/NATS (audit/event bus).
+- Messaging: Kafka/NATS SIEM bus (`docs/siem.txt`).
 - Storage: PostgreSQL + Object Storage (S3-compatible) + Redis (ephemeral cache only).
 
 ## 6. Дорожная карта (обновленная)

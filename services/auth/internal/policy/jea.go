@@ -35,6 +35,8 @@ type CommandPackInput struct {
 type AccessResult struct {
 	OK                  bool
 	DeniedByRisk        bool
+	DeniedByOPA         bool
+	OPAReason           string
 	BindingID           *uuid.UUID
 	CommandPolicyPackID *uuid.UUID
 	SQLPolicyPackID     *uuid.UUID
@@ -333,9 +335,12 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		res := AccessResult{
 			OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID,
 			AllowedNamespaces: normalizeNamespaces(namespaces),
-			MaxRisk: maxRisk, RiskAction: riskAction,
+			MaxRisk:           maxRisk, RiskAction: riskAction,
 		}
 		s.applyRisk(ctx, in, &res, expires)
+		if res.OK {
+			s.applyOPA(ctx, in, userTags, &res)
+		}
 		return res, nil
 	}
 	if err := rows.Err(); err != nil {

@@ -77,6 +77,9 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 		return AccessRequest{}, err
 	}
 	score, factors := ev.RiskScore, ev.RiskFactors
+	if ev.DeniedByOPA {
+		return AccessRequest{}, fmt.Errorf("%s", ev.DenyMessage())
+	}
 	if !ev.OK && !ev.DeniedByRisk {
 		score, factors = s.ScoreUser(ctx, requesterID, assetID, now)
 	}

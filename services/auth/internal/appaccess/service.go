@@ -164,13 +164,7 @@ func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID 
 	}
 	if !ev.OK {
 		payload := map[string]any{"reason": "policy"}
-		if ev.DeniedByRisk {
-			payload["reason"] = "risk"
-			payload["risk_score"] = ev.RiskScore
-			payload["risk_factors"] = ev.RiskFactors
-			payload["max_risk"] = ev.MaxRisk
-			payload["risk_action"] = ev.RiskAction
-		}
+		ev.FillDenyPayload(payload)
 		_ = s.aud.Record(ctx, &userID, "app.access.denied", "asset", assetID.String(), ip, ua, payload)
 		return Lease{}, fmt.Errorf("%s", ev.DenyMessage())
 	}
@@ -206,13 +200,7 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	}
 	if !ev.OK {
 		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
-		if ev.DeniedByRisk {
-			payload["reason"] = "risk"
-			payload["risk_score"] = ev.RiskScore
-			payload["risk_factors"] = ev.RiskFactors
-			payload["max_risk"] = ev.MaxRisk
-			payload["risk_action"] = ev.RiskAction
-		}
+		ev.FillDenyPayload(payload)
 		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, payload)
 		return Lease{}, fmt.Errorf("%s", ev.DenyMessage())
 	}

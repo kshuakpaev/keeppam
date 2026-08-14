@@ -138,6 +138,15 @@ func main() {
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
 	policySvc.SetGeo(geoip.New(cfg.GeoIPDB))
+	opaEng, err := policy.LoadOPA(cfg.OPAPolicy)
+	if err != nil {
+		slog.Error("opa policy", "err", err)
+		os.Exit(1)
+	}
+	policySvc.SetOPA(opaEng)
+	if cfg.OPAPolicy != "" {
+		slog.Info("opa policy", "path", cfg.OPAPolicy, "package", opaEng.Package())
+	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
 	live := sessionsvc.NewLiveHub(sessions.Redis())

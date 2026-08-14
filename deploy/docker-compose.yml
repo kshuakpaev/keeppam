@@ -28,6 +28,7 @@ services:
       - ../deploy/auth-server:/app/auth-server:ro
       - ../services/auth/migrations:/app/migrations:ro
       - recordings:/tmp/recordings
+      - ./opa/keeppam.rego:/etc/keeppam/policy.rego:ro
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
@@ -54,6 +55,7 @@ services:
       KEEPPAM_RECORDINGS_BACKEND: "local"
       KEEPPAM_ALERT_WEBHOOK_TOKEN: "keeppam-alert-stand"
       KEEPPAM_OTEL_ENDPOINT: "http://jaeger:4318"
+      KEEPPAM_OPA_POLICY: "/etc/keeppam/policy.rego"
       # Prod (см. docs/prod-infra.txt, docs/kms.txt):
       # KEEPPAM_DATA_KEY_SOURCE: "file"
       # KEEPPAM_DATA_KEY_FILE: "/run/secrets/keeppam-data-key"
@@ -114,6 +116,7 @@ services:
     volumes:
       - ../deploy/auth-server:/app/auth-server:ro
       - recordings:/tmp/recordings
+      - ./opa/keeppam.rego:/etc/keeppam/policy.rego:ro
       - sshhost:/var/lib/keeppam/ssh
     ports:
       - "2222:2222"
@@ -128,6 +131,7 @@ services:
       # Prod KMS: те же KEEPPAM_DATA_KEY_SOURCE / KEEPPAM_KMS_CIPHERTEXT, что у api (docs/kms.txt)
       KEEPPAM_SSH_ADDR: ":2222"
       KEEPPAM_SSH_HOST_KEY: "/var/lib/keeppam/ssh/hostkey"
+      KEEPPAM_OPA_POLICY: "/etc/keeppam/policy.rego"
     depends_on:
       postgres:
         condition: service_healthy
@@ -213,6 +217,13 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686"
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["--http_port", "8222"]
+    ports:
+      - "4222:4222"
     restart: unless-stopped
 
   grafana:

@@ -54,6 +54,7 @@ type Config struct {
 	GeoIPDB                string
 	AlertWebhookToken      string
 	OTELEndpoint           string
+	OPAPolicy              string
 }
 
 func Load() (Config, error) {
@@ -99,6 +100,7 @@ func Load() (Config, error) {
 		GeoIPDB:                env("KEEPPAM_GEOIP_DB", ""),
 		AlertWebhookToken:      strings.TrimSpace(env("KEEPPAM_ALERT_WEBHOOK_TOKEN", "")),
 		OTELEndpoint:           strings.TrimSpace(env("KEEPPAM_OTEL_ENDPOINT", "")),
+		OPAPolicy:              strings.TrimSpace(env("KEEPPAM_OPA_POLICY", "")),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

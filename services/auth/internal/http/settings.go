@@ -56,6 +56,8 @@ func (s *Server) handleGetSIEMSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.WebhookAuthHeader = ""
+	cfg.KafkaPassword = ""
+	cfg.NATSToken = ""
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -104,6 +106,8 @@ func (s *Server) handlePutSIEMSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out.WebhookAuthHeader = ""
+	out.KafkaPassword = ""
+	out.NATSToken = ""
 	writeJSON(w, http.StatusOK, out)
 }
 

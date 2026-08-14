@@ -65,6 +65,13 @@ const emptySIEM: SIEMSettings = {
   syslog_facility: 16,
   webhook_url: "",
   has_webhook_auth_header: false,
+  kafka_brokers: "",
+  kafka_topic: "keeppam.audit",
+  kafka_username: "",
+  has_kafka_password: false,
+  nats_url: "",
+  nats_subject: "keeppam.audit",
+  has_nats_token: false,
   format: "json",
   batch_size: 100,
   poll_interval_sec: 10,
@@ -113,6 +120,8 @@ export function ConfigPage() {
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
   const [webhookAuth, setWebhookAuth] = useState("");
+  const [kafkaPassword, setKafkaPassword] = useState("");
+  const [natsToken, setNatsToken] = useState("");
   const [itsmAuth, setItsmAuth] = useState("");
   const [itsmTicket, setItsmTicket] = useState("DEMO-100");
   const [itsmCheck, setItsmCheck] = useState("");
@@ -277,10 +286,16 @@ export function ConfigPage() {
     try {
       const body: Partial<SIEMSettings> = { ...siem };
       if (webhookAuth.trim()) body.webhook_auth_header = webhookAuth.trim();
+      if (kafkaPassword.trim()) body.kafka_password = kafkaPassword.trim();
+      if (natsToken.trim()) body.nats_token = natsToken.trim();
       delete body.has_webhook_auth_header;
+      delete body.has_kafka_password;
+      delete body.has_nats_token;
       const saved = await api.putSIEMSettings(body);
       setSiem({ ...emptySIEM, ...saved });
       setWebhookAuth("");
+      setKafkaPassword("");
+      setNatsToken("");
       setMsg("SIEM сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения SIEM");
@@ -403,6 +418,16 @@ export function ConfigPage() {
                 : infra.geoip_db
                   ? `${infra.geoip_db} (не загружена)`
                   : "LAN only (нет MMDB)"}
+            </span>
+          </p>
+          <p>
+            OPA:{" "}
+            <span className="mono">
+              {infra.opa_ready
+                ? `${infra.opa_package || "keeppam.authz"} · ${infra.opa_policy || "ready"}`
+                : infra.opa_policy
+                  ? `${infra.opa_policy} (не загружена)`
+                  : "off"}
             </span>
           </p>
         </div>
@@ -1038,8 +1063,9 @@ export function ConfigPage() {
       <form className="card" onSubmit={onSaveSIEM} style={{ maxWidth: 640 }}>
         <h2>SIEM-экспорт аудита</h2>
         <p className="muted">
-          Асинхронная отправка событий из audit_events (syslog или HTTPS webhook). Курсор
-          продвигается только после успешной доставки.
+          Асинхронная отправка событий из audit_events (syslog, webhook, Kafka или NATS).
+          Курсор продвигается только после успешной доставки. Стенд: NATS `nats://nats:4222`,
+          subject `keeppam.audit`.
         </p>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
@@ -1058,6 +1084,8 @@ export function ConfigPage() {
           <option value="syslog_udp">Syslog UDP</option>
           <option value="syslog_tcp">Syslog TCP</option>
           <option value="webhook">HTTPS Webhook</option>
+          <option value="kafka">Kafka</option>
+          <option value="nats">NATS</option>
         </select>
         <label>Формат</label>
         <select value={siem.format} onChange={(e) => setSiem({ ...siem, format: e.target.value })}>
@@ -1103,6 +1131,58 @@ export function ConfigPage() {
               value={webhookAuth}
               onChange={(e) => setWebhookAuth(e.target.value)}
               placeholder="Bearer … или Authorization: Bearer …"
+              autoComplete="off"
+            />
+          </>
+        )}
+        {siem.transport === "kafka" && (
+          <>
+            <label>Брокеры (host:port, через запятую)</label>
+            <input
+              value={siem.kafka_brokers || ""}
+              onChange={(e) => setSiem({ ...siem, kafka_brokers: e.target.value })}
+              placeholder="kafka:9092"
+            />
+            <label>Topic</label>
+            <input
+              value={siem.kafka_topic || "keeppam.audit"}
+              onChange={(e) => setSiem({ ...siem, kafka_topic: e.target.value })}
+            />
+            <label>SASL username (пусто = без SASL)</label>
+            <input
+              value={siem.kafka_username || ""}
+              onChange={(e) => setSiem({ ...siem, kafka_username: e.target.value })}
+              autoComplete="off"
+            />
+            <label>
+              SASL password {siem.has_kafka_password ? "(задан)" : ""} — пусто = не менять
+            </label>
+            <input
+              type="password"
+              value={kafkaPassword}
+              onChange={(e) => setKafkaPassword(e.target.value)}
+              autoComplete="off"
+            />
+          </>
+        )}
+        {siem.transport === "nats" && (
+          <>
+            <label>NATS URL</label>
+            <input
+              value={siem.nats_url || ""}
+              onChange={(e) => setSiem({ ...siem, nats_url: e.target.value })}
+              placeholder="nats://nats:4222"
+            />
+            <label>Subject</label>
+            <input
+              value={siem.nats_subject || "keeppam.audit"}
+              onChange={(e) => setSiem({ ...siem, nats_subject: e.target.value })}
+            />
+            <label>Token {siem.has_nats_token ? "(задан)" : ""} — пусто = не менять</label>
+            <input
+              type="password"
+              value={natsToken}
+              onChange={(e) => setNatsToken(e.target.value)}
               autoComplete="off"
             />
           </>

@@ -15,6 +15,8 @@
 
 Deny-by-default: нет совпавшей привязки — отказ.
 
+Опциональный **OPA extra deny** после allow: `KEEPPAM_OPA_POLICY`, см. `docs/opa.txt`. OPA не выдаёт доступ.
+
 ## Risk-based access
 
 На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval`).

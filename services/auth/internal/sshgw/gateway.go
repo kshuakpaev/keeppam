@@ -292,13 +292,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	if !okPolicy {
 		_, _ = fmt.Fprintf(ch, "%s\r\n", evPolicy.DenyMessage())
 		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
-		if evPolicy.DeniedByRisk {
-			payload["reason"] = "risk"
-			payload["risk_score"] = evPolicy.RiskScore
-			payload["risk_factors"] = evPolicy.RiskFactors
-			payload["max_risk"] = evPolicy.MaxRisk
-			payload["risk_action"] = evPolicy.RiskAction
-		}
+		evPolicy.FillDenyPayload(payload)
 		_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
 		return
 	}

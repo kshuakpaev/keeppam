@@ -80,6 +80,22 @@ func (s *Service) exportOnce(ctx context.Context, cfg Settings, authEnc []byte) 
 		if err := s.sendWebhook(ctx, cfg, auth, events); err != nil {
 			return 0, err
 		}
+	case "kafka":
+		pass, err := s.busSecret(ctx, "kafka")
+		if err != nil {
+			return 0, err
+		}
+		if err := s.sendKafka(ctx, cfg, pass, events); err != nil {
+			return 0, err
+		}
+	case "nats":
+		tok, err := s.busSecret(ctx, "nats")
+		if err != nil {
+			return 0, err
+		}
+		if err := s.sendNATS(ctx, cfg, tok, events); err != nil {
+			return 0, err
+		}
 	default:
 		return 0, fmt.Errorf("transport %q disabled", cfg.Transport)
 	}

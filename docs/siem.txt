@@ -1,0 +1,44 @@
+# KeepPAM: SIEM export
+
+Асинхронный экспорт `audit_events` в syslog / HTTPS webhook / Kafka / NATS. Курсор (`cursor_ts`, `cursor_id`) двигается только после успешной доставки батча.
+
+## Транспорты
+
+| `transport` | Куда | Поля |
+|-------------|------|------|
+| `off` | — | |
+| `syslog_udp` / `syslog_tcp` | RFC5424 | `syslog_addr`, `syslog_tag`, `syslog_facility` |
+| `webhook` | HTTPS POST JSON `{source,count,events}` | `webhook_url`, write-only `webhook_auth_header` |
+| `kafka` | один message на событие, key=UUID | `kafka_brokers`, `kafka_topic`, optional SASL PLAIN |
+| `nats` | Publish на subject | `nats_url`, `nats_subject`, optional token |
+
+Формат тела: `json` (весь AuditEvent) или `cef`.
+
+## Стенд
+
+NATS: `nats://nats:4222` (compose, порт хоста `:4222`). Экспорт **выключен** по умолчанию.
+
+Конфиг → SIEM → транспорт NATS → URL `nats://nats:4222`, subject `keeppam.audit` → включить.
+
+Проверка (сеть compose):
+
+```bash
+docker run --rm -it --network deploy_default natsio/nats-box \
+  nats sub -s nats://nats:4222 keeppam.audit
+```
+
+Kafka на стенде нет (тяжёлый). Прод: брокеры `host:9092`, topic `keeppam.audit`, SASL при необходимости. Пароль шифруется envelope (как webhook auth).
+
+## Поведение
+
+- API-процесс, poll `poll_interval_sec` (1–3600), batch 1–1000.
+- Ошибка доставки → `last_error`, курсор не двигается, повтор той же пачки.
+- Секреты в GET не возвращаются (`has_kafka_password` / `has_nats_token`).
+- Worker SSH SIEM не шлёт.
+
+## Вне scope
+
+- Avro/Protobuf schema registry
+- Kafka consumer в KeepPAM
+- JetStream durable
+- mTLS к брокеру

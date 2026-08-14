@@ -46,6 +46,7 @@ type Service struct {
 	db  *store.DB
 	aud *audit.Service
 	geo *geoip.Lookup
+	opa *Engine
 }
 
 func New(db *store.DB, aud *audit.Service) *Service {
@@ -261,7 +262,7 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 		"binding_id": id.String(), "user_id": in.UserID, "role_id": in.RoleID,
 		"expires_at": expires, "required_tags": tags, "require_ticket": in.RequireTicket,
 		"require_reason": in.RequireReason, "allowed_cidrs": cidrs, "allowed_countries": countries, "allowed_devices": devices,
-		"allowed_namespaces": namespaces,
+		"allowed_namespaces":     namespaces,
 		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
 		"max_risk": in.MaxRisk, "risk_action": riskAction,
 	})

@@ -16,6 +16,10 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		backend = s.sessionsvc.RecordingStore().Backend()
 	}
 	lockMode, lockDays := s.infraObjectLock()
+	opaPkg := ""
+	if s.policy != nil && s.policy.OPA() != nil {
+		opaPkg = s.policy.OPA().Package()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data_key_source":    s.cfg.DataKeySource,
 		"recordings_backend": backend,
@@ -33,6 +37,9 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		"cookie_secure":      s.cfg.CookieSecure,
 		"geoip_db":           s.cfg.GeoIPDB,
 		"geoip_ready":        s.policy != nil && s.policy.Geo() != nil && s.policy.Geo().Loaded(),
+		"opa_policy":         s.cfg.OPAPolicy,
+		"opa_ready":          s.policy != nil && s.policy.OPA() != nil && s.policy.OPA().Ready(),
+		"opa_package":        opaPkg,
 	})
 }
 

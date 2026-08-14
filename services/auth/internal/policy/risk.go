@@ -77,10 +77,36 @@ func (r AccessResult) RiskDenyMessage() string {
 }
 
 func (r AccessResult) DenyMessage() string {
+	if r.DeniedByOPA {
+		if strings.TrimSpace(r.OPAReason) != "" {
+			return "access denied by opa: " + r.OPAReason
+		}
+		return "access denied by opa"
+	}
 	if r.DeniedByRisk {
 		return r.RiskDenyMessage()
 	}
 	return "access denied by policy"
+}
+
+func (r AccessResult) FillDenyPayload(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	if r.DeniedByOPA {
+		payload["reason"] = "opa"
+		if r.OPAReason != "" {
+			payload["opa_reason"] = r.OPAReason
+		}
+		return
+	}
+	if r.DeniedByRisk {
+		payload["reason"] = "risk"
+		payload["risk_score"] = r.RiskScore
+		payload["risk_factors"] = r.RiskFactors
+		payload["max_risk"] = r.MaxRisk
+		payload["risk_action"] = r.RiskAction
+	}
 }
 
 func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID, now time.Time) (RiskInputs, error) {
