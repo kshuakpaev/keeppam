@@ -23,6 +23,8 @@ type SQLPack struct {
 	Tables          []string  `json:"tables"`
 	MaskColumns     []string  `json:"mask_columns"`
 	MaskReplacement string    `json:"mask_replacement"`
+	MaxRows         int       `json:"max_rows"`
+	DLPAction       string    `json:"dlp_action"` // truncate|deny
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -35,11 +37,14 @@ type SQLPackInput struct {
 	Tables          []string `json:"tables"`
 	MaskColumns     []string `json:"mask_columns"`
 	MaskReplacement string   `json:"mask_replacement"`
+	MaxRows         int      `json:"max_rows"`
+	DLPAction       string   `json:"dlp_action"`
 }
 
 func (s *Service) ListSQLPacks(ctx context.Context) ([]SQLPack, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, description, mode, statements, tables, mask_columns, mask_replacement, created_at, updated_at
+		SELECT id, name, description, mode, statements, tables, mask_columns, mask_replacement,
+			COALESCE(max_rows,500), COALESCE(dlp_action,'truncate'), created_at, updated_at
 		FROM sql_policy_packs ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -61,7 +66,8 @@ func (s *Service) ListSQLPacks(ctx context.Context) ([]SQLPack, error) {
 
 func (s *Service) GetSQLPack(ctx context.Context, id uuid.UUID) (SQLPack, error) {
 	row := s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, description, mode, statements, tables, mask_columns, mask_replacement, created_at, updated_at
+		SELECT id, name, description, mode, statements, tables, mask_columns, mask_replacement,
+			COALESCE(max_rows,500), COALESCE(dlp_action,'truncate'), created_at, updated_at
 		FROM sql_policy_packs WHERE id=$1`, id)
 	return scanSQLPack(row)
 }
@@ -85,12 +91,13 @@ func (s *Service) CreateSQLPack(ctx context.Context, actorID uuid.UUID, in SQLPa
 	if repl == "" {
 		repl = "***"
 	}
+	maxRows, dlpAction := normalizeSQLDLP(in.MaxRows, in.DLPAction)
 	id := store.NewID()
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO sql_policy_packs
-			(id, name, description, mode, statements, tables, mask_columns, mask_replacement, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())`,
-		id, name, strings.TrimSpace(in.Description), mode, stmts, tables, masks, repl)
+			(id, name, description, mode, statements, tables, mask_columns, mask_replacement, max_rows, dlp_action, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
+		id, name, strings.TrimSpace(in.Description), mode, stmts, tables, masks, repl, maxRows, dlpAction)
 	if err != nil {
 		return SQLPack{}, err
 	}
@@ -132,11 +139,24 @@ func (s *Service) UpdateSQLPack(ctx context.Context, actorID, id uuid.UUID, in S
 	if repl == "" {
 		repl = cur.MaskReplacement
 	}
+	maxRows, dlpAction := normalizeSQLDLP(in.MaxRows, in.DLPAction)
+	if in.MaxRows == 0 {
+		maxRows = cur.MaxRows
+		if maxRows <= 0 {
+			maxRows = 500
+		}
+	}
+	if strings.TrimSpace(in.DLPAction) == "" {
+		dlpAction = cur.DLPAction
+		if dlpAction == "" {
+			dlpAction = "truncate"
+		}
+	}
 	desc := in.Description
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE sql_policy_packs SET name=$2, description=$3, mode=$4, statements=$5, tables=$6,
-			mask_columns=$7, mask_replacement=$8, updated_at=NOW()
-		WHERE id=$1`, id, name, desc, mode, stmts, tables, masks, repl)
+			mask_columns=$7, mask_replacement=$8, max_rows=$9, dlp_action=$10, updated_at=NOW()
+		WHERE id=$1`, id, name, desc, mode, stmts, tables, masks, repl, maxRows, dlpAction)
 	if err != nil {
 		return SQLPack{}, err
 	}
@@ -164,7 +184,7 @@ type scannable interface {
 func scanSQLPack(row scannable) (SQLPack, error) {
 	var p SQLPack
 	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Mode, &p.Statements, &p.Tables,
-		&p.MaskColumns, &p.MaskReplacement, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaskColumns, &p.MaskReplacement, &p.MaxRows, &p.DLPAction, &p.CreatedAt, &p.UpdatedAt)
 	if p.Statements == nil {
 		p.Statements = []string{}
 	}
@@ -177,7 +197,27 @@ func scanSQLPack(row scannable) (SQLPack, error) {
 	if p.MaskReplacement == "" {
 		p.MaskReplacement = "***"
 	}
+	if p.MaxRows <= 0 {
+		p.MaxRows = 500
+	}
+	if p.DLPAction == "" {
+		p.DLPAction = "truncate"
+	}
 	return p, err
+}
+
+func normalizeSQLDLP(maxRows int, action string) (int, string) {
+	if maxRows <= 0 {
+		maxRows = 500
+	}
+	if maxRows > 100000 {
+		maxRows = 100000
+	}
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action != "deny" {
+		action = "truncate"
+	}
+	return maxRows, action
 }
 
 func normalizeSQLTokens(in []string) []string {
@@ -227,6 +267,8 @@ func ClassifySQL(statement string) (verb string, tables []string) {
 		verb = "DELETE"
 	case "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "COMMENT":
 		verb = "DDL"
+	case "COPY", "LOAD":
+		verb = "EXPORT"
 	default:
 		verb = "OTHER"
 	}

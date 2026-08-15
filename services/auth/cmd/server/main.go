@@ -184,19 +184,40 @@ func main() {
 	}
 	resolveSQLGuard := func(ctx context.Context, sessionID uuid.UUID) (*dbproxy.SQLGuard, error) {
 		row, err := sessSvc.Get(ctx, sessionID)
-		if err != nil || row.SQLPolicyPackID == nil {
-			return nil, nil
-		}
-		pack, err := policySvc.GetSQLPack(ctx, *row.SQLPolicyPackID)
 		if err != nil {
 			return nil, err
 		}
+		var pack policy.SQLPack
+		hasPack := false
+		if row.SQLPolicyPackID != nil {
+			if p, err := policySvc.GetSQLPack(ctx, *row.SQLPolicyPackID); err == nil {
+				pack, hasPack = p, true
+			}
+		}
 		p := pack
+		hp := hasPack
 		return &dbproxy.SQLGuard{
-			Allow: func(stmt string) (bool, string) { return policy.MatchSQL(p, stmt) },
+			Allow: func(stmt string) (bool, string) {
+				if ok, reason := policy.AllowSQL(p, hp, stmt); !ok {
+					return false, reason
+				}
+				ev, err := policySvc.CheckOpRisk(ctx, policy.AccessCheck{
+					UserID: row.UserID, AssetID: row.AssetID, TicketID: row.TicketID,
+					ClientIP: row.ClientIP, Operation: policy.SQLOperation(stmt),
+				})
+				if err == nil && !ev.OK {
+					return false, ev.DenyMessage()
+				}
+				return true, ""
+			},
 			Mask: func(cols []string, rows [][]string) ([]string, [][]string) {
+				if !hp {
+					return cols, rows
+				}
 				return policy.MaskSQLResult(p, cols, rows)
 			},
+			MaxRows: policy.SQLRowLimit(p, hp),
+			DLPDeny: policy.SQLDLPDeny(p, hp),
 		}, nil
 	}
 	attackSimSvc := attacksim.New(db, auditSvc, policySvc, cfg.HTTPAddr)
@@ -226,6 +247,7 @@ func main() {
 				slog.Error("k8s tls", "err", err)
 			} else {
 				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
+				k8sGw.SetPolicy(policySvc)
 				k8sGw.SetRoles(func(ctx context.Context, userID uuid.UUID) []string {
 					u, err := db.GetUserByID(ctx, userID)
 					if err != nil {

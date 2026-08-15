@@ -36,6 +36,7 @@ export function AssetEditPage() {
     description: "",
     status: "active",
     tags: "",
+    approval_mode: "one",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -112,6 +113,7 @@ export function AssetEditPage() {
         description: a.description || "",
         status: a.status,
         tags: (a.tags || []).join(", "),
+        approval_mode: (a.approval_stages || []).includes("security") ? "two" : "one",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -285,6 +287,7 @@ export function AssetEditPage() {
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
+        approval_stages: form.approval_mode === "two" ? ["manager", "security"] : ["manager"],
       });
       setAsset(updated);
       setMsg("Сохранено");
@@ -811,6 +814,15 @@ export function AssetEditPage() {
           onChange={(e) => setForm({ ...form, tags: e.target.value })}
           disabled={!canWrite}
         />
+        <label>JIT согласование</label>
+        <select
+          value={form.approval_mode}
+          onChange={(e) => setForm({ ...form, approval_mode: e.target.value })}
+          disabled={!canWrite}
+        >
+          <option value="one">Только руководитель (access.approve)</option>
+          <option value="two">Руководитель + ИБ (access.approve.security)</option>
+        </select>
         <label>Описание</label>
         <input
           value={form.description}
@@ -1872,7 +1884,7 @@ export function AssetEditPage() {
           </div>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
             Score: off_hours 25, break_glass 40, failed_logins 15–45, concurrent 10–20, anom_brute 20,
-            anom_multi 15 (cap 100).
+            anom_multi 15 + операция (DROP/DDL 45, delete 30, k8s write 20…). Cap 100. 0 = выкл. и на connect, и на операции.
           </p>
           <button className="btn" type="submit">
             Выдать

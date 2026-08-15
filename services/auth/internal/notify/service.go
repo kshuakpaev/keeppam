@@ -158,17 +158,47 @@ func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (s *Service) OnJITCreated(ctx context.Context, req policy.AccessRequest) {
-	ids, err := s.UsersWithPermission(ctx, "access.approve")
+	perm := policy.StagePermission(req.Stage)
+	ids, err := s.UsersWithPermission(ctx, perm)
 	if err != nil {
 		return
 	}
 	title := "Новый JIT-запрос"
+	if len(req.ApprovalStages) > 1 {
+		title = "Новый JIT-запрос (этап " + req.Stage + ")"
+	}
 	body := fmt.Sprintf("%s запросил доступ к %s на %d мин",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()), req.DurationMinutes)
 	to := FilterRecipients(ids, req.RequesterID)
 	s.insert(ctx, to, "jit.created", title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload("jit.created", req))
+	s.fireMail(ctx, to, title, body)
+}
+
+func (s *Service) OnJITStage(ctx context.Context, req policy.AccessRequest) {
+	if req.Status != "pending" {
+		return
+	}
+	perm := policy.StagePermission(req.Stage)
+	ids, err := s.UsersWithPermission(ctx, perm)
+	if err != nil {
+		return
+	}
+	exclude := []uuid.UUID{req.RequesterID}
+	for _, a := range req.Approvals {
+		exclude = append(exclude, a.ActorID)
+	}
+	to := ids
+	for _, x := range exclude {
+		to = FilterRecipients(to, x)
+	}
+	title := "JIT: этап " + req.Stage
+	body := fmt.Sprintf("%s → %s, нужен %s",
+		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
+		nonEmpty(req.AssetName, req.AssetID.String()), req.Stage)
+	s.insert(ctx, to, "jit.stage", title, body, "access_request", req.ID.String())
+	s.fireWebhook(ctx, JITPayload("jit.stage", req))
 	s.fireMail(ctx, to, title, body)
 }
 
@@ -258,6 +288,8 @@ func JITPayload(event string, req policy.AccessRequest) map[string]any {
 		"reason":             req.Reason,
 		"ticket_id":          req.TicketID,
 		"status":             req.Status,
+		"stage":              req.Stage,
+		"approval_stages":    req.ApprovalStages,
 		"approver_id":        approver,
 		"ts":                 time.Now().UTC().Format(time.RFC3339),
 	}

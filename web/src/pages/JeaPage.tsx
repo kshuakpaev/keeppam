@@ -28,6 +28,8 @@ export function JeaPage() {
     tables: "",
     mask_columns: "",
     mask_replacement: "***",
+    max_rows: "500",
+    dlp_action: "truncate",
   });
 
   async function load() {
@@ -76,6 +78,8 @@ export function JeaPage() {
       tables: (p.tables || []).join("\n"),
       mask_columns: (p.mask_columns || []).join("\n"),
       mask_replacement: p.mask_replacement || "***",
+      max_rows: String(p.max_rows || 500),
+      dlp_action: p.dlp_action || "truncate",
     });
     setMsg("");
   }
@@ -90,6 +94,8 @@ export function JeaPage() {
       tables: "",
       mask_columns: "",
       mask_replacement: "***",
+      max_rows: "500",
+      dlp_action: "truncate",
     });
   }
 
@@ -150,6 +156,8 @@ export function JeaPage() {
           .map((x) => x.trim())
           .filter(Boolean),
         mask_replacement: sqlForm.mask_replacement.trim() || "***",
+        max_rows: Number(sqlForm.max_rows) || 500,
+        dlp_action: sqlForm.dlp_action,
       };
       if (sqlEditId) {
         await api.updateSQLPack(sqlEditId, body);
@@ -318,6 +326,7 @@ export function JeaPage() {
             <h2>SQL-пакеты</h2>
             <p className="muted">
               statements: SELECT/INSERT/UPDATE/DELETE/DDL · tables: glob · mask_columns: колонки → ***
+              · DLP: COPY/OUTFILE всегда запрещены; max_rows / dlp_action — лимит выгрузки
             </p>
             <table>
               <thead>
@@ -327,6 +336,7 @@ export function JeaPage() {
                   <th>Statements</th>
                   <th>Tables</th>
                   <th>Mask</th>
+                  <th>DLP</th>
                   <th />
                 </tr>
               </thead>
@@ -345,6 +355,9 @@ export function JeaPage() {
                     <td className="mono">{(p.statements || []).join(", ") || "—"}</td>
                     <td className="mono">{(p.tables || []).slice(0, 6).join(", ")}</td>
                     <td className="mono">{(p.mask_columns || []).join(", ") || "—"}</td>
+                    <td className="mono">
+                      {p.max_rows || 500}/{p.dlp_action || "truncate"}
+                    </td>
                     <td>
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
@@ -415,6 +428,22 @@ export function JeaPage() {
                 value={sqlForm.mask_replacement}
                 onChange={(e) => setSqlForm({ ...sqlForm, mask_replacement: e.target.value })}
               />
+              <label>Max rows (DLP)</label>
+              <input
+                type="number"
+                min={1}
+                max={100000}
+                value={sqlForm.max_rows}
+                onChange={(e) => setSqlForm({ ...sqlForm, max_rows: e.target.value })}
+              />
+              <label>При превышении max_rows</label>
+              <select
+                value={sqlForm.dlp_action}
+                onChange={(e) => setSqlForm({ ...sqlForm, dlp_action: e.target.value })}
+              >
+                <option value="truncate">truncate — обрезать результат</option>
+                <option value="deny">deny — запретить запрос</option>
+              </select>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
                   {sqlEditId ? "Сохранить" : "Создать"}

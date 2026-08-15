@@ -21,6 +21,7 @@ import (
 
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -33,6 +34,7 @@ type Gateway struct {
 	sessions *sessionsvc.Service
 	audit    *audit.Service
 	live     *sessionsvc.LiveHub
+	policy   *policy.Service
 	rolesOf  func(context.Context, uuid.UUID) []string
 
 	mu        sync.Mutex
@@ -62,6 +64,10 @@ func New(addr, publicURL string, cert tls.Certificate, rdb *redis.Client, assets
 		addr: addr, public: publicURL, cert: cert, rdb: rdb, assets: assetsSvc,
 		sessions: sess, audit: aud, live: live, upstreams: map[uuid.UUID]*sessionUpstream{},
 	}
+}
+
+func (g *Gateway) SetPolicy(p *policy.Service) {
+	g.policy = p
 }
 
 func (g *Gateway) SetRoles(fn func(context.Context, uuid.UUID) []string) {
@@ -159,6 +165,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if reason == "cluster_scope_denied" {
 			msg = "cluster-scoped request denied by KeepPAM namespace ACL"
 		}
+		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
+		return
+	}
+	if msg, deny := g.denyOpRisk(r.Context(), row, call, clientIP(r)); deny {
 		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
 		return
 	}
@@ -417,6 +427,37 @@ func (g *Gateway) DropSession(id uuid.UUID) {
 			slog.Warn("k8s bind secret delete", "session", id.String(), "err", err)
 		}
 	}
+}
+
+func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call APICall, ip string) (string, bool) {
+	if g == nil || g.policy == nil {
+		return "", false
+	}
+	op := policy.K8sOperation(call.Verb, call.Subresource)
+	if op == "" {
+		return "", false
+	}
+	var roles []string
+	if g.rolesOf != nil {
+		roles = g.rolesOf(ctx, row.UserID)
+	}
+	ev, err := g.policy.CheckOpRisk(ctx, policy.AccessCheck{
+		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
+		TicketID: row.TicketID, ClientIP: ip, Operation: op,
+	})
+	if err != nil || ev.OK {
+		return "", false
+	}
+	msg := ev.DenyMessage()
+	_ = g.audit.Record(ctx, &row.UserID, "session.k8s.denied", "session", row.ID.String(), ip, "k8s", map[string]any{
+		"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
+		"name": call.Name, "reason": "risk", "operation": op, "risk_score": ev.RiskScore, "max_risk": ev.MaxRisk,
+	})
+	_ = g.sessions.AddEvent(ctx, row.ID, "risk", map[string]any{
+		"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
+		"reason": msg, "operation": op, "risk_score": ev.RiskScore,
+	})
+	return msg, true
 }
 
 func writeK8sStatus(w http.ResponseWriter, code int, reason, msg string) {

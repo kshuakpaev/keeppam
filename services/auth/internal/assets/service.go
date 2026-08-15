@@ -50,6 +50,7 @@ type Asset struct {
 	Description         string     `json:"description"`
 	Status              string     `json:"status"`
 	Tags                []string   `json:"tags"`
+	ApprovalStages      []string   `json:"approval_stages"`
 	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
@@ -102,6 +103,7 @@ type CreateAssetInput struct {
 	DatabaseName string   `json:"database_name"`
 	Description  string   `json:"description"`
 	Tags         []string `json:"tags"`
+	ApprovalStages []string `json:"approval_stages"`
 }
 
 type UpdateAssetInput struct {
@@ -115,6 +117,7 @@ type UpdateAssetInput struct {
 	Description  *string  `json:"description"`
 	Status       *string  `json:"status"`
 	Tags         *[]string `json:"tags"`
+	ApprovalStages *[]string `json:"approval_stages"`
 }
 
 type CreateAccountInput struct {
@@ -154,7 +157,7 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by
+			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}')
 		FROM assets ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -180,7 +183,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 	row := s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by
+			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}')
 		FROM assets WHERE id=$1`, id)
 	a, err := scanAsset(row)
 	if err != nil {
@@ -216,7 +219,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 		ID: store.NewID(), Name: in.Name, AssetType: in.AssetType,
 		Hostname: in.Hostname, Address: in.Address, Port: in.Port,
 		Protocol: in.Protocol, DatabaseName: dbName, Description: in.Description, Status: "active",
-		Tags: in.Tags, CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
+		Tags: in.Tags, ApprovalStages: assetApprovalStages(in.ApprovalStages), CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
 	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
@@ -224,9 +227,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -293,6 +296,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 		a.HostKeyFingerprint = ""
 		a.HostKeyLearnedAt = nil
 	}
+	if in.ApprovalStages != nil {
+		a.ApprovalStages = assetApprovalStages(*in.ApprovalStages)
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -301,10 +307,11 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	_, err = tx.Exec(ctx, `
 		UPDATE assets SET name=$2, asset_type=$3, hostname=$4, address=$5, port=$6,
 			protocol=$7, database_name=$8, description=$9, status=$10, updated_at=$11,
-			host_key_algo=$12, host_key_blob=$13, host_key_fp=$14, host_key_learned_at=$15
+			host_key_algo=$12, host_key_blob=$13, host_key_fp=$14, host_key_learned_at=$15,
+			approval_stages=$16
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
-		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt)
+		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -805,11 +812,23 @@ func scanAsset(row scannable) (Asset, error) {
 	err := row.Scan(&a.ID, &a.Name, &a.AssetType, &a.Hostname, &a.Address, &a.Port,
 		&a.Protocol, &a.DatabaseName, &a.Description, &a.Status,
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
-		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy)
+		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}
+	if len(a.ApprovalStages) == 0 {
+		a.ApprovalStages = []string{"manager"}
+	}
 	return a, err
+}
+
+func assetApprovalStages(in []string) []string {
+	for _, s := range in {
+		if strings.EqualFold(strings.TrimSpace(s), "security") {
+			return []string{"manager", "security"}
+		}
+	}
+	return []string{"manager"}
 }
 
 func defaultPort(protocol string) int {

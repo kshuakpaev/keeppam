@@ -235,6 +235,7 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 			"client_devices": devices,
 			"risk_score":     res.RiskScore,
 			"risk_factors":   factors,
+			"operation":      strings.TrimSpace(in.Operation),
 		},
 	}
 }

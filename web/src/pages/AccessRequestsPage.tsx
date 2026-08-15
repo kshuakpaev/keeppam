@@ -13,12 +13,13 @@ export function AccessRequestsPage() {
   const [error, setError] = useState("");
   const canRequest = hasPerm(user, "access.request");
   const canApprove = hasPerm(user, "access.approve");
+  const canApproveSecurity = hasPerm(user, "access.approve.security");
   const canVault = hasPerm(user, "assets.write");
   const canBreakGlass = hasPerm(user, "access.breakglass");
 
   const load = useCallback(async () => {
     try {
-      if (canRequest) {
+      if (canRequest || canApprove || canApproveSecurity) {
         const res = await api.listAccessRequests({
           status: status || undefined,
           limit: 100,
@@ -38,11 +39,11 @@ export function AccessRequestsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
     }
-  }, [status, canVault, canRequest, canBreakGlass]);
+  }, [status, canVault, canRequest, canApprove, canApproveSecurity, canBreakGlass]);
 
   useEffect(() => {
-    if (canRequest || canVault || canBreakGlass) void load();
-  }, [canRequest, canVault, canBreakGlass, load]);
+    if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass) void load();
+  }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, load]);
 
   async function onApprove(id: string) {
     setError("");
@@ -94,7 +95,7 @@ export function AccessRequestsPage() {
     }
   }
 
-  if (!canRequest && !canVault && !canBreakGlass) {
+  if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass) {
     return <p className="error">Недостаточно прав</p>;
   }
 
@@ -103,7 +104,7 @@ export function AccessRequestsPage() {
       <div className="toolbar">
         <div>
           <h1>Запросы доступа</h1>
-          <p className="muted">JIT к активам, dual-control checkout и break-glass</p>
+          <p className="muted">JIT к активам (руководитель → ИБ), dual-control checkout и break-glass</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
           Обновить
@@ -211,7 +212,7 @@ export function AccessRequestsPage() {
         </div>
       )}
 
-      {canRequest && (
+      {(canRequest || canApprove || canApproveSecurity) && (
         <>
           <div className="row" style={{ marginBottom: "0.75rem", gap: "0.5rem" }}>
             {(["pending", "approved", "denied", "cancelled", "expired", ""] as const).map((s) => (
@@ -238,6 +239,7 @@ export function AccessRequestsPage() {
                   <th>Ticket</th>
                   <th>Risk</th>
                   <th>Причина</th>
+                  <th>Этап</th>
                   <th>Статус</th>
                   <th />
                 </tr>
@@ -267,6 +269,19 @@ export function AccessRequestsPage() {
                     </td>
                     <td>{r.reason || "—"}</td>
                     <td>
+                      <span className="badge">{r.stage || "manager"}</span>
+                      {(r.approval_stages || []).length > 1 ? (
+                        <div className="muted" style={{ fontSize: "0.8rem" }}>
+                          {(r.approval_stages || []).join(" → ")}
+                        </div>
+                      ) : null}
+                      {(r.approvals || []).map((a) => (
+                        <div key={a.stage} className="muted" style={{ fontSize: "0.8rem" }}>
+                          {a.stage}: {a.username}
+                        </div>
+                      ))}
+                    </td>
+                    <td>
                       <span
                         className={`badge ${r.status === "pending" ? "active" : r.status === "denied" ? "locked" : ""}`}
                       >
@@ -276,10 +291,13 @@ export function AccessRequestsPage() {
                     </td>
                     <td>
                       <div className="row">
-                        {r.status === "pending" && canApprove && r.requester_id !== user?.id && (
+                        {r.status === "pending" &&
+                          r.requester_id !== user?.id &&
+                          ((r.stage === "security" && canApproveSecurity) ||
+                            ((r.stage || "manager") === "manager" && canApprove)) && (
                           <>
                             <button className="btn" type="button" onClick={() => void onApprove(r.id)}>
-                              Одобрить
+                              Одобрить {r.stage === "security" ? "ИБ" : ""}
                             </button>
                             <button className="btn danger" type="button" onClick={() => void onDeny(r.id)}>
                               Отклонить
@@ -300,7 +318,7 @@ export function AccessRequestsPage() {
                 ))}
                 {requests.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="muted">
+                    <td colSpan={10} className="muted">
                       Запросов нет{status ? ` со статусом ${status}` : ""}.
                     </td>
                   </tr>

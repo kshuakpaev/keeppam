@@ -56,9 +56,10 @@ Wire/SQL: клиентский `database=` должен совпадать с `d
 
 ## SQL JEA / masking (DB-4)
 
-- `sql_policy_packs`: mode allowlist|denylist, statements, tables (glob), mask_columns.
+- `sql_policy_packs`: mode allowlist|denylist, statements, tables (glob), mask_columns, `max_rows`, `dlp_action`.
 - Привязка: `asset_access_bindings.sql_policy_pack_id` (как SSH JEA).
 - Enforce: Web SQL + wire; audit `session.sql.denied`; маскирование колонок в result set.
+- DLP: `COPY`/`LOAD`/`OUTFILE` всегда запрещены; лимит строк — truncate (default 500) или deny. См. `docs/dlp.txt`.
 - Seed: `sql-readonly-tickets`, `sql-block-ddl`.
 
 ## Prod infra

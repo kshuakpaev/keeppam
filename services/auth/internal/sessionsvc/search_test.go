@@ -12,6 +12,8 @@ func TestEventSnippet(t *testing.T) {
 		{"sql_denied", map[string]any{"statement": "DROP TABLE t", "reason": "ddl"}, "DENIED DROP TABLE t (ddl)"},
 		{"k8s", map[string]any{"verb": "get", "resource": "pods", "namespace": "prod", "name": "web", "status": "200"}, "get pods prod/web → 200"},
 		{"command_denied", map[string]any{"command": "rm -rf /"}, "DENIED rm -rf /"},
+		{"dlp", map[string]any{"command": "scp -t /tmp/x"}, "DENIED scp -t /tmp/x"},
+		{"risk", map[string]any{"statement": "DROP TABLE t"}, "DENIED DROP TABLE t"},
 		{"started", map[string]any{}, "started"},
 	}
 	for _, tc := range cases {

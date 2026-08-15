@@ -1,0 +1,41 @@
+# KeepPAM: DLP-каналы утечки
+
+Контроль выгрузки файлов и данных внутри PAM-сессии. Не отдельный DLP-продукт: запрет каналов на шлюзе + аудит.
+
+## SSH
+
+Запрещено всегда (без JEA-пакета):
+
+| Канал | Поведение |
+|-------|-----------|
+| `scp` / `sftp` / `rsync` через `exec` (в т.ч. `sudo scp`) | `Reply(false)`, аудит `session.dlp.denied` |
+| subsystem `sftp` | отказ + аудит |
+| каналы `direct-tcpip`, `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
+| global/session `tcpip-forward`, `x11-req` | отказ + аудит |
+
+Интерактивный `shell` / `pty-req` не ломается: line-buffer JEA включается только при привязанном command pack. Если pack есть, `scp`/`sftp`/`rsync` в шелле запрещены DLP даже когда pack их разрешает. Событие сессии: `dlp`.
+
+## SQL
+
+`COPY` / `LOAD` / `INTO OUTFILE` / `INTO DUMPFILE` запрещены всегда (Web SQL и native wire), даже без SQL-пакета. Аудит `session.sql.denied`.
+
+На пакете (`sql_policy_packs`, миграция `044`):
+
+| Поле | Смысл |
+|------|--------|
+| `max_rows` | лимит строк результата, 1…100000, default 500 |
+| `dlp_action` | `truncate` — обрезать; `deny` — не возвращать строки, ошибка DLP |
+
+Без пакета: truncate на 500 строк.
+
+## RDP / VNC (Guacamole)
+
+Для `rdp`: `disable-copy=true`, `enable-drive=false`, `enable-printing=false` (clipboard/drive/printer). Для `vnc`: `disable-copy=true`. USB не пробрасывается.
+
+## Forensic
+
+Тип `dlp` входит в поиск по умолчанию (Сессии → События). Фильтр `type=dlp`.
+
+## Вне scope
+
+Полноценный контентный DLP (классификация PII в потоке), clipboard RDP на уровне протокола без guacd, API/URL ACL, интерактивный scp без JEA-пакета.

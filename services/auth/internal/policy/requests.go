@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,6 +25,9 @@ type AccessRequest struct {
 	DecidedAt       *time.Time `json:"decided_at,omitempty"`
 	BindingID       *uuid.UUID `json:"binding_id,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
+	ApprovalStages  []string   `json:"approval_stages"`
+	Stage           string     `json:"stage"`
+	Approvals       []RequestApproval `json:"approvals"`
 	// Joined
 	AssetName         string   `json:"asset_name,omitempty"`
 	AssetAddress      string   `json:"asset_address,omitempty"`
@@ -31,6 +35,13 @@ type AccessRequest struct {
 	ApproverUsername  string   `json:"approver_username,omitempty"`
 	RiskScore         int      `json:"risk_score"`
 	RiskFactors       []string `json:"risk_factors"`
+}
+
+type RequestApproval struct {
+	Stage     string    `json:"stage"`
+	ActorID   uuid.UUID `json:"actor_id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateRequestInput struct {
@@ -87,11 +98,19 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 		return AccessRequest{}, fmt.Errorf("%s", ev.RiskDenyMessage())
 	}
 
+	var stages []string
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(approval_stages, '{manager}') FROM assets WHERE id=$1`, assetID).Scan(&stages); err != nil {
+		return AccessRequest{}, fmt.Errorf("asset not found")
+	}
+	stages = NormalizeApprovalStages(stages)
+	stage := FirstStage(stages)
+
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO access_requests (id, asset_id, requester_id, reason, ticket_id, duration_minutes, status, created_at, risk_score, risk_factors)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',NOW(),$7,$8)`,
-		id, assetID, requesterID, reason, ticket, in.DurationMinutes, score, factors)
+		INSERT INTO access_requests (id, asset_id, requester_id, reason, ticket_id, duration_minutes, status, created_at, risk_score, risk_factors, approval_stages, stage)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',NOW(),$7,$8,$9,$10)`,
+		id, assetID, requesterID, reason, ticket, in.DurationMinutes, score, factors, stages, stage)
 	if err != nil {
 		if strings.Contains(err.Error(), "idx_access_requests_pending") || strings.Contains(err.Error(), "duplicate key") {
 			return AccessRequest{}, fmt.Errorf("pending request already exists for this asset")
@@ -100,7 +119,7 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 	}
 	_ = s.aud.Record(ctx, &requesterID, "access.request.created", "access_request", id.String(), ip, ua, map[string]any{
 		"asset_id": assetID.String(), "duration_minutes": in.DurationMinutes, "ticket_id": ticket,
-		"risk_score": score, "risk_factors": factors,
+		"risk_score": score, "risk_factors": factors, "approval_stages": stages, "stage": stage,
 	})
 	return s.GetRequest(ctx, id)
 }
@@ -161,6 +180,51 @@ func (s *Service) ApproveRequest(ctx context.Context, actorID, requestID uuid.UU
 	if req.RequesterID == actorID {
 		return AccessRequest{}, fmt.Errorf("dual control: cannot approve your own access request")
 	}
+	for _, a := range req.Approvals {
+		if a.ActorID == actorID {
+			return AccessRequest{}, fmt.Errorf("dual control: you already approved a previous stage")
+		}
+	}
+	stage := req.Stage
+	if stage == "" {
+		stage = StageManager
+	}
+	next, hasNext := NextStage(req.ApprovalStages, stage)
+
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return AccessRequest{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	apprID := store.NewID()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO access_request_approvals (id, request_id, stage, actor_id, created_at)
+		VALUES ($1,$2,$3,$4,NOW())`, apprID, requestID, stage, actorID); err != nil {
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			return AccessRequest{}, fmt.Errorf("this stage is already approved")
+		}
+		return AccessRequest{}, err
+	}
+
+	if hasNext {
+		if _, err := tx.Exec(ctx, `UPDATE access_requests SET stage=$2 WHERE id=$1 AND status='pending'`, requestID, next); err != nil {
+			return AccessRequest{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AccessRequest{}, err
+		}
+		_ = s.aud.Record(ctx, &actorID, "access.request.stage", "access_request", requestID.String(), ip, ua, map[string]any{
+			"asset_id": req.AssetID.String(), "requester_id": req.RequesterID.String(),
+			"stage": stage, "next_stage": next,
+		})
+		return s.GetRequest(ctx, requestID)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return AccessRequest{}, err
+	}
+
 	uid := req.RequesterID
 	b, err := s.Create(ctx, actorID, req.AssetID, CreateBindingInput{
 		UserID:          &uid,
@@ -180,7 +244,7 @@ func (s *Service) ApproveRequest(ctx context.Context, actorID, requestID uuid.UU
 	}
 	_ = s.aud.Record(ctx, &actorID, "access.request.approved", "access_request", requestID.String(), ip, ua, map[string]any{
 		"asset_id": req.AssetID.String(), "requester_id": req.RequesterID.String(),
-		"binding_id": b.ID.String(), "duration_minutes": req.DurationMinutes,
+		"binding_id": b.ID.String(), "duration_minutes": req.DurationMinutes, "stage": stage,
 	})
 	return s.GetRequest(ctx, requestID)
 }
@@ -192,6 +256,9 @@ func (s *Service) DenyRequest(ctx context.Context, actorID, requestID uuid.UUID,
 	}
 	if req.Status != "pending" {
 		return AccessRequest{}, fmt.Errorf("request is not pending")
+	}
+	if req.RequesterID == actorID {
+		return AccessRequest{}, fmt.Errorf("dual control: cannot deny your own access request")
 	}
 	now := time.Now().UTC()
 	tag, err := s.db.Pool.Exec(ctx, `
@@ -256,11 +323,16 @@ type RequestsSummary struct {
 	MyRecentDecisions []AccessRequest `json:"my_recent_decisions"`
 }
 
-func (s *Service) RequestsSummary(ctx context.Context, userID uuid.UUID, canApprove bool) (RequestsSummary, error) {
+func (s *Service) RequestsSummary(ctx context.Context, userID uuid.UUID, canManager, canSecurity bool) (RequestsSummary, error) {
 	var out RequestsSummary
-	if canApprove {
+	if canManager || canSecurity {
 		if err := s.db.Pool.QueryRow(ctx, `
-			SELECT COUNT(*) FROM access_requests WHERE status='pending'`).Scan(&out.PendingApprove); err != nil {
+			SELECT COUNT(*) FROM access_requests
+			WHERE status='pending' AND requester_id <> $1
+			  AND (
+			    ($2 AND COALESCE(stage,'manager')='manager')
+			    OR ($3 AND COALESCE(stage,'manager')='security')
+			  )`, userID, canManager, canSecurity).Scan(&out.PendingApprove); err != nil {
 			return out, err
 		}
 	}
@@ -292,7 +364,19 @@ const accessRequestSelect = `
 	SELECT ar.id, ar.asset_id, ar.requester_id, ar.reason, ar.ticket_id, ar.duration_minutes, ar.status,
 		ar.approver_id, ar.decided_at, ar.binding_id, ar.created_at,
 		a.name, a.address, ru.username, COALESCE(au.username,''),
-		COALESCE(ar.risk_score,0), COALESCE(ar.risk_factors,'{}')
+		COALESCE(ar.risk_score,0), COALESCE(ar.risk_factors,'{}'),
+		COALESCE(ar.approval_stages, '{manager}'), COALESCE(ar.stage,'manager'),
+		COALESCE((
+			SELECT json_agg(json_build_object(
+				'stage', ap.stage,
+				'actor_id', ap.actor_id,
+				'username', u.username,
+				'created_at', ap.created_at
+			) ORDER BY ap.created_at)
+			FROM access_request_approvals ap
+			JOIN users u ON u.id = ap.actor_id
+			WHERE ap.request_id = ar.id
+		), '[]'::json)
 	FROM access_requests ar
 	JOIN assets a ON a.id = ar.asset_id
 	JOIN users ru ON ru.id = ar.requester_id
@@ -304,14 +388,27 @@ type requestScannable interface {
 
 func scanAccessRequest(row requestScannable) (AccessRequest, error) {
 	var r AccessRequest
+	var approvalsJSON []byte
 	err := row.Scan(
 		&r.ID, &r.AssetID, &r.RequesterID, &r.Reason, &r.TicketID, &r.DurationMinutes, &r.Status,
 		&r.ApproverID, &r.DecidedAt, &r.BindingID, &r.CreatedAt,
 		&r.AssetName, &r.AssetAddress, &r.RequesterUsername, &r.ApproverUsername,
-		&r.RiskScore, &r.RiskFactors,
+		&r.RiskScore, &r.RiskFactors, &r.ApprovalStages, &r.Stage, &approvalsJSON,
 	)
 	if r.RiskFactors == nil {
 		r.RiskFactors = []string{}
+	}
+	if r.ApprovalStages == nil {
+		r.ApprovalStages = []string{StageManager}
+	}
+	if r.Stage == "" {
+		r.Stage = StageManager
+	}
+	if len(approvalsJSON) > 0 && string(approvalsJSON) != "null" {
+		_ = json.Unmarshal(approvalsJSON, &r.Approvals)
+	}
+	if r.Approvals == nil {
+		r.Approvals = []RequestApproval{}
 	}
 	return r, err
 }

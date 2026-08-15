@@ -247,10 +247,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("attacksim.write")).Post("/attack-sim/runs", s.handleStartAttackRun)
 
 				r.With(s.requirePerm("access.request")).Post("/assets/{id}/access-requests", s.handleCreateAccessRequest)
-				r.With(s.requirePerm("access.request")).Get("/access-requests", s.handleListAccessRequests)
-				r.With(s.requirePerm("access.request")).Get("/access-requests/summary", s.handleAccessRequestsSummary)
-				r.With(s.requirePerm("access.approve")).Post("/access-requests/{id}/approve", s.handleApproveAccessRequest)
-				r.With(s.requirePerm("access.approve")).Post("/access-requests/{id}/deny", s.handleDenyAccessRequest)
+				r.With(s.requireAnyPerm("access.request", "access.approve", "access.approve.security")).Get("/access-requests", s.handleListAccessRequests)
+				r.With(s.requireAnyPerm("access.request", "access.approve", "access.approve.security")).Get("/access-requests/summary", s.handleAccessRequestsSummary)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/approve", s.handleApproveAccessRequest)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/deny", s.handleDenyAccessRequest)
 				r.With(s.requirePerm("access.request")).Post("/access-requests/{id}/cancel", s.handleCancelAccessRequest)
 				r.With(s.requirePerm("access.breakglass")).Post("/assets/{id}/break-glass", s.handleOpenBreakGlass)
 				r.With(s.requirePerm("access.breakglass")).Get("/break-glass", s.handleListBreakGlass)
@@ -342,14 +342,20 @@ func (s *Server) requireCSRF(next http.Handler) http.Handler {
 }
 
 func (s *Server) requirePerm(perm string) func(http.Handler) http.Handler {
+	return s.requireAnyPerm(perm)
+}
+
+func (s *Server) requireAnyPerm(perms ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sess := mustSess(r)
-			if !rbac.HasPermission(sess.Permissions, perm) {
-				writeErr(w, http.StatusForbidden, "forbidden")
-				return
+			for _, p := range perms {
+				if rbac.HasPermission(sess.Permissions, p) {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
-			next.ServeHTTP(w, r)
+			writeErr(w, http.StatusForbidden, "forbidden")
 		})
 	}
 }

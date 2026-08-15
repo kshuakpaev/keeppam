@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -37,10 +39,23 @@ type WireGateway struct {
 // EnsureEphemeral creates a temporary DB role and returns dial credentials.
 type EnsureEphemeral func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (creds assets.TargetCreds, roleName string, err error)
 
-// SQLGuard enforces table JEA and column masking for wire statements.
+// SQLGuard enforces table JEA, DLP export/row limits, and column masking.
 type SQLGuard struct {
-	Allow func(stmt string) (ok bool, reason string)
-	Mask  func(cols []string, rows [][]string) ([]string, [][]string)
+	Allow   func(stmt string) (ok bool, reason string)
+	Mask    func(cols []string, rows [][]string) ([]string, [][]string)
+	MaxRows int
+	DLPDeny bool
+}
+
+func (g *SQLGuard) rowLimit() int {
+	if g != nil && g.MaxRows > 0 {
+		return effectiveMaxRows(g.MaxRows)
+	}
+	return defaultMaxRows
+}
+
+func (g *SQLGuard) denyOverflow() bool {
+	return g != nil && g.DLPDeny
 }
 
 type ResolveSQLGuard func(ctx context.Context, sessionID uuid.UUID) (*SQLGuard, error)
@@ -169,12 +184,19 @@ func (g *WireGateway) handleConn(client net.Conn) {
 }
 
 func (g *WireGateway) loadGuard(ctx context.Context, sessionID uuid.UUID) *SQLGuard {
+	fallback := &SQLGuard{
+		Allow:   func(stmt string) (bool, string) { return policy.AllowSQL(policy.SQLPack{}, false, stmt) },
+		MaxRows: defaultMaxRows,
+	}
 	if g.sqlGuard == nil {
-		return nil
+		return fallback
 	}
 	g2, err := g.sqlGuard(ctx, sessionID)
-	if err != nil {
-		return nil
+	if err != nil || g2 == nil {
+		return fallback
+	}
+	if g2.Allow == nil {
+		g2.Allow = fallback.Allow
 	}
 	return g2
 }
@@ -274,6 +296,11 @@ func (g *WireGateway) execAndRecord(ctx context.Context, sessionID, userID uuid.
 	start := time.Now()
 	err := run()
 	ms := time.Since(start).Milliseconds()
+	if errors.Is(err, ErrDLPRowLimit) {
+		g.denySQL(ctx, sessionID, userID, stmt, err.Error())
+		rec.Record(stmt, ms, 0, err.Error())
+		return
+	}
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
@@ -296,21 +323,17 @@ func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, st
 	defer rows.Close()
 	fds := rows.FieldDescriptions()
 	colNames := make([]string, len(fds))
-	rd := binary.BigEndian.AppendUint16(nil, uint16(len(fds)))
 	for i, f := range fds {
 		colNames[i] = string(f.Name)
-		rd = append(rd, []byte(f.Name)...)
-		rd = append(rd, 0)
-		tmp := make([]byte, 18)
-		binary.BigEndian.PutUint32(tmp[6:10], uint32(f.DataTypeOID))
-		binary.BigEndian.PutUint16(tmp[10:12], 0xffff)
-		rd = append(rd, tmp...)
 	}
-	if err := writePGMsg(client, 'T', rd); err != nil {
-		return err
-	}
+	limit := guard.rowLimit()
 	var buffered [][]string
+	truncated := false
 	for rows.Next() {
+		if len(buffered) >= limit {
+			truncated = true
+			break
+		}
 		vals, err := rows.Values()
 		if err != nil {
 			break
@@ -324,17 +347,31 @@ func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, st
 			}
 		}
 		buffered = append(buffered, row)
-		if len(buffered) >= maxRows {
-			break
-		}
+	}
+	if truncated && guard.denyOverflow() {
+		msg := fmt.Sprintf("%s (%d)", ErrDLPRowLimit.Error(), limit)
+		_ = writePGMsg(client, 'E', pgErrorBody(msg))
+		_ = writePGMsg(client, 'Z', []byte{'I'})
+		return fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
 	}
 	if guard != nil && guard.Mask != nil {
 		_, buffered = guard.Mask(colNames, buffered)
 	}
+	rd := binary.BigEndian.AppendUint16(nil, uint16(len(fds)))
+	for _, f := range fds {
+		rd = append(rd, []byte(f.Name)...)
+		rd = append(rd, 0)
+		tmp := make([]byte, 18)
+		binary.BigEndian.PutUint32(tmp[6:10], uint32(f.DataTypeOID))
+		binary.BigEndian.PutUint16(tmp[10:12], 0xffff)
+		rd = append(rd, tmp...)
+	}
+	if err := writePGMsg(client, 'T', rd); err != nil {
+		return err
+	}
 	for _, cells := range buffered {
 		row := binary.BigEndian.AppendUint16(nil, uint16(len(cells)))
 		for i, s := range cells {
-			// preserve NULL if original was empty and... we lost NULL; treat empty as value
 			_ = i
 			b := []byte(s)
 			row = binary.BigEndian.AppendUint32(row, uint32(len(b)))
@@ -363,23 +400,20 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 	if err != nil {
 		return err
 	}
-	_ = writeMySQLPacket(client, *seq, []byte{byte(len(cols))})
-	*seq++
-	for _, c := range cols {
-		def := mysqlColumnDef(c)
-		_ = writeMySQLPacket(client, *seq, def)
-		*seq++
-	}
-	_ = writeMySQLPacket(client, *seq, []byte{0xfe, 0, 0, 2, 0})
-	*seq++
 	raw := make([]sql.NullString, len(cols))
 	ptrs := make([]any, len(cols))
 	for i := range raw {
 		ptrs[i] = &raw[i]
 	}
+	limit := guard.rowLimit()
 	var buffered [][]string
 	var nulls [][]bool
+	truncated := false
 	for rows.Next() {
+		if len(buffered) >= limit {
+			truncated = true
+			break
+		}
 		if err := rows.Scan(ptrs...); err != nil {
 			break
 		}
@@ -394,10 +428,22 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 		}
 		buffered = append(buffered, row)
 		nulls = append(nulls, nuls)
-		if len(buffered) >= maxRows {
-			break
-		}
 	}
+	if truncated && guard.denyOverflow() {
+		msg := fmt.Sprintf("%s (%d)", ErrDLPRowLimit.Error(), limit)
+		_ = writeMySQLPacket(client, *seq, mysqlErr(msg))
+		*seq++
+		return fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
+	}
+	_ = writeMySQLPacket(client, *seq, []byte{byte(len(cols))})
+	*seq++
+	for _, c := range cols {
+		def := mysqlColumnDef(c)
+		_ = writeMySQLPacket(client, *seq, def)
+		*seq++
+	}
+	_ = writeMySQLPacket(client, *seq, []byte{0xfe, 0, 0, 2, 0})
+	*seq++
 	if guard != nil && guard.Mask != nil {
 		_, buffered = guard.Mask(cols, buffered)
 	}

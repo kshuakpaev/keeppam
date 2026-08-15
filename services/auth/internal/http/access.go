@@ -59,6 +59,7 @@ func (s *Server) handleListAccessRequests(w http.ResponseWriter, r *http.Request
 	}
 	// Approvers see all (optionally filtered); others see own.
 	canApprove := rbac.HasPermission(sess.Permissions, "access.approve") ||
+		rbac.HasPermission(sess.Permissions, "access.approve.security") ||
 		rbac.HasPermission(sess.Permissions, "assets.acl")
 	if !canApprove {
 		f.RequesterID = &sess.UserID
@@ -78,9 +79,14 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.itsm != nil {
-		pending, gerr := s.policy.GetRequest(r.Context(), id)
-		if gerr == nil {
+	pending, gerr := s.policy.GetRequest(r.Context(), id)
+	if gerr == nil {
+		need := policy.StagePermission(pending.Stage)
+		if !rbac.HasPermission(sess.Permissions, need) {
+			writeErr(w, http.StatusForbidden, "this stage requires "+need)
+			return
+		}
+		if s.itsm != nil {
 			if err := s.itsm.Enforce(r.Context(), "approve", pending.TicketID); err != nil {
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
@@ -97,7 +103,11 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if s.notify != nil {
-		s.notify.OnJITDecided(r.Context(), req)
+		if req.Status == "pending" {
+			s.notify.OnJITStage(r.Context(), req)
+		} else {
+			s.notify.OnJITDecided(r.Context(), req)
+		}
 	}
 	writeJSON(w, http.StatusOK, req)
 }
@@ -145,9 +155,10 @@ func (s *Server) handleCancelAccessRequest(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleAccessRequestsSummary(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
-	canApprove := rbac.HasPermission(sess.Permissions, "access.approve") ||
+	canManager := rbac.HasPermission(sess.Permissions, "access.approve") ||
 		rbac.HasPermission(sess.Permissions, "assets.acl")
-	sum, err := s.policy.RequestsSummary(r.Context(), sess.UserID, canApprove)
+	canSecurity := rbac.HasPermission(sess.Permissions, "access.approve.security")
+	sum, err := s.policy.RequestsSummary(r.Context(), sess.UserID, canManager, canSecurity)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

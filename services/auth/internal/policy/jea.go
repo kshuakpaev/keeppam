@@ -45,6 +45,7 @@ type AccessResult struct {
 	MaxRisk             int
 	RiskAction          string
 	RiskFactors         []string
+	Operation           string
 }
 
 func (s *Service) ListCommandPacks(ctx context.Context) ([]CommandPack, error) {

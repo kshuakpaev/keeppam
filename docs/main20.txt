@@ -1,0 +1,808 @@
+Да. Я бы для твоего **KeepPAM** сформировал roadmap именно так — от базового PAM до Enterprise PAM.
+
+## 1. Базовое ядро PAM — MVP
+
+Это то, без чего KeepPAM нельзя считать полноценным PAM.
+
+| №  | Функция                          | Приоритет |
+| -- | -------------------------------- | --------- |
+| 1  | Управление пользователями        | 🔴 MVP    |
+| 2  | Роли и группы                    | 🔴 MVP    |
+| 3  | Управление активами              | 🔴 MVP    |
+| 4  | SSH                              | 🔴 MVP    |
+| 5  | RDP/VNC                          | 🔴 MVP    |
+| 6  | Привязка пользователя к активу   | 🔴 MVP    |
+| 7  | RBAC                             | 🔴 MVP    |
+| 8  | MFA                              | 🔴 MVP    |
+| 9  | Запись сессий                    | 🔴 MVP    |
+| 10 | Аудит действий                   | 🔴 MVP    |
+| 11 | Временный доступ                 | 🔴 MVP    |
+| 12 | Принудительное завершение сессии | 🔴 MVP    |
+| 13 | Credential Vault                 | 🔴 MVP    |
+| 14 | Автоматическая смена паролей     | 🟠 V2     |
+| 15 | JIT-доступ                       | 🟠 V2     |
+
+---
+
+# 2. Контроль ОС
+
+Здесь KeepPAM уже становится значительно интереснее обычного bastion host.
+
+### SSH
+
+Контролировать:
+
+* login;
+* logout;
+* команды;
+* `sudo`;
+* `su`;
+* SCP;
+* SFTP;
+* port forwarding;
+* X11 forwarding;
+* SSH tunneling.
+
+Например:
+
+```text
+User: ivan
+Target: prod-linux-01
+
+ALLOW:
+    systemctl status nginx
+    systemctl restart nginx
+    journalctl -u nginx
+
+DENY:
+    useradd
+    passwd
+    rm -rf
+    iptables
+```
+
+### Важный момент
+
+Я бы разделил:
+
+**Session Access**
+
+и
+
+**Command Access**
+
+То есть:
+
+```text
+Иван может войти на сервер
+        ↓
+но не имеет права выполнять
+определённые команды
+```
+
+Это гораздо более мощная модель.
+
+---
+
+# 3. Контроль Windows
+
+Для RDP:
+
+```text
+RDP
+ │
+ ├── Login
+ ├── Clipboard
+ ├── File transfer
+ ├── Drive mapping
+ ├── Printer mapping
+ ├── USB
+ ├── Audio
+ └── Session recording
+```
+
+Например:
+
+> Разрешить RDP, но запретить Clipboard и Drive Mapping.
+
+Это уже хороший PAM-контроль.
+
+---
+
+# 4. Контроль БД
+
+С учётом того, что мы уже обсуждали PostgreSQL/MySQL, я бы сделал **три уровня**.
+
+### Level 1 — Database Session
+
+```text
+User
+ ↓
+KeepPAM
+ ↓
+PostgreSQL
+```
+
+Контроль:
+
+* кто подключился;
+* к какой БД;
+* какой пользователь БД;
+* время;
+* IP;
+* длительность.
+
+### Level 2 — SQL Audit
+
+Записываем:
+
+```sql
+SELECT ...
+INSERT ...
+UPDATE ...
+DELETE ...
+CREATE ...
+ALTER ...
+DROP ...
+```
+
+И связываем SQL с пользователем PAM:
+
+```text
+PAM User
+    ↓
+PAM Session
+    ↓
+DB Account
+    ↓
+SQL Query
+```
+
+### Level 3 — SQL Policy
+
+Например:
+
+```text
+SELECT       ALLOW
+INSERT       ALLOW
+UPDATE       APPROVAL
+DELETE       DENY
+DROP         DENY
+ALTER        DENY
+```
+
+А дальше можно идти ещё глубже:
+
+```text
+Database
+   ↓
+Schema
+   ↓
+Table
+   ↓
+Column
+   ↓
+Operation
+```
+
+Например:
+
+> Иван может `SELECT` из `users`, но не может читать `password_hash`.
+
+Это уже очень сильный функционал.
+
+---
+
+# 5. Контроль приложений
+
+Здесь я бы разделил приложение на несколько уровней.
+
+```text
+Application
+    │
+    ├── URL
+    ├── Function
+    ├── API
+    ├── Object
+    └── Operation
+```
+
+Например:
+
+```text
+CRM
+ │
+ ├── Просмотр клиента       ALLOW
+ ├── Создание клиента       ALLOW
+ ├── Изменение клиента      ALLOW
+ ├── Удаление клиента       DENY
+ ├── Экспорт клиентов       APPROVAL
+ └── Admin panel            DENY
+```
+
+---
+
+# 6. API Gateway / API PAM
+
+Очень перспективное направление.
+
+Например:
+
+```text
+POST /api/user
+GET /api/user
+PUT /api/user
+DELETE /api/user
+```
+
+KeepPAM может контролировать каждый endpoint.
+
+```text
+GET     ALLOW
+POST    ALLOW
+PUT     APPROVAL
+DELETE  DENY
+```
+
+И записывать:
+
+```text
+User
+API
+Method
+URL
+Request
+Response
+Timestamp
+Result
+```
+
+Это особенно хорошо для сервисной архитектуры и Kubernetes.
+
+---
+
+# 7. Network PAM
+
+Отдельный класс контроля.
+
+Политика:
+
+```text
+USER
+ ↓
+SOURCE
+ ↓
+TARGET
+ ↓
+PORT
+ ↓
+PROTOCOL
+```
+
+Например:
+
+```text
+Ivan
+→ 10.10.20.15
+→ TCP/22
+→ ALLOW
+```
+
+Но:
+
+```text
+Ivan
+→ 10.10.20.15
+→ TCP/5432
+→ DENY
+```
+
+При этом другой пользователь:
+
+```text
+DBA
+→ 10.10.20.15
+→ TCP/5432
+→ ALLOW
+```
+
+---
+
+# 8. JIT — Just-In-Time Access
+
+Очень рекомендую включить в архитектуру с самого начала.
+
+Не:
+
+```text
+Ivan → permanent → root
+```
+
+а:
+
+```text
+Ivan
+ ↓
+Request
+ ↓
+Approval
+ ↓
+root
+ ↓
+30 minutes
+ ↓
+automatic revoke
+```
+
+Например:
+
+> Доступ к production PostgreSQL на 45 минут.
+
+После 45 минут доступ автоматически исчезает.
+
+---
+
+# 9. JEA — Just Enough Administration
+
+Ещё лучше.
+
+Не выдавать:
+
+```text
+root
+```
+
+а выдавать:
+
+```text
+restart nginx
+view logs
+check status
+```
+
+То есть пользователь получает **минимально необходимую привилегию**.
+
+---
+
+# 10. Secret Management
+
+KeepPAM должен хранить:
+
+```text
+Passwords
+SSH Keys
+API Keys
+Tokens
+Certificates
+Service Accounts
+```
+
+Но пользователь **не должен видеть секрет**.
+
+Например:
+
+```text
+Ivan
+ ↓
+Request SSH
+ ↓
+KeepPAM
+ ↓
+получает credential из Vault
+ ↓
+SSH → Server
+```
+
+Пароль Иван никогда не увидел.
+
+После использования:
+
+```text
+Session END
+ ↓
+Credential rotation
+```
+
+---
+
+# 11. Session Recording
+
+Я бы сделал единый объект:
+
+```text
+PAM Session
+```
+
+В нём:
+
+```text
+User
+Target
+Protocol
+Source IP
+Device
+Start
+End
+Duration
+Commands
+SQL
+HTTP requests
+Recording
+Files
+Risk Score
+Ticket
+Approval
+```
+
+И тогда поиск:
+
+> Покажи все действия Ивана на PROD за 14 августа.
+
+может вернуть всё в одной временной линии.
+
+---
+
+# 12. DLP внутри PAM
+
+Очень интересный уровень.
+
+Контролировать:
+
+### SSH
+
+```text
+SCP
+SFTP
+```
+
+### RDP
+
+```text
+Clipboard
+File transfer
+Drive mapping
+USB
+```
+
+### Web
+
+```text
+Upload
+Download
+Copy/Paste
+```
+
+### DB
+
+```text
+SELECT massive dataset
+EXPORT
+COPY
+```
+
+Например:
+
+> Пользователь выгрузил 2 млн записей из PostgreSQL.
+
+PAM должен это увидеть.
+
+---
+
+# 13. Command Risk Engine
+
+Я бы сделал отдельный движок:
+
+```text
+Command
+    ↓
+Parser
+    ↓
+Risk Engine
+    ↓
+ALLOW / DENY / APPROVAL
+```
+
+Например:
+
+```text
+ls                       Risk 0
+systemctl status nginx   Risk 5
+systemctl restart nginx  Risk 10
+sudo                     Risk 30
+chmod 777                Risk 50
+useradd                  Risk 60
+iptables                 Risk 70
+rm -rf                   Risk 90
+DROP DATABASE            Risk 100
+```
+
+---
+
+# 14. Context-Based Access
+
+Политика может учитывать:
+
+```text
+USER
+ROLE
+TARGET
+TIME
+IP
+DEVICE
+LOCATION
+PROTOCOL
+COMMAND
+RISK
+TICKET
+```
+
+Например:
+
+```text
+IF
+    user.role = DBA
+AND
+    target.environment = PROD
+AND
+    time BETWEEN 09:00-18:00
+AND
+    source.network = CORPORATE
+AND
+    MFA = true
+
+THEN
+    ALLOW
+```
+
+А ночью:
+
+```text
+THEN
+    REQUIRE_APPROVAL
+```
+
+---
+
+# 15. Risk Engine
+
+Все факторы можно свести в:
+
+```text
+Risk Score
+```
+
+Например:
+
+```text
+User risk             10
+Unknown device        20
+Outside office        15
+Night time            20
+Production             30
+DROP TABLE             50
+-------------------------
+TOTAL                 145
+```
+
+Политика:
+
+```text
+0–30     ALLOW
+31–60    AUDIT
+61–90    MFA
+91–120   APPROVAL
+121+     DENY
+```
+
+---
+
+# 16. Ticket Integration
+
+Доступ можно связывать с заявкой:
+
+```text
+ServiceNow
+Jira
+GLPI
+OTRS
+```
+
+Получаем:
+
+```text
+Ticket #12345
+     ↓
+Access Request
+     ↓
+Approval
+     ↓
+JIT
+     ↓
+Session
+     ↓
+Audit
+```
+
+И потом можно доказать:
+
+> Почему пользователь получил доступ?
+
+Ответ:
+
+> Потому что была заявка №12345, согласованная Ивановым.
+
+---
+
+# 17. Approval Workflow
+
+Я бы сделал workflow engine:
+
+```text
+Request
+ ↓
+Manager Approval
+ ↓
+Security Approval
+ ↓
+System Owner Approval
+ ↓
+JIT Access
+```
+
+Причём для разных ресурсов разные правила.
+
+Например:
+
+```text
+DEV
+→ Manager
+
+TEST
+→ Manager
+
+PROD
+→ Manager + Security
+
+CORE DB
+→ Manager + Security + DBA
+```
+
+---
+
+# 18. Analytics
+
+Поверх всех этих данных можно сделать:
+
+### User Behavior
+
+```text
+Ivan normally:
+    09:00–18:00
+    3 servers
+    50 commands/day
+
+Today:
+    02:15
+    17 servers
+    1400 commands
+```
+
+→ **аномалия**.
+
+---
+
+# 19. Compliance
+
+Из PAM автоматически формируются:
+
+* кто имел доступ;
+* кто получил privileged access;
+* кто согласовал;
+* кто подключался;
+* какие команды выполнялись;
+* какие SQL-запросы выполнялись;
+* какие изменения внесены;
+* кто скачивал файлы;
+* когда доступ был отозван.
+
+Это уже база для требований типа:
+
+* ISO 27001;
+* PCI DSS;
+* SOC 2;
+* NIST;
+* внутреннего аудита.
+
+---
+
+# 20. Я бы построил KeepPAM вот таким образом
+
+```text
+                         KeepPAM
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+     IDENTITY            POLICY             VAULT
+        │                   │                   │
+    Users/Roles         RBAC/ABAC          Passwords
+    MFA                 JIT                SSH Keys
+    Groups              JEA                Tokens
+        │                   │
+        └──────────────┬────┘
+                       ↓
+                 ACCESS ENGINE
+                       │
+       ┌───────────────┼────────────────┐
+       ↓               ↓                ↓
+     SSH/RDP           DB              APP/API
+       │               │                │
+    Commands          SQL             HTTP/API
+       │               │                │
+       └───────────────┼────────────────┘
+                       ↓
+                  SESSION ENGINE
+                       │
+       ┌───────────────┼────────────────┐
+       ↓               ↓                ↓
+    Recording         Audit             DLP
+                       │
+                       ↓
+                  RISK ENGINE
+                       │
+                       ↓
+                SIEM / Analytics
+```
+
+### А самое главное
+
+Я бы **не делал отдельную систему правил для SSH, отдельную для DB и отдельную для HTTP**.
+
+Лучше сделать единый объект:
+
+**Policy**
+
+```text
+WHO
+WHAT
+WHERE
+WHEN
+FROM WHERE
+HOW
+CONTEXT
+ACTION
+```
+
+И уже протокол становится транспортом.
+
+То есть одна политика может выглядеть концептуально так:
+
+```text
+User:        DBA_Group
+Target:      PROD-POSTGRES
+Protocol:    PostgreSQL
+Database:    accounting
+Schema:      public
+Operation:   SELECT
+Time:        09:00-18:00
+Source:      Corporate Network
+MFA:         Required
+Approval:    Not required
+Recording:   Yes
+DLP:         Yes
+Action:      ALLOW
+```
+
+А другая:
+
+```text
+User:        DBA_Group
+Target:      PROD-POSTGRES
+Operation:   DROP
+Time:        Any
+Approval:    Required
+MFA:         Required
+Recording:   Yes
+Action:      APPROVAL
+```
+
+**Именно такой Policy Engine я бы считал центральным компонентом KeepPAM.** Тогда SSH, RDP, PostgreSQL, MySQL, HTTP/API и будущие протоколы становятся подключаемыми enforcement points, а не отдельными PAM-системами.

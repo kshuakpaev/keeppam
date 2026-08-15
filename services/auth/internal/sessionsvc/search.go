@@ -71,9 +71,15 @@ func EventSnippet(eventType string, payload map[string]any) string {
 		if line != "" {
 			return line
 		}
-	case "command_denied":
+	case "command_denied", "dlp", "risk":
 		if s := payloadString(payload, "command"); s != "" {
 			return "DENIED " + s
+		}
+		if s := payloadString(payload, "statement"); s != "" {
+			return "DENIED " + s
+		}
+		if r := payloadString(payload, "reason"); r != "" {
+			return "DENIED " + r
 		}
 	}
 	if s := payloadString(payload, "error"); s != "" {
@@ -144,7 +150,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))

@@ -132,6 +132,7 @@ export type Asset = {
   description: string;
   status: string;
   tags: string[];
+  approval_stages?: string[];
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -200,6 +201,9 @@ export type AccessRequest = {
   approver_username?: string;
   risk_score?: number;
   risk_factors?: string[];
+  approval_stages?: string[];
+  stage?: string;
+  approvals?: { stage: string; actor_id: string; username: string; created_at: string }[];
 };
 
 export type AuthSettings = {
@@ -716,6 +720,7 @@ export const api = {
     database_name?: string;
     description?: string;
     tags?: string[];
+    approval_stages?: string[];
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -734,6 +739,7 @@ export const api = {
       description?: string;
       status?: string;
       tags?: string[];
+      approval_stages?: string[];
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1193,6 +1199,8 @@ export type SQLPolicyPack = {
   tables: string[];
   mask_columns: string[];
   mask_replacement: string;
+  max_rows: number;
+  dlp_action: "truncate" | "deny" | string;
   created_at: string;
   updated_at: string;
 };
@@ -1205,6 +1213,8 @@ export type SQLPolicyPackInput = {
   tables: string[];
   mask_columns: string[];
   mask_replacement?: string;
+  max_rows?: number;
+  dlp_action?: string;
 };
 
 export type SessionEventHit = {

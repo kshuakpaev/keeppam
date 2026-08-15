@@ -3,6 +3,7 @@ package dbproxy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -23,22 +24,36 @@ type QueryResult struct {
 	Truncated bool      `json:"truncated,omitempty"`
 }
 
-const maxRows = 500
+const defaultMaxRows = 500
 const maxCell = 512
 
-func DialAndQuery(ctx context.Context, creds assets.TargetCreds, statement string) (QueryResult, error) {
+// ErrDLPRowLimit is returned when dlp_action=deny and the result exceeds max_rows.
+var ErrDLPRowLimit = errors.New("sql result exceeds DLP max_rows")
+
+func effectiveMaxRows(n int) int {
+	if n <= 0 {
+		return defaultMaxRows
+	}
+	if n > 100000 {
+		return 100000
+	}
+	return n
+}
+
+func DialAndQuery(ctx context.Context, creds assets.TargetCreds, statement string, maxRows int, dlpDeny bool) (QueryResult, error) {
 	statement = strings.TrimSpace(statement)
 	if statement == "" {
 		return QueryResult{}, fmt.Errorf("empty statement")
 	}
+	limit := effectiveMaxRows(maxRows)
 	start := time.Now()
 	var res QueryResult
 	var err error
 	switch creds.Asset.Protocol {
 	case "postgres":
-		res, err = queryPostgres(ctx, creds, statement)
+		res, err = queryPostgres(ctx, creds, statement, limit, dlpDeny)
 	case "mysql":
-		res, err = queryMySQL(ctx, creds, statement)
+		res, err = queryMySQL(ctx, creds, statement, limit, dlpDeny)
 	default:
 		return QueryResult{}, fmt.Errorf("unsupported db protocol: %s", creds.Asset.Protocol)
 	}
@@ -46,7 +61,7 @@ func DialAndQuery(ctx context.Context, creds assets.TargetCreds, statement strin
 	return res, err
 }
 
-func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement string) (QueryResult, error) {
+func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement string, limit int, dlpDeny bool) (QueryResult, error) {
 	db := ResolveDatabase("postgres", "", creds.Asset.DatabaseName)
 	dsn := PostgresDSN(creds, db)
 	conn, err := pgx.Connect(ctx, dsn)
@@ -68,7 +83,7 @@ func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement stri
 	}
 	out := QueryResult{Columns: cols, Rows: [][]string{}}
 	for rows.Next() {
-		if len(out.Rows) >= maxRows {
+		if len(out.Rows) >= limit {
 			out.Truncated = true
 			break
 		}
@@ -82,11 +97,14 @@ func queryPostgres(ctx context.Context, creds assets.TargetCreds, statement stri
 		}
 		out.Rows = append(out.Rows, row)
 	}
+	if out.Truncated && dlpDeny {
+		return QueryResult{}, fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
+	}
 	out.RowCount = len(out.Rows)
 	return out, rows.Err()
 }
 
-func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string) (QueryResult, error) {
+func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string, limit int, dlpDeny bool) (QueryResult, error) {
 	db := ResolveDatabase("mysql", "", creds.Asset.DatabaseName)
 	dsn := MySQLDSN(creds, db)
 	dbConn, err := sql.Open("mysql", dsn)
@@ -113,7 +131,7 @@ func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string)
 		ptrs[i] = &raw[i]
 	}
 	for rows.Next() {
-		if len(out.Rows) >= maxRows {
+		if len(out.Rows) >= limit {
 			out.Truncated = true
 			break
 		}
@@ -129,6 +147,9 @@ func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string)
 			}
 		}
 		out.Rows = append(out.Rows, row)
+	}
+	if out.Truncated && dlpDeny {
+		return QueryResult{}, fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
 	}
 	out.RowCount = len(out.Rows)
 	return out, rows.Err()

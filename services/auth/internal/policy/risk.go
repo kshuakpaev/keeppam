@@ -70,7 +70,7 @@ func (r AccessResult) RiskDenyMessage() string {
 		factors = "none"
 	}
 	msg := fmt.Sprintf("access denied by risk (score %d > %d, factors=%s)", r.RiskScore, r.MaxRisk, factors)
-	if r.RiskAction == "require_approval" {
+	if r.RiskAction == "require_approval" && r.Operation == "" {
 		msg += "; create a JIT request"
 	}
 	return msg

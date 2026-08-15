@@ -102,6 +102,7 @@ type AccessCheck struct {
 	ClientDevices []string
 	IgnoreTicket  bool
 	SkipRisk      bool
+	Operation     string // empty = connect; sql.ddl / k8s.delete / ssh.destructive / …
 }
 
 func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding, error) {

@@ -105,6 +105,9 @@ func (g *Gateway) prepareBrowser(ctx context.Context, row sessionsvc.Session, op
 		}
 		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("namespace not allowed by policy"))
 	}
+	if msg, deny := g.denyOpRisk(ctx, row, call, ""); deny {
+		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", msg))
+	}
 	if !opt.AllowExec && NeedsNamespaceListFilter(row.K8sNamespaces, call) {
 		body := SyntheticNamespaceList(row.K8sNamespaces, false)
 		g.noteCall(ctx, row, call, method, path, http.StatusOK)

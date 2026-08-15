@@ -39,7 +39,15 @@ export function AppLayout() {
   const notifyAsked = useRef(false);
 
   useEffect(() => {
-    if (!user || !hasPerm(user, "access.request")) return;
+    if (
+      !user ||
+      !(
+        hasPerm(user, "access.request") ||
+        hasPerm(user, "access.approve") ||
+        hasPerm(user, "access.approve.security")
+      )
+    )
+      return;
     let cancelled = false;
 
     async function tick() {
@@ -50,7 +58,7 @@ export function AppLayout() {
         setMyPending(sum.my_pending || 0);
 
         if (
-          hasPerm(user, "access.approve") &&
+          (hasPerm(user, "access.approve") || hasPerm(user, "access.approve.security")) &&
           sum.pending_approve > prevPending.current &&
           prevPending.current >= 0
         ) {
@@ -204,6 +212,8 @@ export function AppLayout() {
           {hasPerm(user, "assets.read") && <NavLink to="/assets">Активы</NavLink>}
           {hasPerm(user, "discovery.read") && <NavLink to="/discovery">Discovery</NavLink>}
           {hasPerm(user, "access.request") ||
+          hasPerm(user, "access.approve") ||
+          hasPerm(user, "access.approve.security") ||
           hasPerm(user, "access.breakglass") ||
           hasPerm(user, "assets.write") ? (
             <NavLink to="/access-requests">

@@ -232,6 +232,11 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 		cfg.Parameters["enable-wallpaper"] = "false"
 		cfg.Parameters["enable-font-smoothing"] = "true"
 		cfg.Parameters["disable-audio"] = "true"
+		cfg.Parameters["disable-copy"] = "true"
+		cfg.Parameters["enable-drive"] = "false"
+		cfg.Parameters["enable-printing"] = "false"
+	case "vnc":
+		cfg.Parameters["disable-copy"] = "true"
 	}
 	if s.cfg.RecordingsDir != "" {
 		recDir := filepath.Join(s.cfg.RecordingsDir, "guac")

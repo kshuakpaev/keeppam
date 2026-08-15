@@ -21,7 +21,7 @@ Deny-by-default: нет совпавшей привязки — отказ.
 
 На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval`).
 
-Score 0–100 (сумма, cap 100) в момент connect / JIT request:
+Score 0–100 (сумма, cap 100). **Connect / JIT request** — факторы окружения. **Операция внутри сессии** — те же факторы + баллы операции (JIT-окно connect-риск не отменяет).
 
 | Factor | Когда | Баллы |
 |--------|--------|-------|
@@ -31,18 +31,40 @@ Score 0–100 (сумма, cap 100) в момент connect / JIT request:
 | `concurrent` | pending+active сессии: 3–4 / ≥5 | 10 / 20 |
 | `anom_brute` | ≥8 fail за 24ч | 20 |
 | `anom_multi` | ≥4 разных актива за 24ч | 15 |
+| `op:sql.insert` / `update` / `delete` / `ddl` / `export` | SQL DML/DDL/COPY | 15 / 20 / 30 / 45 / 50 |
+| `op:k8s.write` / `delete` / `exec` | kubectl create/patch; delete; exec | 20 / 35 / 45 |
+| `op:ssh.destructive` / `priv` | `rm`/`dd`/… (при JEA pack); sudo без команды | 40 / 25 |
+
+`SELECT` / k8s GET не добавляют баллов и не перепроверяются.
 
 Если score > `max_risk`:
-- `deny` — отказ (в т.ч. создать JIT)
-- `require_approval` — отказ на connect, нужен JIT; после approve окно без порога
+- `deny` — отказ (в т.ч. создать JIT; операция в сессии — отказ без нового JIT)
+- `require_approval` — отказ на connect, нужен JIT; после approve **вход** без порога, **операции** (DDL, delete, …) порог всё ещё действует
 
-Break-glass и admin bypass риск не применяют. JIT-binding (`expires_at`) тоже.
+Break-glass и admin bypass риск не применяют. JIT-binding (`expires_at`) пропускает только **connect**-риск.
 
-Аудит: `access.risk.evaluated` (score, factors, decision). В `session.denied` / `*.access.denied` — `reason=risk`.
+Аудит: `access.risk.evaluated` (`phase=connect|operation`). Сессия: тип `risk`. В `session.denied` / `*.access.denied` — `reason=risk`.
 
-## 4-eyes
+`max_risk=0` — выкл. и connect, и операции.
 
-JIT-запрос доступа **нельзя одобрить самому себе** (API + UI). То же для dual-control checkout секретов.
+## 4-eyes / multi-stage JIT
+
+JIT-запрос **нельзя одобрить самому себе** (API + UI). Тот же человек не может закрыть два этапа подряд.
+
+На карточке актива: **JIT согласование**
+
+| Режим | Этапы | Кто жмёт «Одобрить» |
+|--------|--------|---------------------|
+| Только руководитель (default) | `manager` | `access.approve` |
+| Руководитель + ИБ | `manager` → `security` | сначала `access.approve`, затем **другой** пользователь с `access.approve.security` |
+
+Пока не пройдены все этапы, статус `pending`, поле `stage` — текущий. Binding (JIT-окно) создаётся только на последнем этапе.
+
+Роль `security` (seed): `access.approve.security` + `access.request` + `assets.read`. Admin имеет оба права approve, но не может одобрить оба этапа сам.
+
+Аудит: `access.request.stage` (промежуточный), `access.request.approved` (финал). Inbox `jit.stage` на следующий этап.
+
+То же dual-control для checkout секретов.
 
 ## Break-glass
 

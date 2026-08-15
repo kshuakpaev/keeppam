@@ -121,11 +121,13 @@ func (g *Gateway) handleConn(tcp net.Conn, cfg *ssh.ServerConfig) {
 	defer sc.Close()
 	_ = tcp.SetDeadline(time.Time{})
 
-	go ssh.DiscardRequests(reqs)
+	go g.handleGlobalReqs(sc, reqs)
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			_ = newCh.Reject(ssh.UnknownChannelType, "unknown")
+		chType := newCh.ChannelType()
+		if reason, deny := policy.SSHChannelDLP(chType); deny {
+			_ = newCh.Reject(ssh.Prohibited, reason)
+			g.auditSSHDLP(sc, reason, chType)
 			continue
 		}
 		ch, requests, err := newCh.Accept()
@@ -134,6 +136,36 @@ func (g *Gateway) handleConn(tcp net.Conn, cfg *ssh.ServerConfig) {
 		}
 		go g.handleSession(sc, ch, requests)
 	}
+}
+
+func (g *Gateway) handleGlobalReqs(sc *ssh.ServerConn, reqs <-chan *ssh.Request) {
+	for req := range reqs {
+		if reason, deny := policy.SSHRequestDLP(req.Type); deny {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+			g.auditSSHDLP(sc, reason, req.Type)
+			continue
+		}
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+	}
+}
+
+func (g *Gateway) auditSSHDLP(sc *ssh.ServerConn, reason, detail string) {
+	if sc.Permissions == nil {
+		return
+	}
+	ext := sc.Permissions.Extensions
+	uid, err := uuid.Parse(ext["user_id"])
+	if err != nil {
+		return
+	}
+	ip, _, _ := net.SplitHostPort(sc.RemoteAddr().String())
+	_ = g.audit.Record(context.Background(), &uid, "session.dlp.denied", "session", "", ip, "ssh", map[string]any{
+		"reason": reason, "detail": detail,
+	})
 }
 
 type ptyInfo struct {
@@ -186,8 +218,25 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 				startOnce.Do(func() { startCh <- sessStart{pty: pty} })
 			case "exec":
 				cmd, _ := parseExec(req.Payload)
+				if kind, ok := policy.FileTransferCommand(cmd); ok {
+					_ = req.Reply(false, nil)
+					g.auditSSHDLP(sc, "ssh file transfer denied by DLP", kind+": "+cmd)
+					continue
+				}
 				_ = req.Reply(true, nil)
 				startOnce.Do(func() { startCh <- sessStart{pty: pty, execCmd: cmd} })
+			case "subsystem":
+				name, _ := parseExec(req.Payload)
+				if reason, deny := policy.SSHSubsystemDLP(name); deny {
+					_ = req.Reply(false, nil)
+					g.auditSSHDLP(sc, reason, "subsystem:"+name)
+					continue
+				}
+				_ = req.Reply(false, nil)
+			case "x11-req":
+				reason, _ := policy.SSHRequestDLP("x11-req")
+				_ = req.Reply(false, nil)
+				g.auditSSHDLP(sc, reason, "x11-req")
 			case "window-change":
 				w, h, ok := parseWinChange(req.Payload)
 				if ok {
@@ -659,22 +708,54 @@ func be32(b []byte) uint32 {
 
 func (g *Gateway) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
+	var pack policy.CommandPack
+	hasPack := false
 	ev, err := g.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
 	})
-	if err != nil || !ev.OK || ev.CommandPolicyPackID == nil {
-		return opts
+	if err == nil && ev.OK && ev.CommandPolicyPackID != nil {
+		if p, err := g.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); err == nil {
+			pack, hasPack = p, true
+		}
 	}
-	pack, err := g.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID)
-	if err != nil {
+	if !hasPack {
 		return opts
 	}
 	opts.QuietEcho = true
 	opts.Guard = sshproxy.NewCommandGuard(func(line string) bool {
-		return policy.MatchCommand(pack, line)
+		if !policy.AllowSSHLine(pack, true, line) {
+			return false
+		}
+		op := policy.SSHOperation(line)
+		if op == "" {
+			return true
+		}
+		ev, err := g.policy.CheckOpRisk(ctx, policy.AccessCheck{
+			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass,
+			TicketID: ticketID, Operation: op,
+		})
+		return err != nil || ev.OK
 	})
 	opts.OnDenied = func(line string) {
 		bg := context.Background()
+		if kind, ok := policy.FileTransferCommand(line); ok {
+			_ = g.audit.Record(bg, &userID, "session.dlp.denied", "session", sessionID.String(), "", "ssh", map[string]any{
+				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
+			})
+			_ = g.sessions.AddEvent(bg, sessionID, "dlp", map[string]any{
+				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
+			})
+			return
+		}
+		if policy.AllowSSHLine(pack, true, line) {
+			_ = g.audit.Record(bg, &userID, "session.risk.denied", "session", sessionID.String(), "", "ssh", map[string]any{
+				"command": line, "operation": policy.SSHOperation(line),
+			})
+			_ = g.sessions.AddEvent(bg, sessionID, "risk", map[string]any{
+				"command": line, "operation": policy.SSHOperation(line),
+			})
+			return
+		}
 		_ = g.audit.Record(bg, &userID, "session.command.denied", "session", sessionID.String(), "", "jea", map[string]any{
 			"command": line, "pack": pack.Name, "mode": pack.Mode,
 		})

@@ -198,22 +198,54 @@ func (s *Server) resolveSQLPack(ctx context.Context, userID, assetID uuid.UUID, 
 
 func (s *Server) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
+	var pack policy.CommandPack
+	hasPack := false
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
 	})
-	if err != nil || !ev.OK || ev.CommandPolicyPackID == nil {
-		return opts
+	if err == nil && ev.OK && ev.CommandPolicyPackID != nil {
+		if p, err := s.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); err == nil {
+			pack, hasPack = p, true
+		}
 	}
-	pack, err := s.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID)
-	if err != nil {
+	if !hasPack {
 		return opts
 	}
 	opts.QuietEcho = true
 	opts.Guard = sshproxy.NewCommandGuard(func(line string) bool {
-		return policy.MatchCommand(pack, line)
+		if !policy.AllowSSHLine(pack, true, line) {
+			return false
+		}
+		op := policy.SSHOperation(line)
+		if op == "" {
+			return true
+		}
+		ev, err := s.policy.CheckOpRisk(ctx, policy.AccessCheck{
+			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass,
+			TicketID: ticketID, Operation: op,
+		})
+		return err != nil || ev.OK
 	})
 	opts.OnDenied = func(line string) {
 		bg := context.Background()
+		if kind, ok := policy.FileTransferCommand(line); ok {
+			_ = s.audit.Record(bg, &userID, "session.dlp.denied", "session", sessionID.String(), "", "ssh", map[string]any{
+				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
+			})
+			_ = s.sessionsvc.AddEvent(bg, sessionID, "dlp", map[string]any{
+				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
+			})
+			return
+		}
+		if policy.AllowSSHLine(pack, true, line) {
+			_ = s.audit.Record(bg, &userID, "session.risk.denied", "session", sessionID.String(), "", "ssh", map[string]any{
+				"command": line, "operation": policy.SSHOperation(line),
+			})
+			_ = s.sessionsvc.AddEvent(bg, sessionID, "risk", map[string]any{
+				"command": line, "operation": policy.SSHOperation(line),
+			})
+			return
+		}
 		_ = s.audit.Record(bg, &userID, "session.command.denied", "session", sessionID.String(), "", "jea", map[string]any{
 			"command": line, "pack": pack.Name, "mode": pack.Mode,
 		})

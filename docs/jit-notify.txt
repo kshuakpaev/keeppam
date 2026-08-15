@@ -8,8 +8,9 @@ In-app inbox + опциональный webhook + SMTP на заявки дос�
 
 | Событие | Кому |
 |---------|------|
-| JIT create | все с `access.approve`, кроме requester |
-| JIT approve/deny | requester |
+| JIT create | все с правом текущего этапа (`access.approve` для manager), кроме requester |
+| JIT stage | все с правом **следующего** этапа, кроме requester и тех, кто уже согласовал |
+| JIT approve/deny | requester (только финальный approve/deny, не промежуточный этап) |
 | Dual-control checkout create | все с `assets.write`, кроме requester |
 | Checkout approve/deny | requester |
 
@@ -35,7 +36,7 @@ UI: колокольчик в sidebar, poll 25s, клик → `/access-requests`
 | `auth_header` | write-only, шифруется (`Authorization` или `Header: value`) |
 | `timeout_sec` | 1–30, default 5 |
 
-Только `jit.created` / `jit.approved` / `jit.denied`. Checkout в webhook не уходит.
+Только `jit.created` / `jit.stage` / `jit.approved` / `jit.denied`. Checkout в webhook не уходит.
 
 Ошибка доставки **не** блокирует approve. Аудит `notify.webhook.failed`, `last_error` в UI.
 

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -136,22 +137,40 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			_ = conn.WriteJSON(map[string]any{"type": "pong"})
 		case "query":
-			if hasSQLPack {
-				ok, reason := policy.MatchSQL(sqlPack, msg.Statement)
-				if !ok {
-					denied := map[string]any{
-						"statement": truncateStr(msg.Statement, 8000), "reason": reason, "pack": sqlPack.Name, "denied": true,
-					}
-					_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", denied)
-					s.live.FanoutSQL(r.Context(), id, denied)
-					_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
-						"statement": truncateStr(msg.Statement, 2000), "reason": reason, "pack": sqlPack.Name,
-					})
-					_ = conn.WriteJSON(map[string]any{"type": "error", "error": reason})
-					continue
-				}
+			ok, reason := policy.AllowSQL(sqlPack, hasSQLPack, msg.Statement)
+			if !ok {
+				s.denySQLClient(r, conn.WriteJSON, authSess.UserID, id, msg.Statement, reason, sqlPack.Name)
+				continue
 			}
-			res, qerr := dbproxy.DialAndQuery(r.Context(), creds, msg.Statement)
+			if ev, err := s.policy.CheckOpRisk(r.Context(), policy.AccessCheck{
+				UserID: authSess.UserID, AssetID: row.AssetID, RoleNames: authSess.Roles,
+				Bypass: bypass, TicketID: row.TicketID, ClientIP: clientIP(r),
+				Operation: policy.SQLOperation(msg.Statement),
+			}); err == nil && !ev.OK {
+				reason := ev.DenyMessage()
+				s.denySQLClient(r, conn.WriteJSON, authSess.UserID, id, msg.Statement, reason, sqlPack.Name)
+				_ = s.sessionsvc.AddEvent(r.Context(), id, "risk", map[string]any{
+					"statement": truncateStr(msg.Statement, 8000), "reason": reason,
+					"operation": ev.Operation, "risk_score": ev.RiskScore, "max_risk": ev.MaxRisk,
+				})
+				continue
+			}
+			maxRows := policy.SQLRowLimit(sqlPack, hasSQLPack)
+			dlpDeny := policy.SQLDLPDeny(sqlPack, hasSQLPack)
+			res, qerr := dbproxy.DialAndQuery(r.Context(), creds, msg.Statement, maxRows, dlpDeny)
+			if qerr != nil && errors.Is(qerr, dbproxy.ErrDLPRowLimit) {
+				reason := qerr.Error()
+				denied := map[string]any{
+					"statement": truncateStr(msg.Statement, 8000), "reason": reason, "pack": sqlPack.Name, "denied": true,
+				}
+				_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", denied)
+				s.live.FanoutSQL(r.Context(), id, denied)
+				_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+					"statement": truncateStr(msg.Statement, 2000), "reason": reason, "pack": sqlPack.Name,
+				})
+				_ = conn.WriteJSON(map[string]any{"type": "error", "error": reason, "duration_ms": res.Duration})
+				continue
+			}
 			errMsg := ""
 			if qerr != nil {
 				errMsg = qerr.Error()
@@ -161,7 +180,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			rec.Record(msg.Statement, res.Duration, res.RowCount, errMsg)
 			sqlEv := map[string]any{
 				"statement": truncateStr(msg.Statement, 8000), "duration_ms": res.Duration,
-				"row_count": res.RowCount, "error": errMsg, "via": "sql-ws",
+				"row_count": res.RowCount, "error": errMsg, "via": "sql-ws", "truncated": res.Truncated,
 			}
 			_ = s.sessionsvc.AddEvent(r.Context(), id, "sql", sqlEv)
 			s.live.FanoutSQL(r.Context(), id, sqlEv)
@@ -181,6 +200,18 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.sessionsvc.MarkEnded(r.Context(), id, "")
+}
+
+func (s *Server) denySQLClient(r *http.Request, writeJSON func(v any) error, userID, sessionID uuid.UUID, stmt, reason, pack string) {
+	denied := map[string]any{
+		"statement": truncateStr(stmt, 8000), "reason": reason, "pack": pack, "denied": true,
+	}
+	_ = s.sessionsvc.AddEvent(r.Context(), sessionID, "sql_denied", denied)
+	s.live.FanoutSQL(r.Context(), sessionID, denied)
+	_ = s.audit.Record(r.Context(), &userID, "session.sql.denied", "session", sessionID.String(), clientIP(r), r.UserAgent(), map[string]any{
+		"statement": truncateStr(stmt, 2000), "reason": reason, "pack": pack,
+	})
+	_ = writeJSON(map[string]any{"type": "error", "error": reason})
 }
 
 func truncateStr(s string, n int) string {

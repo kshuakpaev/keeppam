@@ -22,6 +22,17 @@ func TestMatchSQLAllowlist(t *testing.T) {
 	}
 }
 
+func TestClassifySQLExport(t *testing.T) {
+	verb, _ := ClassifySQL("COPY tickets TO STDOUT")
+	if verb != "EXPORT" {
+		t.Fatalf("COPY verb=%s", verb)
+	}
+	verb, _ = ClassifySQL("LOAD DATA INFILE '/tmp/x' INTO TABLE t")
+	if verb != "EXPORT" {
+		t.Fatalf("LOAD verb=%s", verb)
+	}
+}
+
 func TestMaskSQLResult(t *testing.T) {
 	pack := SQLPack{MaskColumns: []string{"amount"}, MaskReplacement: "***"}
 	cols, rows := MaskSQLResult(pack, []string{"id", "amount"}, [][]string{{"1", "1200"}})
