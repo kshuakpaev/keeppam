@@ -53,6 +53,18 @@ func TestK8sOperation(t *testing.T) {
 	}
 }
 
+func TestHTTPOperationPoints(t *testing.T) {
+	if HTTPOperation("GET") != "" {
+		t.Fatal("get")
+	}
+	if p, f := operationPoints("http.write"); p != 20 || f != "op:http.write" {
+		t.Fatalf("%d %s", p, f)
+	}
+	if p, f := operationPoints("http.delete"); p != 35 || f != "op:http.delete" {
+		t.Fatalf("%d %s", p, f)
+	}
+}
+
 func TestOperationPoints(t *testing.T) {
 	if p, _ := operationPoints(""); p != 0 {
 		t.Fatal("empty")

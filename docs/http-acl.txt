@@ -1,0 +1,58 @@
+# KeepPAM: API / URL ACL
+
+Контроль HTTP method+path внутри PAM-сессии. Не WAF и не контентный DLP: шлюз режет запрос до upstream.
+
+## Пакеты
+
+Таблица `http_policy_packs` (миграция `046`), CRUD как у SQL JEA: `/api/v1/admin/jea/http-packs` (`jea.read` / `jea.write`). UI: **JEA → HTTP / URL ACL**.
+
+Правило: `METHOD PATH` (по одному в строке).
+
+| Поле | Смысл |
+|------|--------|
+| METHOD | `GET` `HEAD` `POST` `PUT` `PATCH` `DELETE` `OPTIONS` `*` |
+| PATH | glob, `*` совпадает в том числе с `/`. Query игнорируется |
+
+Примеры: `GET *`, `POST /api/tickets`, `* /admin*`, `DELETE *`. Строка без метода = `* PATH`.
+
+| Режим | Поведение |
+|--------|-----------|
+| `allowlist` | разрешено только совпадение хотя бы с одним правилом; пустой список = deny all |
+| `denylist` | запрет совпавших; пустой список = allow all |
+
+Без пакета на ACL URL не режется (как SQL JEA). Deny-by-default остаётся на **connect** (`policy.Evaluate`).
+
+Привязка: `asset_access_bindings.http_policy_pack_id`. Снимок на сессию при создании (`sessions.http_policy_pack_id`).
+
+Seed: `http-readonly` (GET/HEAD/OPTIONS *), `http-block-admin` (`* /admin*`, `DELETE *`).
+
+## Где enforce
+
+| Канал | Поведение |
+|-------|-----------|
+| HTTPS reverse-proxy `recording_mode=full` (`/sessions/{id}/app`) | 403 до upstream, запись в HAR-like jsonl |
+| kubectl `:16443` и cookie API (apply/exec/object) | 403, k8s Status |
+
+Isolated Chromium (VNC) **не** видит HTTP ACL: браузер ходит на приложение напрямую.
+
+## Риск операции
+
+При `max_risk` на ACL (JIT-окно connect-риск не отменяет):
+
+| Метод | Операция | Баллы |
+|-------|----------|-------|
+| GET / HEAD / OPTIONS | — | 0 (не перепроверяется) |
+| POST / PUT / PATCH | `http.write` | 20 |
+| DELETE | `http.delete` | 35 |
+
+OPA extra-deny видит `request.operation`.
+
+## Аудит / forensic
+
+- `session.http.denied` (pack deny) — событие сессии `http_denied`
+- риск — тип `risk`, как SQL/k8s
+- Сессии → События, фильтр `http_denied`
+
+## Вне scope
+
+GraphQL field ACL, тело запроса/ответа, isolated browser URL, отдельный API gateway вне PAM-сессии.

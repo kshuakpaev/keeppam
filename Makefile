@@ -1,10 +1,18 @@
-.PHONY: up down logs tidy api-run smoke web-build api-build
+.PHONY: up down logs tidy api-run smoke web-build api-build sbom geoip-mmdb
 
 web-build:
 	cd web && npm install && npm run build
 
 api-build:
 	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && CGO_ENABLED=0 GOOS=linux go build -o ../../deploy/auth-server ./cmd/server
+
+sbom:
+	mkdir -p deploy/sbom
+	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && go run ./cmd/sbom > ../../deploy/sbom/keeppam-api.cdx.json
+
+geoip-mmdb:
+	mkdir -p deploy/geoip
+	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && go run ./cmd/geoip-mmdb ../../deploy/geoip/country-demo.mmdb
 
 # Сборка на хосте — без pull golang/node из Docker Hub (офлайн / IPv6).
 up: api-build web-build

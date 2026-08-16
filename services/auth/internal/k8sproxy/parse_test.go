@@ -27,4 +27,10 @@ func TestParseAPIPath(t *testing.T) {
 	if !ParseAPIPath("POST", "/api/v1/namespaces/n/pods/p/exec", false).Denied() {
 		t.Fatal("exec should be denied")
 	}
+	if !ParseAPIPath("GET", "/api/v1/namespaces/n/pods/p/attach", false).Denied() {
+		t.Fatal("attach should be denied")
+	}
+	if !ParseAPIPath("GET", "/api/v1/namespaces/n/pods/p/portforward", false).Denied() {
+		t.Fatal("portforward should be denied")
+	}
 }

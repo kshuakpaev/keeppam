@@ -14,6 +14,7 @@ func TestEventSnippet(t *testing.T) {
 		{"command_denied", map[string]any{"command": "rm -rf /"}, "DENIED rm -rf /"},
 		{"dlp", map[string]any{"command": "scp -t /tmp/x"}, "DENIED scp -t /tmp/x"},
 		{"risk", map[string]any{"statement": "DROP TABLE t"}, "DENIED DROP TABLE t"},
+		{"http_denied", map[string]any{"method": "DELETE", "path": "/admin", "reason": "http denied by ACL: DELETE /admin"}, "DENIED DELETE /admin (http denied by ACL: DELETE /admin)"},
 		{"started", map[string]any{}, "started"},
 	}
 	for _, tc := range cases {

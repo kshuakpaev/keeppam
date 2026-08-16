@@ -51,6 +51,7 @@ Parse failure: allow + raw audit (strict_sql_parse не требуется в MV
 - App-A: app_integrations + credential lease / OIDC broker — реализовано
 - App-B: HTTPS reverse-proxy + metadata recording — реализовано (`recording_mode=full`)
 - App-C: isolated Chromium via Guacamole VNC — реализовано (`recording_mode=isolated`)
+- App-D: HTTP/URL ACL (method+path packs) — реализовано (`docs/http-acl.txt`; reverse-proxy + kubectl, не isolated)
 
 Wire/SQL: клиентский `database=` должен совпадать с `database_name` сессии (иначе отказ).
 
@@ -64,7 +65,7 @@ Wire/SQL: клиентский `database=` должен совпадать с `d
 
 ## Prod infra
 
-См. `docs/prod-infra.txt`: KeyProvider (`env|file|vault|aws|gcp|azure`), hybrid S3 recordings, optional API TLS/mTLS, UI статус в Конфигурация.
+См. `docs/prod-infra.txt`: KeyProvider (`env|file|vault|aws|gcp|azure|pkcs11`), hybrid S3 recordings, optional API TLS/mTLS, UI статус в Конфигурация.
 
 ## Vault checkout / rotation
 

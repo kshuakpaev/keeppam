@@ -1,6 +1,10 @@
 package geoip
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestClassifyLAN(t *testing.T) {
 	cases := map[string]string{
@@ -61,5 +65,46 @@ func TestValidateCountries(t *testing.T) {
 	}
 	if _, err := ValidateCountries([]string{"Russia"}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDemoMMDB(t *testing.T) {
+	path := t.TempDir() + "/demo.mmdb"
+	if err := WriteDemoMMDB(path); err != nil {
+		t.Fatal(err)
+	}
+	l := New(path)
+	if !l.Loaded() || l.DatabaseType() != DemoDatabaseType {
+		t.Fatalf("loaded=%v type=%q", l.Loaded(), l.DatabaseType())
+	}
+	if got := l.Country("8.8.8.8"); got != "US" {
+		t.Fatalf("google %q", got)
+	}
+	if got := l.Country("77.88.8.8"); got != "RU" {
+		t.Fatalf("yandex %q", got)
+	}
+	if got := l.Country("10.1.2.3"); got != "LAN" {
+		t.Fatalf("lan %q", got)
+	}
+	if got := l.Country("9.9.9.9"); got != "US" {
+		t.Fatalf("quad9 %q", got)
+	}
+}
+
+func TestRequestClientIP(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.9:1234"
+	r.Header.Set("X-Forwarded-For", "8.8.8.8, 10.0.0.9")
+	if got := RequestClientIP(r, nil); got != "10.0.0.9" {
+		t.Fatalf("untrusted %q", got)
+	}
+	if got := RequestClientIP(r, ParseProxyCIDRs("10.0.0.0/8")); got != "8.8.8.8" {
+		t.Fatalf("xff %q", got)
+	}
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.RemoteAddr = "203.0.113.9:9"
+	r2.Header.Set("X-Forwarded-For", "8.8.8.8")
+	if got := RequestClientIP(r2, ParseProxyCIDRs("10.0.0.0/8")); got != "203.0.113.9" {
+		t.Fatalf("public client %q", got)
 	}
 }

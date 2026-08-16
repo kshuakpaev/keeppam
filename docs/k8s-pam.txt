@@ -43,7 +43,7 @@ Checkout/Reveal по-прежнему показывает vault-секрет (`
 2. Ответ / `GET .../sessions/{id}/kubeconfig` — **переписанный** kubeconfig (server=PAM, token=`{session}.{wire}`). Vault SA **не** отдаётся.
 3. TLS listener `KEEPPAM_K8S_API_ADDR` (default `:16443`), self-signed в `KEEPPAM_K8S_TLS_PATH`.
 4. Аудит `session.k8s` + NDJSON `{recordings}/k8s/{id}.jsonl`: verb/resource/namespace/name/status, `body_redacted`.
-5. Deny: exec / attach / port-forward / HTTP Upgrade **на :16443**. Impersonate-заголовки клиента снимаются. Exec из браузера (фаза 6) идёт через cookie API.
+5. Deny: exec / attach / port-forward / HTTP Upgrade **на :16443**. Impersonate-заголовки клиента снимаются. Exec из браузера (фаза 6) идёт через cookie API. Опциональный HTTP/URL pack на ACL режет method+path (см. `docs/http-acl.txt`).
 
 ```bash
 export KUBECONFIG=./keeppam-xxxxxxxx.kubeconfig
@@ -122,7 +122,7 @@ Vault SA: `create token` + create ServiceAccount + create/delete Secret в names
 
 Аудит: `session.k8s.token_requested` (`bind_user`, `bound_kind`, `bound_name`).
 
-## Phase 6 — write + exec в браузере
+## Phase 6 — write + exec / attach / port-forward в браузере
 
 Cookie API (не kubeconfig к `:16443`):
 
@@ -133,12 +133,17 @@ Cookie API (не kubeconfig к `:16443`):
 | POST | `/api/v1/admin/sessions/{id}/k8s/delete` `{resource, group, namespace, name}` |
 | POST | `/api/v1/admin/sessions/{id}/k8s/exec` one-shot `{namespace, pod, container, command}` |
 | GET WS | `/api/v1/sessions/{id}/k8s/exec?namespace=&pod=&container=&command=` |
+| GET WS | `/api/v1/sessions/{id}/k8s/attach?namespace=&pod=&container=` |
+| POST | `/api/v1/admin/sessions/{id}/k8s/portforward` `{namespace, pod, port, method, path, body}` |
 
 Apply: YAML/JSON (в т.ч. `---`). POST create, 409 → GET resourceVersion + PUT. Namespace ACL как у proxy. `deletecollection` запрещён. Secret с `***` сохранить нельзя — только Apply с реальными значениями. Ответ Secret по-прежнему `***`. Recording `body_redacted`.
 
-Exec: SPDY/Upgrade на `:16443` **deny**. В браузере PAM открывает Kubernetes channel websocket (`v4.channel.k8s.io`), xterm в карточке сессии. Аудит `session.k8s.exec` (pod/container/command, без stdout).
+Exec/attach: SPDY/Upgrade на `:16443` **deny**. В браузере PAM открывает Kubernetes channel websocket (`v4.channel.k8s.io`), xterm в карточке сессии. Attach — без command, stdin/stdout к уже запущенному процессу. Аудит `session.k8s.exec` / `session.k8s.attach` (pod/container/command, без stdout).
+
+Port-forward: на `:16443` **deny**, слушатель на хосте PAM **не** открывается. Браузер шлёт одноразовый HTTP (GET/POST/…) на `pod:port/path`; PAM поднимает k8s `portforward` websocket и проксирует HTTP/1.1. Ответ ≤ 1MiB; `Set-Cookie` / `Authorization` редактируются. Аудит `session.k8s.portforward` (`body_redacted`). Риск как `k8s.exec` (45). HTTP/URL pack режет path `/api/v1/namespaces/.../pods/.../{exec,attach,portforward}`.
 
 ## Вне scope
 
 - запись тел Secret в recording (по-прежнему `body_redacted`)
-- attach / port-forward
+- TCP listener на PAM / произвольный TCP из браузера (только HTTP probe)
+- kubectl port-forward через kubeconfig к `:16443`

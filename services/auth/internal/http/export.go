@@ -94,7 +94,7 @@ func (s *Server) handleExportMP4(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "encoder finished but mp4 missing")
 		return
 	}
-	_ = s.audit.Record(r.Context(), &sess.UserID, "session.export_mp4", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &sess.UserID, "session.export_mp4", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"path": mp4,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -48,7 +48,7 @@ func (s *Server) handleCreateCommandPack(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	p, err := s.policy.CreateCommandPack(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	p, err := s.policy.CreateCommandPack(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -68,7 +68,7 @@ func (s *Server) handleUpdateCommandPack(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	p, err := s.policy.UpdateCommandPack(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	p, err := s.policy.UpdateCommandPack(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -87,7 +87,7 @@ func (s *Server) handleDeleteCommandPack(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.policy.DeleteCommandPack(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.policy.DeleteCommandPack(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
@@ -132,7 +132,7 @@ func (s *Server) handleCreateSQLPack(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	p, err := s.policy.CreateSQLPack(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	p, err := s.policy.CreateSQLPack(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -152,7 +152,7 @@ func (s *Server) handleUpdateSQLPack(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	p, err := s.policy.UpdateSQLPack(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	p, err := s.policy.UpdateSQLPack(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -171,7 +171,91 @@ func (s *Server) handleDeleteSQLPack(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.policy.DeleteSQLPack(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.policy.DeleteSQLPack(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListHTTPPacks(w http.ResponseWriter, r *http.Request) {
+	list, err := s.policy.ListHTTPPacks(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"packs": list})
+}
+
+func (s *Server) handleGetHTTPPack(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	p, err := s.policy.GetHTTPPack(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleCreateHTTPPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	var in policy.HTTPPackInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	p, err := s.policy.CreateHTTPPack(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) handleUpdateHTTPPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in policy.HTTPPackInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	p, err := s.policy.UpdateHTTPPack(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleDeleteHTTPPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := s.policy.DeleteHTTPPack(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return

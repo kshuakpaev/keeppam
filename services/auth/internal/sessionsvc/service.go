@@ -37,6 +37,7 @@ type Session struct {
 	DBPrivilege     string     `json:"db_privilege,omitempty"`
 	DatabaseName    string     `json:"database_name,omitempty"`
 	SQLPolicyPackID *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
+	HTTPPolicyPackID *uuid.UUID `json:"http_policy_pack_id,omitempty"`
 	K8sNamespaces   []string   `json:"k8s_namespaces,omitempty"`
 	BreakGlass      bool       `json:"break_glass"`
 	// Joined fields for UI
@@ -99,6 +100,7 @@ type CreateInput struct {
 	DBPrivilege  string // readonly|readwrite for postgres/mysql
 	DatabaseName    string     // target database/schema name
 	SQLPolicyPackID *uuid.UUID // optional SQL JEA pack snapshot
+	HTTPPolicyPackID *uuid.UUID // optional HTTP/URL ACL pack snapshot
 	K8sNamespaces   []string
 	Isolated        bool       // https isolated Chromium via VNC
 	BreakGlass      bool
@@ -153,10 +155,10 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		ns = []string{}
 	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, k8s_namespaces, break_glass, created_at)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, k8s_namespaces, break_glass, created_at)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
-		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, ns, in.BreakGlass, now)
+		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, ns, in.BreakGlass, now)
 	if err != nil {
 		return Session{}, err
 	}
@@ -294,6 +296,7 @@ const sessionSelect = `
 		SELECT s.id, s.user_id, s.asset_id, s.account_id, s.protocol, s.status, s.client_ip,
 			s.recording_path, s.error_message, s.started_at, s.ended_at, s.last_seen_at, s.created_at,
 			s.ticket_id, s.reason, COALESCE(s.db_privilege,''), COALESCE(s.database_name,''), s.sql_policy_pack_id,
+			s.http_policy_pack_id,
 			COALESCE(s.k8s_namespaces,'{}'), COALESCE(s.break_glass,false),
 			u.username, a.name, aa.username, a.address,
 			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
@@ -430,7 +433,7 @@ func scanSession(row scannable) (Session, error) {
 	err := row.Scan(
 		&s.ID, &s.UserID, &s.AssetID, &s.AccountID, &s.Protocol, &s.Status, &s.ClientIP,
 		&s.RecordingPath, &s.ErrorMessage, &s.StartedAt, &s.EndedAt, &s.LastSeenAt, &s.CreatedAt,
-		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID,
+		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID, &s.HTTPPolicyPackID,
 		&s.K8sNamespaces, &s.BreakGlass,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
 	)

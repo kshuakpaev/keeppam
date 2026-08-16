@@ -1,0 +1,39 @@
+# KeepPAM: FIPS posture + SBOM
+
+Не сертификация лаборатории и не смена toolchain на стенде. Поза для аудита: видно, **какой криптобэкенд** в бинарнике, и **какой состав модулей** сейчас запущен.
+
+## FIPS
+
+Стенд собирается `CGO_ENABLED=0` обычным Go 1.23 → backend `go` (стандартная библиотека). Это **не** FIPS 140 модуль.
+
+| Как включить | Go | Примечание |
+|--------------|-----|------------|
+| `GOEXPERIMENT=boringcrypto` | 1.23 | обычно нужен CGO и boringcrypto-сборка toolchain |
+| `GOFIPS140=on` | 1.24+ | in-tree FIPS 140-3 |
+
+`KEEPPAM_FIPS_REQUIRED=true` — процесс **не стартует**, если backend не `boringcrypto`/`fips140`. На compose не включать.
+
+Контроль `fips_crypto`: pass на FIPS-сборке, иначе **warn** (fail только если required, но тогда API уже не поднимется).
+
+Инфра: `fips`, `fips_required`, `go_version`, `cgo_enabled`.
+
+### Что считается «совместимым» при FIPS-сборке
+
+AES-GCM Envelope, HMAC-SHA256, SHA-256, TLS ≥ 1.2 — примитивы stdlib. Вне FIPS-модуля остаются в том числе scrypt (PKCS#11 software token), часть `golang.org/x/crypto` (SSH), WebAuthn/TOTP как протокол.
+
+## SBOM
+
+CycloneDX 1.5 из `runtime/debug.ReadBuildInfo` (граф модулей **этого** бинарника).
+
+- `GET /api/v1/admin/settings/sbom` — `settings.write` или `compliance.read`
+- UI: Конфигурация и Compliance → «Скачать CycloneDX»
+- `KEEPPAM_SBOM_FILE` — готовый JSON (syft/cdxgen); если задан, он вместо runtime
+- CLI: `go run ./cmd/sbom` (из `services/auth`); `make sbom` пишет `deploy/sbom/keeppam-api.cdx.json` (не в git)
+
+Контроль `sbom`: pass, если есть компоненты. Пакеты: baseline + sox-lite + pci-lite; `fips_crypto` — sox/pci.
+
+Web: `npm sbom` (npm 10+) при необходимости отдельно; API SBOM — основной артефакт.
+
+## Стенд
+
+`fips=go`, SBOM runtime. Документ не утверждает FIPS-сертификацию KeepPAM.

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, hasPerm, type AccessBinding, type AppIntegration, type AppLease, type Asset, type AssetAccount, type CommandPolicyPack, type Role, type SQLPolicyPack, type User } from "../api";
+import { api, hasPerm, type AccessBinding, type AppIntegration, type AppLease, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
 import { kindForProtocol, useSessionTabs } from "../sessionTabs";
 
@@ -19,6 +19,7 @@ export function AssetEditPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [cmdPacks, setCmdPacks] = useState<CommandPolicyPack[]>([]);
   const [sqlPacks, setSqlPacks] = useState<SQLPolicyPack[]>([]);
+  const [httpPacks, setHttpPacks] = useState<HTTPPolicyPack[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
@@ -68,6 +69,7 @@ export function AssetEditPage() {
     allowed_namespaces: "",
     command_policy_pack_id: "",
     sql_policy_pack_id: "",
+    http_policy_pack_id: "",
     max_risk: "0",
     risk_action: "deny",
   });
@@ -127,12 +129,18 @@ export function AssetEditPage() {
       }
       if (canACL || hasPerm(user, "jea.read")) {
         try {
-          const [pk, sp] = await Promise.all([api.listCommandPacks(), api.listSQLPacks()]);
+          const [pk, sp, hp] = await Promise.all([
+            api.listCommandPacks(),
+            api.listSQLPacks(),
+            api.listHTTPPacks(),
+          ]);
           setCmdPacks(pk.packs || []);
           setSqlPacks(sp.packs || []);
+          setHttpPacks(hp.packs || []);
         } catch {
           setCmdPacks([]);
           setSqlPacks([]);
+          setHttpPacks([]);
         }
       }
       if (a.protocol === "https" && (hasPerm(user, "apps.read") || canWrite)) {
@@ -552,6 +560,7 @@ export function AssetEditPage() {
         allowed_namespaces?: string[];
         command_policy_pack_id?: string;
         sql_policy_pack_id?: string;
+        http_policy_pack_id?: string;
         max_risk?: number;
         risk_action?: string;
       } = {
@@ -602,6 +611,9 @@ export function AssetEditPage() {
       if (aclForm.sql_policy_pack_id) {
         body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
       }
+      if (aclForm.http_policy_pack_id) {
+        body.http_policy_pack_id = aclForm.http_policy_pack_id;
+      }
       const maxRisk = Number(aclForm.max_risk);
       if (maxRisk > 0) {
         body.max_risk = maxRisk;
@@ -626,6 +638,7 @@ export function AssetEditPage() {
         allowed_namespaces: "",
         command_policy_pack_id: "",
         sql_policy_pack_id: "",
+        http_policy_pack_id: "",
         max_risk: "0",
         risk_action: "deny",
       });
@@ -1610,7 +1623,7 @@ export function AssetEditPage() {
         <h2>Политика доступа</h2>
         <p className="muted">
           Deny-by-default + ABAC: tags, ticket, reason, CIDR, geo, device, K8s namespaces. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
-          JEA: SSH command pack и SQL table/mask pack (см. <Link to="/jea">JEA</Link>).
+          JEA: SSH command pack, SQL table/mask pack и HTTP/URL ACL (см. <Link to="/jea">JEA</Link>).
         </p>
         <table>
           <thead>
@@ -1622,6 +1635,7 @@ export function AssetEditPage() {
               <th>Risk</th>
               <th>SSH JEA</th>
               <th>SQL JEA</th>
+              <th>HTTP ACL</th>
               <th>Истекает</th>
               <th />
             </tr>
@@ -1664,6 +1678,9 @@ export function AssetEditPage() {
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.sql_policy_pack_name || "—"}
                 </td>
+                <td className="mono" style={{ fontSize: "0.85rem" }}>
+                  {b.http_policy_pack_name || "—"}
+                </td>
                 <td className="mono">
                   {b.expires_at ? (
                     <>
@@ -1689,7 +1706,7 @@ export function AssetEditPage() {
             ))}
             {bindings.length === 0 && (
               <tr>
-                <td colSpan={9} className="muted">
+                <td colSpan={10} className="muted">
                   Привязок нет — доступ только у admin
                 </td>
               </tr>
@@ -1824,11 +1841,11 @@ export function AssetEditPage() {
             onChange={(e) => setAclForm({ ...aclForm, allowed_countries: e.target.value })}
             placeholder="LAN, RU, KZ"
           />
-          <label>Allowed devices (TLS / WEBAUTHN / SSH / fingerprint, пусто = любое)</label>
+          <label>Allowed devices (TLS / WEBAUTHN / SSH / SPIFFE / spiffe://…, пусто = любое)</label>
           <input
             value={aclForm.allowed_devices}
             onChange={(e) => setAclForm({ ...aclForm, allowed_devices: e.target.value })}
-            placeholder="WEBAUTHN, TLS, SSH"
+            placeholder="WEBAUTHN, TLS, SPIFFE, spiffe://keeppam.local/ns/prod/*"
           />
           <label>Allowed namespaces (kubectl, пусто = любой)</label>
           <input
@@ -1855,6 +1872,18 @@ export function AssetEditPage() {
           >
             <option value="">— без table/mask политики —</option>
             {sqlPacks.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.mode})
+              </option>
+            ))}
+          </select>
+          <label>HTTP / URL ACL pack (https и kubectl, опц.)</label>
+          <select
+            value={aclForm.http_policy_pack_id}
+            onChange={(e) => setAclForm({ ...aclForm, http_policy_pack_id: e.target.value })}
+          >
+            <option value="">— без ограничения URL —</option>
+            {httpPacks.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.mode})
               </option>

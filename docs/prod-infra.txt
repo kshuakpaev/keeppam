@@ -12,8 +12,9 @@
 | `aws` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_AWS_ACCESS_KEY`, `KEEPPAM_AWS_SECRET_KEY`, `KEEPPAM_AWS_REGION` | AWS KMS Decrypt (SigV4, без SDK) |
 | `gcp` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_GCP_KMS_KEY`, token или GCE metadata | Cloud KMS `:decrypt` |
 | `azure` | `KEEPPAM_KMS_CIPHERTEXT`, `KEEPPAM_AZURE_VAULT_URL`, `KEEPPAM_AZURE_KEY_NAME`, token или client credentials | Key Vault unwrapkey / decrypt |
+| `pkcs11` | `KEEPPAM_PKCS11_TOKEN_FILE` + PIN + `KEEPPAM_KMS_CIPHERTEXT`, или `KEEPPAM_PKCS11_HELPER` | HSM / software token, см. `docs/pkcs11.txt` |
 
-Ключ по-прежнему питает локальный AES-GCM Envelope (секреты учёток / SIEM / SSH CA / audit HMAC). Cloud unwrap — см. `docs/kms.txt`. PKCS#11 не встроен.
+Ключ по-прежнему питает локальный AES-GCM Envelope (секреты учёток / SIEM / SSH CA / audit HMAC). Cloud unwrap — см. `docs/kms.txt`. PKCS#11 — `docs/pkcs11.txt` (`KEEPPAM_DATA_KEY_SOURCE=pkcs11`).
 
 ## Recordings store
 
@@ -40,14 +41,34 @@ Bucket должен быть создан с Object Lock enabled (MinIO: `mc mb 
 - `KEEPPAM_TLS_CLIENT_CA_FILE` — проверка клиентского сертификата
 - `KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true` — обязательный mTLS; иначе optional (`VerifyClientCertIfGiven`)
 
+SPIFFE (файловый SVID / bundle, без SPIRE в compose) — `docs/spiffe.txt`:
+
+- `KEEPPAM_SPIFFE_TRUST_DOMAIN` — фильтр URI SAN
+- `KEEPPAM_SPIFFE_SVID_FILE` + `KEEPPAM_SPIFFE_SVID_KEY_FILE` — identity процесса; если TLS cert пуст, ими слушает HTTPS
+- `KEEPPAM_SPIFFE_BUNDLE_FILE` — доп. Client CA
+
 Рекомендуется `KEEPPAM_COOKIE_SECURE=true` при включённом TLS.
 
 ## GeoIP (ABAC)
 
-`KEEPPAM_GEOIP_DB` — путь к MaxMind GeoLite2-Country.mmdb (api и session-worker).
-Без файла: только `LAN` (RFC1918 / loopback). См. `docs/geoip.txt`.
+`KEEPPAM_GEOIP_DB` — MaxMind-совместимый Country MMDB (api и session-worker).
+Стенд: `deploy/geoip/country-demo.mmdb`. Прод: GeoLite2-Country.
+
+`KEEPPAM_TRUSTED_PROXIES` — CIDR, для которых читаются `X-Forwarded-For` / `X-Real-IP`. Пусто = только `RemoteAddr`.
+
+См. `docs/geoip.txt`.
 
 OPA extra deny: `KEEPPAM_OPA_POLICY` — см. `docs/opa.txt`.
+
+## FIPS / SBOM
+
+Поза, не сертификат. См. `docs/fips-sbom.txt`.
+
+- `KEEPPAM_FIPS_REQUIRED=true` — отказ стартовать без boringcrypto / GOFIPS140
+- `KEEPPAM_SBOM_FILE` — готовый CycloneDX; иначе runtime `ReadBuildInfo`
+- `GET /api/v1/admin/settings/sbom`
+
+Трейсы: `KEEPPAM_OTEL_ENDPOINT` → Tempo (`docs/tempo.txt`).
 
 ## UI
 

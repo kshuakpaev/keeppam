@@ -7,13 +7,16 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestNormalizeOTLPEndpoint(t *testing.T) {
+	if NormalizeOTLPEndpoint("http://tempo:4318/v1/traces") != "tempo:4318" {
+		t.Fatal(NormalizeOTLPEndpoint("http://tempo:4318/v1/traces"))
+	}
 	if NormalizeOTLPEndpoint("http://jaeger:4318/v1/traces") != "jaeger:4318" {
 		t.Fatal(NormalizeOTLPEndpoint("http://jaeger:4318/v1/traces"))
 	}

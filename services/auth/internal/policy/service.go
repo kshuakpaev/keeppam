@@ -37,6 +37,8 @@ type Binding struct {
 	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
 	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
 	SQLPolicyPackName     string     `json:"sql_policy_pack_name,omitempty"`
+	HTTPPolicyPackID      *uuid.UUID `json:"http_policy_pack_id,omitempty"`
+	HTTPPolicyPackName    string     `json:"http_policy_pack_name,omitempty"`
 	MaxRisk               int        `json:"max_risk"`
 	RiskAction            string     `json:"risk_action"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -85,6 +87,7 @@ type CreateBindingInput struct {
 	AllowedNamespaces   []string   `json:"allowed_namespaces"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
 	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
+	HTTPPolicyPackID    *uuid.UUID `json:"http_policy_pack_id"`
 	MaxRisk             int        `json:"max_risk"`
 	RiskAction          string     `json:"risk_action"`
 }
@@ -102,7 +105,7 @@ type AccessCheck struct {
 	ClientDevices []string
 	IgnoreTicket  bool
 	SkipRisk      bool
-	Operation     string // empty = connect; sql.ddl / k8s.delete / ssh.destructive / …
+	Operation     string // empty = connect; sql.ddl / k8s.delete / ssh.destructive / http.write / …
 }
 
 func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding, error) {
@@ -116,12 +119,14 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 			COALESCE(b.allowed_namespaces,'{}'),
 			b.command_policy_pack_id, COALESCE(p.name,''),
 			b.sql_policy_pack_id, COALESCE(sp.name,''),
+			b.http_policy_pack_id, COALESCE(hp.name,''),
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'), b.created_at
 		FROM asset_access_bindings b
 		LEFT JOIN users u ON u.id = b.user_id
 		LEFT JOIN roles r ON r.id = b.role_id
 		LEFT JOIN command_policy_packs p ON p.id = b.command_policy_pack_id
 		LEFT JOIN sql_policy_packs sp ON sp.id = b.sql_policy_pack_id
+		LEFT JOIN http_policy_packs hp ON hp.id = b.http_policy_pack_id
 		WHERE b.asset_id=$1
 		ORDER BY b.expires_at NULLS FIRST, COALESCE(u.username, r.name)`, assetID)
 	if err != nil {
@@ -133,11 +138,12 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 		var b Binding
 		var ts, te *string
 		var tags, cidrs, countries, devices, namespaces []string
-		var packName, sqlPackName string
+		var packName, sqlPackName, httpPackName string
 		if err := rows.Scan(&b.ID, &b.AssetID, &b.UserID, &b.RoleID, &b.Username, &b.RoleName,
 			&ts, &te, &b.DaysOfWeek, &b.ExpiresAt, &tags, &b.RequireTicket,
 			&b.RequireReason, &cidrs, &countries, &devices, &namespaces,
 			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName,
+			&b.HTTPPolicyPackID, &httpPackName,
 			&b.MaxRisk, &b.RiskAction, &b.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -150,6 +156,7 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 		b.AllowedNamespaces = normalizeNamespaces(namespaces)
 		b.CommandPolicyPackName = packName
 		b.SQLPolicyPackName = sqlPackName
+		b.HTTPPolicyPackName = httpPackName
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -253,9 +260,9 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, command_policy_pack_id, sql_policy_pack_id, max_risk, risk_action, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW(),$20)`,
-		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, in.CommandPolicyPackID, in.SQLPolicyPackID, in.MaxRisk, riskAction, actorID)
+			(id, asset_id, user_id, role_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, max_risk, risk_action, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5::time,$6::time,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW(),$21)`,
+		id, assetID, in.UserID, in.RoleID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.MaxRisk, riskAction, actorID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -265,6 +272,7 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 		"require_reason": in.RequireReason, "allowed_cidrs": cidrs, "allowed_countries": countries, "allowed_devices": devices,
 		"allowed_namespaces":     namespaces,
 		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
+		"http_policy_pack_id": in.HTTPPolicyPackID,
 		"max_risk": in.MaxRisk, "risk_action": riskAction,
 	})
 	list, err := s.ListByAsset(ctx, assetID)

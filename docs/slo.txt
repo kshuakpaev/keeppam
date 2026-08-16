@@ -2,22 +2,22 @@
 
 ## Что есть
 
-In-process метрики + снимок SLO + Prometheus / Alertmanager / Grafana / Jaeger на стенде.
+In-process метрики + снимок SLO + Prometheus / Alertmanager / Grafana / Tempo на стенде.
 
 1. `GET /metrics` — Prometheus text 0.0.4, без auth (как `/healthz`).
 2. `GET /api/v1/admin/analytics/slo` — JSON для UI, право `audit.read`.
 3. Карточка **SLO** на странице Аналитика.
-4. Compose: Prometheus `:9090`, Alertmanager `:9093`, Grafana `:3001`, Jaeger `:16686`.
+4. Compose: Prometheus `:9090`, Alertmanager `:9093`, Grafana `:3001`, Tempo `:3200`.
 5. `POST /api/v1/alerts/webhook` — Alertmanager → inbox (`audit.read`) + аудит `obs.alert`. Bearer `KEEPPAM_ALERT_WEBHOOK_TOKEN` (пусто = webhook выключен).
-6. OpenTelemetry traces: HTTP spans → OTLP HTTP (`KEEPPAM_OTEL_ENDPOINT`, пусто = выкл). `/healthz`, `/metrics` и WebSocket не трейсятся. Тела запросов и секреты в spans не пишутся.
+6. OpenTelemetry traces: HTTP spans → OTLP HTTP (`KEEPPAM_OTEL_ENDPOINT`, пусто = выкл). `/healthz`, `/metrics` и WebSocket не трейсятся. Тела запросов и секреты в spans не пишутся. См. `docs/tempo.txt`.
 
 Стенд:
 
-- Grafana: http://localhost:3001 (anonymous Viewer; admin / `ChangeMeNow!1`) — Prometheus + Jaeger
+- Grafana: http://localhost:3001 (anonymous Viewer; admin / `ChangeMeNow!1`) — Prometheus + Tempo
 - Prometheus: http://localhost:9090
 - Alertmanager: http://localhost:9093
-- Jaeger: http://localhost:16686 (`service=keeppam-api`)
-- API: `KEEPPAM_OTEL_ENDPOINT=http://jaeger:4318`
+- Tempo: http://localhost:3200 (`service=keeppam-api`, Explore в Grafana)
+- API: `KEEPPAM_OTEL_ENDPOINT=http://tempo:4318`
 
 ## Цели (константы, не settings)
 
@@ -57,6 +57,6 @@ UI p95 — кольцо в процессе API + SQL за 24ч. Grafana p95 —
 ## Вне scope
 
 - spans на SQL/Redis/k8s upstream
-- Tempo / OpenTelemetry Collector
+- OpenTelemetry Collector (fan-out)
 - хранение гистограмм в Postgres
 - отдельные SLO settings

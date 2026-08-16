@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keeppam/auth/internal/spiffe"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -34,8 +35,17 @@ func Validate(in []string) ([]string, error) {
 	out := Normalize(in)
 	for _, c := range out {
 		switch c {
-		case "TLS", "WEBAUTHN", "SSH":
+		case "TLS", "WEBAUTHN", "SSH", "SPIFFE":
 			continue
+		}
+		if strings.HasPrefix(c, "spiffe://") {
+			if strings.HasSuffix(c, "*") {
+				if _, ok := spiffe.NormalizeID(strings.TrimSuffix(c, "*")); ok {
+					continue
+				}
+			} else if spiffe.ValidID(c) {
+				continue
+			}
 		}
 		if strings.HasPrefix(c, "SHA256:") && len(c) > 8 {
 			continue
@@ -43,7 +53,7 @@ func Validate(in []string) ([]string, error) {
 		if strings.HasPrefix(c, "sha256:") && len(c) == 7+64 && isHex(c[7:]) {
 			continue
 		}
-		return nil, fmt.Errorf("invalid device %q (use TLS, WEBAUTHN, SSH, sha256:<64 hex> or SHA256:<base64>)", c)
+		return nil, fmt.Errorf("invalid device %q (use TLS, WEBAUTHN, SSH, SPIFFE, spiffe://…, sha256:<64 hex> or SHA256:<base64>)", c)
 	}
 	return out, nil
 }
@@ -65,6 +75,13 @@ func Allowed(allowed, got []string) bool {
 		if _, ok := set[a]; ok {
 			return true
 		}
+		if strings.HasPrefix(a, "spiffe://") {
+			for _, g := range got {
+				if strings.HasPrefix(g, "spiffe://") && spiffe.Match(a, g) {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
@@ -74,7 +91,38 @@ func FromTLS(cs *tls.ConnectionState) []string {
 		return nil
 	}
 	sum := sha256.Sum256(cs.PeerCertificates[0].Raw)
-	return []string{"TLS", "sha256:" + hex.EncodeToString(sum[:])}
+	out := []string{"TLS", "sha256:" + hex.EncodeToString(sum[:])}
+	if ids := spiffe.IDsFromCert(cs.PeerCertificates[0]); len(ids) > 0 {
+		out = append(out, "SPIFFE")
+		out = append(out, ids...)
+	}
+	return out
+}
+
+func FilterTrustDomain(devs []string, domain string) []string {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return Normalize(devs)
+	}
+	var out []string
+	hasID := false
+	for _, d := range Normalize(devs) {
+		if d == "SPIFFE" {
+			continue
+		}
+		if strings.HasPrefix(d, "spiffe://") {
+			if spiffe.InTrustDomain(d, domain) {
+				out = append(out, d)
+				hasID = true
+			}
+			continue
+		}
+		out = append(out, d)
+	}
+	if hasID {
+		out = append([]string{"SPIFFE"}, out...)
+	}
+	return Normalize(out)
 }
 
 func FromSSHKey(key ssh.PublicKey) []string {
@@ -99,8 +147,18 @@ func canon(raw string) string {
 	}
 	u := strings.ToUpper(s)
 	switch u {
-	case "TLS", "WEBAUTHN", "SSH":
+	case "TLS", "WEBAUTHN", "SSH", "SPIFFE":
 		return u
+	}
+	if strings.HasPrefix(strings.ToLower(s), "spiffe://") {
+		lower := strings.ToLower(s)
+		if strings.HasSuffix(lower, "*") {
+			return lower
+		}
+		if id, ok := spiffe.NormalizeID(s); ok {
+			return id
+		}
+		return lower
 	}
 	if strings.HasPrefix(u, "SHA256:") {
 		return "SHA256:" + strings.TrimSpace(s[7:])

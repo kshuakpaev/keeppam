@@ -38,7 +38,7 @@ func (s *Server) handleAlertWebhook(w http.ResponseWriter, r *http.Request) {
 		s.notify.OnAlertmanager(r.Context(), evs)
 	}
 	for _, ev := range evs {
-		_ = s.audit.Record(r.Context(), nil, "obs.alert", "alert", ev.Fingerprint, clientIP(r), "alertmanager", map[string]any{
+		_ = s.audit.Record(r.Context(), nil, "obs.alert", "alert", ev.Fingerprint, s.clientIP(r), "alertmanager", map[string]any{
 			"status": ev.Status, "alertname": ev.Name, "severity": ev.Severity,
 			"summary": ev.Summary,
 		})

@@ -40,6 +40,7 @@ type AccessResult struct {
 	BindingID           *uuid.UUID
 	CommandPolicyPackID *uuid.UUID
 	SQLPolicyPackID     *uuid.UUID
+	HTTPPolicyPackID    *uuid.UUID
 	AllowedNamespaces   []string
 	RiskScore           int
 	MaxRisk             int
@@ -258,7 +259,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			b.required_tags, b.require_ticket, COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
 			COALESCE(b.allowed_countries,'{}'), COALESCE(b.allowed_devices,'{}'),
 			COALESCE(b.allowed_namespaces,'{}'),
-			b.command_policy_pack_id, b.sql_policy_pack_id, r.name,
+			b.command_policy_pack_id, b.sql_policy_pack_id, b.http_policy_pack_id, r.name,
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny')
 		FROM asset_access_bindings b
 		LEFT JOIN roles r ON r.id = b.role_id
@@ -277,7 +278,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 
 	for rows.Next() {
 		var bid uuid.UUID
-		var uid, rid, packID, sqlPackID *uuid.UUID
+		var uid, rid, packID, sqlPackID, httpPackID *uuid.UUID
 		var tStart, tEnd *time.Time
 		var expires *time.Time
 		var days int
@@ -286,7 +287,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var requireTicket, requireReason bool
 		var maxRisk int
 		var riskAction string
-		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &packID, &sqlPackID, &roleName, &maxRisk, &riskAction); err != nil {
+		if err := rows.Scan(&bid, &uid, &rid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &packID, &sqlPackID, &httpPackID, &roleName, &maxRisk, &riskAction); err != nil {
 			return AccessResult{}, err
 		}
 		match := false
@@ -334,7 +335,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		}
 		idCopy := bid
 		res := AccessResult{
-			OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID,
+			OK: true, BindingID: &idCopy, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID,
 			AllowedNamespaces: normalizeNamespaces(namespaces),
 			MaxRisk:           maxRisk, RiskAction: riskAction,
 		}

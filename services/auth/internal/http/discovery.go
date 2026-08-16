@@ -17,7 +17,7 @@ func (s *Server) handleCreateDiscoveryJob(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	job, err := s.discovery.CreateJob(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	job, err := s.discovery.CreateJob(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -79,7 +79,7 @@ func (s *Server) handleImportDiscoveryCandidate(w http.ResponseWriter, r *http.R
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	res, err := s.discovery.ImportCandidate(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	res, err := s.discovery.ImportCandidate(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

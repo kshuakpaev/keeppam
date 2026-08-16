@@ -60,7 +60,7 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.watched", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.watched", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"owner_id": row.UserID.String(), "protocol": row.Protocol, "asset": row.AssetName,
 	})
 

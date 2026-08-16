@@ -41,7 +41,7 @@ deny[msg] {
 | `binding.id` / `max_risk` / `risk_action` / `allowed_namespaces` | совпавший ACL |
 | `request.ticket_id` / `reason` / `client_ip` / `client_country` / `client_devices` | контекст |
 | `request.risk_score` / `risk_factors` | уже посчитанный риск |
-| `request.operation` | операция в сессии (`sql.ddl`, `k8s.delete`, …); на connect пусто |
+| `request.operation` | операция в сессии (`sql.ddl`, `k8s.delete`, `http.write`, …); на connect пусто |
 
 Тела секретов и команд в input нет. JEA/SQL pack OPA не заменяет.
 

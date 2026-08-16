@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"math/big"
+	"net/url"
 	"testing"
 	"time"
 
@@ -35,6 +36,22 @@ func TestNormalizeAndAllowed(t *testing.T) {
 	}
 	if _, err := Validate([]string{"laptop"}); err == nil {
 		t.Fatal("expected error")
+	}
+	out, err = Validate([]string{"SPIFFE", "spiffe://KeepPAM.local/ns/prod/*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 2 || out[0] != "SPIFFE" || out[1] != "spiffe://keeppam.local/ns/prod/*" {
+		t.Fatalf("%v", out)
+	}
+	if !Allowed([]string{"spiffe://keeppam.local/ns/prod/*"}, []string{"SPIFFE", "spiffe://keeppam.local/ns/prod/sa/api"}) {
+		t.Fatal("spiffe glob")
+	}
+	if Allowed([]string{"spiffe://keeppam.local/ns/dev/*"}, []string{"spiffe://keeppam.local/ns/prod/sa/api"}) {
+		t.Fatal("spiffe glob deny")
+	}
+	if _, err := Validate([]string{"spiffe://"}); err == nil {
+		t.Fatal("invalid spiffe id")
 	}
 }
 
@@ -65,6 +82,25 @@ func TestFromTLS(t *testing.T) {
 	sum := sha256.Sum256(der)
 	if got[1] != "sha256:"+hex.EncodeToString(sum[:]) {
 		t.Fatalf("fp %s", got[1])
+	}
+
+	uri, _ := url.Parse("spiffe://keeppam.local/workload/api")
+	tmpl.URIs = []*url.URL{uri}
+	der, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err = x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = FromTLS(&tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}})
+	if !Allowed([]string{"SPIFFE"}, got) || !Allowed([]string{"spiffe://keeppam.local/workload/api"}, got) {
+		t.Fatalf("spiffe from tls %v", got)
+	}
+	filtered := FilterTrustDomain(got, "other.local")
+	if Allowed([]string{"SPIFFE"}, filtered) {
+		t.Fatalf("trust domain should drop %v", filtered)
 	}
 }
 

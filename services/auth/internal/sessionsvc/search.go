@@ -65,18 +65,31 @@ func EventSnippet(eventType string, payload map[string]any) string {
 		if path != "" {
 			line = strings.TrimSpace(line + " " + path)
 		}
+		if sub := payloadString(payload, "subresource"); sub != "" {
+			line = strings.TrimSpace(line + " /" + sub)
+		}
 		if st != "" {
 			line = strings.TrimSpace(line + " → " + st)
 		}
 		if line != "" {
 			return line
 		}
-	case "command_denied", "dlp", "risk":
+	case "command_denied", "dlp", "risk", "http_denied":
 		if s := payloadString(payload, "command"); s != "" {
 			return "DENIED " + s
 		}
 		if s := payloadString(payload, "statement"); s != "" {
 			return "DENIED " + s
+		}
+		if m := payloadString(payload, "method"); m != "" {
+			path := payloadString(payload, "path")
+			line := strings.TrimSpace(m + " " + path)
+			if r := payloadString(payload, "reason"); r != "" {
+				return "DENIED " + line + " (" + r + ")"
+			}
+			if line != "" {
+				return "DENIED " + line
+			}
 		}
 		if r := payloadString(payload, "reason"); r != "" {
 			return "DENIED " + r
@@ -150,7 +163,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk','http_denied')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))

@@ -1,0 +1,62 @@
+# KeepPAM: SPIFFE identity (без SPIRE в compose)
+
+Эквивалент mandatory service identity из `docs/concept1.txt`: SPIFFE ID из URI SAN клиентского сертификата, файловый SVID/bundle как у SPIRE helper / CSI. Контейнер SPIRE и Workload API **не** входят в стенд.
+
+## Что учитывается
+
+1. Клиент предъявляет X.509 с URI SAN `spiffe://trust-domain/path` на mTLS к API.
+2. ABAC `allowed_devices` видит класс `SPIFFE` и сам ID (нижний регистр).
+3. Процесс API может слушать своим SVID (файлы) и доверять bundle как Client CA.
+
+Nginx на стенде клиентский сертификат не прокидывает — как и для `TLS` в `docs/managed-device.txt`. Нужна терминация TLS на API.
+
+## Env
+
+| Переменная | Смысл |
+|------------|--------|
+| `KEEPPAM_SPIFFE_TRUST_DOMAIN` | если задан — ID вне домена отбрасываются (класс `SPIFFE` тоже, если ID не осталось) |
+| `KEEPPAM_SPIFFE_SVID_FILE` | PEM цепочка SVID (leaf первым) |
+| `KEEPPAM_SPIFFE_SVID_KEY_FILE` | ключ SVID |
+| `KEEPPAM_SPIFFE_BUNDLE_FILE` | trust bundle; мержится в ClientCAs вместе с `KEEPPAM_TLS_CLIENT_CA_FILE` |
+
+Пара SVID обязательна целиком. Если `KEEPPAM_TLS_CERT_FILE` пуст, SVID становится серверным сертификатом HTTPS.
+
+`KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true` требует CA: обычный client CA **или** bundle.
+
+## ACL
+
+В `allowed_devices` (карточка актива):
+
+| Значение | Смысл |
+|----------|--------|
+| `SPIFFE` | любой SPIFFE ID в peer cert (после фильтра trust domain) |
+| `spiffe://keeppam.local/ns/prod/sa/api` | точное совпадение |
+| `spiffe://keeppam.local/ns/prod/*` | префикс (без `*` — точное) |
+
+OPA extra deny уже получает `request.client_devices` — SPIFFE ID попадают туда автоматически.
+
+## Demo (openssl, без SPIRE)
+
+Trust domain `keeppam.local`. Leaf с URI SAN:
+
+```bash
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 365 -nodes \
+  -keyout svid.key -out svid.pem \
+  -subj "/CN=keeppam-api" \
+  -addext "subjectAltName=URI:spiffe://keeppam.local/workload/api"
+```
+
+Клиентский SVID аналогично (`URI:spiffe://keeppam.local/ns/prod/sa/worker`). Bundle = CA, которой подписан клиент (для самоподписанного demo — тот же `svid.pem` не подходит как чужой CA: нужен отдельный CA и signed leaf).
+
+Минимальный путь на стенде: тот же client CA, что для mTLS, но в cert добавить URI SAN; `KEEPPAM_SPIFFE_TRUST_DOMAIN=keeppam.local`.
+
+## UI / статус
+
+Конфигурация → Инфраструктура: `spiffe_id`, trust domain, флаги svid/bundle (`GET /api/v1/admin/settings/infra`).
+
+## Не входит в этот срез
+
+- SPIRE server/agent в docker-compose
+- Workload API (`unix:///run/spire/sockets/agent.sock`)
+- автоматический rotate SVID (helper/CSI пишет файлы — процесс перечитывает cert при рестарте API)
+- mTLS между api и session-worker (сейчас Redis/Postgres, не SPIFFE mesh)

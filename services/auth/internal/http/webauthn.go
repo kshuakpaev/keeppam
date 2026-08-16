@@ -31,7 +31,7 @@ func (s *Server) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	cred, err := s.auth.FinishWebAuthnRegister(r.Context(), sess.UserID, body.Name, body.Credential, clientIP(r), r.UserAgent())
+	cred, err := s.auth.FinishWebAuthnRegister(r.Context(), sess.UserID, body.Name, body.Credential, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -73,7 +73,7 @@ func (s *Server) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "challenge_token and credential required")
 		return
 	}
-	res, err := s.auth.FinishWebAuthnLogin(r.Context(), body.ChallengeToken, body.Credential, clientIP(r), r.UserAgent())
+	res, err := s.auth.FinishWebAuthnLogin(r.Context(), body.ChallengeToken, body.Credential, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
@@ -111,7 +111,7 @@ func (s *Server) handleDeleteMyWebAuthn(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.auth.DeleteWebAuthnCredential(r.Context(), sess.UserID, sess.UserID, credID, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.auth.DeleteWebAuthnCredential(r.Context(), sess.UserID, sess.UserID, credID, s.clientIP(r), r.UserAgent()); err != nil {
 		if err == pgx.ErrNoRows {
 			writeErr(w, http.StatusNotFound, "not found")
 			return

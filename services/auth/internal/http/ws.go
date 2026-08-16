@@ -78,7 +78,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	bypassAdmin := rbac.HasPermission(sess.Permissions, "users.write")
 	check := policy.AccessCheck{
 		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: false, Now: time.Now(),
-		TicketID: body.TicketID, Reason: body.Reason, ClientIP: clientIP(r),
+		TicketID: body.TicketID, Reason: body.Reason, ClientIP: s.clientIP(r),
 	}
 	ev, err := s.policy.Evaluate(r.Context(), check)
 	if err != nil {
@@ -94,7 +94,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !ok && bypassAdmin {
-		_ = s.audit.Record(r.Context(), &sess.UserID, "session.admin_bypass", "asset", assetID.String(), clientIP(r), r.UserAgent(), map[string]any{
+		_ = s.audit.Record(r.Context(), &sess.UserID, "session.admin_bypass", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 			"severity": "high", "ticket_id": body.TicketID, "reason": body.Reason,
 		})
 		ok = true
@@ -103,7 +103,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		payload := map[string]any{"reason": "policy", "ticket_id": body.TicketID}
 		ev.FillDenyPayload(payload)
 		msg := ev.DenyMessage()
-		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), clientIP(r), r.UserAgent(), payload)
+		_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), payload)
 		writeErr(w, http.StatusForbidden, msg)
 		return
 	}
@@ -113,20 +113,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var sqlPackID *uuid.UUID
+	var sqlPackID, httpPackID *uuid.UUID
 	var k8sNS []string
 	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
 		if ev.OK && ev.SQLPolicyPackID != nil {
 			sqlPackID = ev.SQLPolicyPackID
 		}
 	}
+	if (creds.Asset.Protocol == "https" || creds.Asset.Protocol == "kubectl") && ev.OK && ev.HTTPPolicyPackID != nil {
+		httpPackID = ev.HTTPPolicyPackID
+	}
 	if creds.Asset.Protocol == "kubectl" && ev.OK {
 		k8sNS = ev.AllowedNamespaces
 	}
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
-		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: clientIP(r),
+		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: s.clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
-		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID, K8sNamespaces: k8sNS,
+		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, K8sNamespaces: k8sNS,
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 	}, r.UserAgent())
 	if err != nil {
@@ -339,7 +342,7 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.audit.Record(r.Context(), &sess.UserID, "session.ended", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"via": "api", "forced": true})
+	_ = s.audit.Record(r.Context(), &sess.UserID, "session.ended", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"via": "api", "forced": true})
 	row, _ = s.sessionsvc.Get(r.Context(), id)
 	writeJSON(w, http.StatusOK, row)
 }
@@ -463,7 +466,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		_ = rec.Close()
 		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
 		return
 	}
 
@@ -485,7 +488,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	defer bridge.Close()
 
 	_ = s.sessionsvc.MarkActive(r.Context(), id)
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"asset": creds.Asset.Name, "account": creds.Account.Username,
 	})
 	_ = writeWSJSON(conn, map[string]string{"type": "ready"})
@@ -552,7 +555,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.sessionsvc.MarkEnded(r.Context(), id, "")
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), clientIP(r), r.UserAgent(), nil)
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), s.clientIP(r), r.UserAgent(), nil)
 }
 
 type writerFunc func([]byte) (int, error)

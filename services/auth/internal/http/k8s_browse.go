@@ -223,6 +223,35 @@ func (s *Server) handleK8sExecOnce(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+func (s *Server) handleK8sPortForwardHTTP(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.k8sBrowseSession(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Namespace string `json:"namespace"`
+		Pod       string `json:"pod"`
+		Port      int    `json:"port"`
+		Method    string `json:"method"`
+		Path      string `json:"path"`
+		Body      string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	res, err := s.k8s.PortForwardHTTP(r.Context(), row, body.Namespace, body.Pod, body.Port, body.Method, body.Path, []byte(body.Body))
+	if err != nil {
+		code := k8sproxy.HTTPStatus(err)
+		if code < 400 {
+			code = http.StatusBadGateway
+		}
+		writeErr(w, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func commandFromJSON(v any) []string {
 	switch t := v.(type) {
 	case []any:

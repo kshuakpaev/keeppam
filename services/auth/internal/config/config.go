@@ -48,13 +48,25 @@ type Config struct {
 	TLSKeyFile             string
 	TLSClientCAFile        string
 	TLSRequireClientCert   bool
+	SPIFFETrustDomain      string
+	SPIFFESVIDFile         string
+	SPIFFESVIDKeyFile      string
+	SPIFFEBundleFile       string
 	WebAuthnRPID           string
 	WebAuthnRPDisplayName  string
 	WebAuthnOrigins        []string
 	GeoIPDB                string
+	TrustedProxies         []string
 	AlertWebhookToken      string
 	OTELEndpoint           string
 	OPAPolicy              string
+	PKCS11TokenFile        string
+	PKCS11Module           string
+	PKCS11Helper           string
+	PKCS11Label            string
+	PKCS11URI              string
+	FIPSRequired           bool
+	SBOMFile               string
 }
 
 func Load() (Config, error) {
@@ -96,14 +108,26 @@ func Load() (Config, error) {
 		TLSKeyFile:             env("KEEPPAM_TLS_KEY_FILE", ""),
 		TLSClientCAFile:        env("KEEPPAM_TLS_CLIENT_CA_FILE", ""),
 		TLSRequireClientCert:   boolEnv("KEEPPAM_TLS_REQUIRE_CLIENT_CERT", false),
+		SPIFFETrustDomain:      strings.ToLower(strings.TrimSpace(env("KEEPPAM_SPIFFE_TRUST_DOMAIN", ""))),
+		SPIFFESVIDFile:         env("KEEPPAM_SPIFFE_SVID_FILE", ""),
+		SPIFFESVIDKeyFile:      env("KEEPPAM_SPIFFE_SVID_KEY_FILE", ""),
+		SPIFFEBundleFile:       env("KEEPPAM_SPIFFE_BUNDLE_FILE", ""),
 		WebAuthnRPDisplayName:  env("KEEPPAM_WEBAUTHN_RP_NAME", "KeepPAM"),
 		GeoIPDB:                env("KEEPPAM_GEOIP_DB", ""),
 		AlertWebhookToken:      strings.TrimSpace(env("KEEPPAM_ALERT_WEBHOOK_TOKEN", "")),
 		OTELEndpoint:           strings.TrimSpace(env("KEEPPAM_OTEL_ENDPOINT", "")),
 		OPAPolicy:              strings.TrimSpace(env("KEEPPAM_OPA_POLICY", "")),
+		PKCS11TokenFile:        env("KEEPPAM_PKCS11_TOKEN_FILE", ""),
+		PKCS11Module:           env("KEEPPAM_PKCS11_MODULE", ""),
+		PKCS11Helper:           env("KEEPPAM_PKCS11_HELPER", ""),
+		PKCS11Label:            firstNonEmpty(env("KEEPPAM_PKCS11_LABEL", ""), env("KEEPPAM_PKCS11_OBJECT", "")),
+		PKCS11URI:              env("KEEPPAM_PKCS11_URI", ""),
+		FIPSRequired:           boolEnv("KEEPPAM_FIPS_REQUIRED", false),
+		SBOMFile:               env("KEEPPAM_SBOM_FILE", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
+	cfg.TrustedProxies = splitCSV(env("KEEPPAM_TRUSTED_PROXIES", ""))
 	switch cfg.Mode {
 	case "all", "api", "ssh":
 	default:
@@ -118,9 +142,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("KEEPPAM_RECORDINGS_BACKEND must be local|s3")
 	}
 	switch cfg.DataKeySource {
-	case "env", "file", "vault", "aws", "gcp", "azure":
+	case "env", "file", "vault", "aws", "gcp", "azure", "pkcs11":
 	default:
-		return Config{}, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure")
+		return Config{}, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure|pkcs11")
 	}
 	switch strings.ToUpper(cfg.S3ObjectLockMode) {
 	case "", "OFF", "NONE":
@@ -133,11 +157,18 @@ func Load() (Config, error) {
 	if cfg.S3ObjectLockMode != "" && (cfg.S3ObjectLockDays < 1 || cfg.S3ObjectLockDays > 36500) {
 		return Config{}, fmt.Errorf("KEEPPAM_S3_OBJECT_LOCK_DAYS must be 1..36500")
 	}
+	if (cfg.SPIFFESVIDFile == "") != (cfg.SPIFFESVIDKeyFile == "") {
+		return Config{}, fmt.Errorf("KEEPPAM_SPIFFE_SVID_FILE and KEEPPAM_SPIFFE_SVID_KEY_FILE must both be set")
+	}
 	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
 		return Config{}, fmt.Errorf("KEEPPAM_TLS_CERT_FILE and KEEPPAM_TLS_KEY_FILE must both be set")
 	}
-	if cfg.TLSRequireClientCert && cfg.TLSClientCAFile == "" {
-		return Config{}, fmt.Errorf("KEEPPAM_TLS_CLIENT_CA_FILE required when KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true")
+	if cfg.TLSCertFile == "" && cfg.SPIFFESVIDFile != "" {
+		cfg.TLSCertFile = cfg.SPIFFESVIDFile
+		cfg.TLSKeyFile = cfg.SPIFFESVIDKeyFile
+	}
+	if cfg.TLSRequireClientCert && cfg.TLSClientCAFile == "" && cfg.SPIFFEBundleFile == "" {
+		return Config{}, fmt.Errorf("KEEPPAM_TLS_CLIENT_CA_FILE or KEEPPAM_SPIFFE_BUNDLE_FILE required when KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true")
 	}
 	return cfg, nil
 }
@@ -146,8 +177,12 @@ func (c Config) TLSEnabled() bool {
 	return c.TLSCertFile != "" && c.TLSKeyFile != ""
 }
 
+func (c Config) clientCAReady() bool {
+	return c.TLSClientCAFile != "" || c.SPIFFEBundleFile != ""
+}
+
 func (c Config) MTLSMode() string {
-	if !c.TLSEnabled() || c.TLSClientCAFile == "" {
+	if !c.TLSEnabled() || !c.clientCAReady() {
 		return "off"
 	}
 	if c.TLSRequireClientCert {
@@ -217,4 +252,13 @@ func hostFromURL(raw string) string {
 		return "localhost"
 	}
 	return u.Hostname()
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

@@ -107,7 +107,7 @@ func (s *Server) handlePutNotifySettings(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.notify.UpdateSettings(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	out, err := s.notify.UpdateSettings(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

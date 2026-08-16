@@ -178,6 +178,17 @@ export function CompliancePage() {
             {status.applied_at && <> · применён {new Date(status.applied_at).toLocaleString()}</>}
             {status.last_purge_at && <> · последний purge {new Date(status.last_purge_at).toLocaleString()}</>}
           </p>
+          <p>
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={() =>
+                void api.downloadSBOM().catch((e) => setError(e instanceof Error ? e.message : "SBOM"))
+              }
+            >
+              Скачать SBOM (CycloneDX)
+            </button>
+          </p>
           <ul className="anomaly-list">
             {status.controls.map((c) => (
               <li key={c.id} className={`anomaly ${c.status === "pass" ? "low" : c.status === "warn" ? "medium" : "high"}`}>

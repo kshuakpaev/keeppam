@@ -25,6 +25,7 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/geoip"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
@@ -38,6 +39,7 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
+	"github.com/keeppam/auth/internal/spiffe"
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
 	"github.com/keeppam/auth/internal/store"
@@ -50,6 +52,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config", "err", err)
+		os.Exit(1)
+	}
+
+	if err := fips.Enforce(cfg.FIPSRequired); err != nil {
+		slog.Error("fips", "err", err)
 		os.Exit(1)
 	}
 
@@ -138,6 +145,11 @@ func main() {
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
 	policySvc.SetGeo(geoip.New(cfg.GeoIPDB))
+	if g := policySvc.Geo(); g != nil && g.Loaded() {
+		slog.Info("geoip", "path", g.Path(), "type", g.DatabaseType(), "nodes", g.NodeCount())
+	} else if cfg.GeoIPDB != "" {
+		slog.Warn("geoip not loaded", "path", cfg.GeoIPDB)
+	}
 	opaEng, err := policy.LoadOPA(cfg.OPAPolicy)
 	if err != nil {
 		slog.Error("opa policy", "err", err)
@@ -248,6 +260,7 @@ func main() {
 			} else {
 				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
 				k8sGw.SetPolicy(policySvc)
+				k8sGw.SetTrustedProxies(cfg.TrustedProxies)
 				k8sGw.SetRoles(func(ctx context.Context, userID uuid.UUID) []string {
 					u, err := db.GetUserByID(ctx, userID)
 					if err != nil {
@@ -273,7 +286,9 @@ func main() {
 				}
 				srv.TLSConfig = tlsCfg
 				slog.Info("listening tls", "addr", cfg.HTTPAddr, "mode", cfg.Mode, "mtls", cfg.MTLSMode(),
-					"data_key", cfg.DataKeySource, "recordings", recStore.Backend())
+					"data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
+					"spiffe_id", loadSPIFFEID(cfg), "spiffe_domain", cfg.SPIFFETrustDomain,
+					"fips", fips.Backend())
 				if err := srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && err != http.ErrServerClosed {
 					slog.Error("http", "err", err)
 					os.Exit(1)
@@ -281,7 +296,8 @@ func main() {
 				return
 			}
 			slog.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode,
-				"data_key", cfg.DataKeySource, "recordings", recStore.Backend())
+				"data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
+				"fips", fips.Backend())
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("http", "err", err)
 				os.Exit(1)
@@ -371,4 +387,15 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}
+}
+
+func loadSPIFFEID(cfg config.Config) string {
+	if cfg.SPIFFESVIDFile == "" {
+		return ""
+	}
+	id, err := spiffe.LoadPEM(cfg.SPIFFESVIDFile, "")
+	if err != nil || len(id.IDs) == 0 {
+		return ""
+	}
+	return id.IDs[0]
 }

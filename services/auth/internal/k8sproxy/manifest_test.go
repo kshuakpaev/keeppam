@@ -58,6 +58,9 @@ func TestWriteAllowed(t *testing.T) {
 	if err := WriteAllowed(ParseAPIPath("POST", "/api/v1/namespaces/n/pods/p/exec", false)); err == nil {
 		t.Fatal("exec should be denied on write path")
 	}
+	if err := WriteAllowed(ParseAPIPath("GET", "/api/v1/namespaces/n/pods/p/attach", false)); err == nil {
+		t.Fatal("attach should be denied on write path")
+	}
 }
 
 func TestSecretLooksRedacted(t *testing.T) {

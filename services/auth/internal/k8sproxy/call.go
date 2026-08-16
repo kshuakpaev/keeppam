@@ -17,7 +17,8 @@ type CallOptions struct {
 	Path        string
 	Body        []byte
 	ContentType string
-	AllowExec   bool
+	AllowExec   bool   // pods/exec (legacy)
+	AllowSub    string // exec | attach | portforward
 }
 
 func (g *Gateway) Call(ctx context.Context, row sessionsvc.Session, method, path string) (int, []byte, error) {
@@ -92,9 +93,13 @@ func (g *Gateway) prepareBrowser(ctx context.Context, row sessionsvc.Session, op
 		path = "/" + path
 	}
 	call := ParseAPIPath(method, path, false)
-	if opt.AllowExec {
-		if !strings.EqualFold(call.Resource, "pods") || !strings.EqualFold(call.Subresource, "exec") {
-			return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("exec allowed only on pods/exec"))
+	allow := strings.ToLower(strings.TrimSpace(opt.AllowSub))
+	if opt.AllowExec && allow == "" {
+		allow = "exec"
+	}
+	if allow != "" {
+		if err := allowPodSubresource(call, allow); err != nil {
+			return nil, call, errStatus(http.StatusForbidden, err)
 		}
 	} else if err := WriteAllowed(call); err != nil {
 		return nil, call, errStatus(http.StatusForbidden, err)
@@ -105,10 +110,13 @@ func (g *Gateway) prepareBrowser(ctx context.Context, row sessionsvc.Session, op
 		}
 		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("namespace not allowed by policy"))
 	}
+	if msg, deny := g.denyHTTPACL(ctx, row, method, path, ""); deny {
+		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", msg))
+	}
 	if msg, deny := g.denyOpRisk(ctx, row, call, ""); deny {
 		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", msg))
 	}
-	if !opt.AllowExec && NeedsNamespaceListFilter(row.K8sNamespaces, call) {
+	if allow == "" && NeedsNamespaceListFilter(row.K8sNamespaces, call) {
 		body := SyntheticNamespaceList(row.K8sNamespaces, false)
 		g.noteCall(ctx, row, call, method, path, http.StatusOK)
 		return nil, call, errSynthetic{body: body}
@@ -125,6 +133,19 @@ func (g *Gateway) prepareBrowser(ctx context.Context, row sessionsvc.Session, op
 	}
 	_ = g.sessions.Touch(ctx, row.ID)
 	return up, call, nil
+}
+
+func allowPodSubresource(call APICall, sub string) error {
+	sub = strings.ToLower(strings.TrimSpace(sub))
+	switch sub {
+	case "exec", "attach", "portforward":
+	default:
+		return fmt.Errorf("unsupported subresource")
+	}
+	if !strings.EqualFold(call.Resource, "pods") || !strings.EqualFold(call.Subresource, sub) {
+		return fmt.Errorf("%s allowed only on pods/%s", sub, sub)
+	}
+	return nil
 }
 
 func WriteAllowed(call APICall) error {

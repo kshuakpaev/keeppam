@@ -51,27 +51,49 @@ func (g *Gateway) ExecOnce(ctx context.Context, row sessionsvc.Session, ns, pod,
 }
 
 func (g *Gateway) DialExec(ctx context.Context, row sessionsvc.Session, ns, pod, container string, command []string, tty bool) (*websocket.Conn, error) {
-	up, err := g.prepExec(ctx, row, ns, pod)
+	up, err := g.prepStream(ctx, row, ns, pod, "exec")
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialExec(ctx, up, ns, pod, container, command, true, tty)
+	conn, err := dialPodStream(ctx, up, ns, pod, container, "exec", command, true, tty)
 	if err != nil {
-		g.noteExec(ctx, row, ns, pod, container, command, http.StatusBadGateway)
+		g.noteStream(ctx, row, ns, pod, container, "exec", command, http.StatusBadGateway)
 		return nil, err
 	}
-	g.noteExec(ctx, row, ns, pod, container, command, http.StatusSwitchingProtocols)
+	g.noteStream(ctx, row, ns, pod, container, "exec", command, http.StatusSwitchingProtocols)
+	return conn, nil
+}
+
+func (g *Gateway) DialAttach(ctx context.Context, row sessionsvc.Session, ns, pod, container string, tty bool) (*websocket.Conn, error) {
+	up, err := g.prepStream(ctx, row, ns, pod, "attach")
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialPodStream(ctx, up, ns, pod, container, "attach", nil, true, tty)
+	if err != nil {
+		g.noteStream(ctx, row, ns, pod, container, "attach", nil, http.StatusBadGateway)
+		return nil, err
+	}
+	g.noteStream(ctx, row, ns, pod, container, "attach", nil, http.StatusSwitchingProtocols)
 	return conn, nil
 }
 
 func (g *Gateway) prepExec(ctx context.Context, row sessionsvc.Session, ns, pod string) (*sessionUpstream, error) {
+	return g.prepStream(ctx, row, ns, pod, "exec")
+}
+
+func (g *Gateway) prepStream(ctx context.Context, row sessionsvc.Session, ns, pod, sub string) (*sessionUpstream, error) {
 	ns = strings.TrimSpace(ns)
 	pod = strings.TrimSpace(pod)
+	sub = strings.ToLower(strings.TrimSpace(sub))
 	if ns == "" || pod == "" {
 		return nil, fmt.Errorf("namespace and pod required")
 	}
-	path := "/api/v1/namespaces/" + url.PathEscape(ns) + "/pods/" + url.PathEscape(pod) + "/exec"
-	up, _, err := g.prepareBrowser(ctx, row, CallOptions{Method: http.MethodGet, Path: path, AllowExec: true})
+	if sub == "" {
+		sub = "exec"
+	}
+	path := "/api/v1/namespaces/" + url.PathEscape(ns) + "/pods/" + url.PathEscape(pod) + "/" + sub
+	up, _, err := g.prepareBrowser(ctx, row, CallOptions{Method: http.MethodGet, Path: path, AllowSub: sub})
 	if err != nil {
 		return nil, err
 	}
@@ -79,20 +101,43 @@ func (g *Gateway) prepExec(ctx context.Context, row sessionsvc.Session, ns, pod 
 }
 
 func (g *Gateway) noteExec(ctx context.Context, row sessionsvc.Session, ns, pod, container string, command []string, status int) {
-	call := APICall{Verb: "create", Resource: "pods", Namespace: ns, Name: pod, Subresource: "exec"}
-	g.noteCall(ctx, row, call, http.MethodPost, "/exec", status)
-	_ = g.audit.Record(ctx, &row.UserID, "session.k8s.exec", "session", row.ID.String(), "", "k8s", map[string]any{
-		"namespace": ns, "pod": pod, "container": container, "command": command, "status": status, "via": "browser",
-	})
+	g.noteStream(ctx, row, ns, pod, container, "exec", command, status)
+}
+
+func (g *Gateway) noteStream(ctx context.Context, row sessionsvc.Session, ns, pod, container, sub string, command []string, status int) {
+	sub = strings.ToLower(strings.TrimSpace(sub))
+	if sub == "" {
+		sub = "exec"
+	}
+	call := APICall{Verb: "create", Resource: "pods", Namespace: ns, Name: pod, Subresource: sub}
+	g.noteCall(ctx, row, call, http.MethodPost, "/"+sub, status)
+	action := "session.k8s." + sub
+	payload := map[string]any{
+		"namespace": ns, "pod": pod, "container": container, "status": status, "via": "browser", "subresource": sub,
+	}
+	if len(command) > 0 {
+		payload["command"] = command
+	}
+	_ = g.audit.Record(ctx, &row.UserID, action, "session", row.ID.String(), "", "k8s", payload)
 }
 
 func dialExec(ctx context.Context, up *sessionUpstream, ns, pod, container string, command []string, stdin, tty bool) (*websocket.Conn, error) {
+	return dialPodStream(ctx, up, ns, pod, container, "exec", command, stdin, tty)
+}
+
+func dialPodStream(ctx context.Context, up *sessionUpstream, ns, pod, container, sub string, command []string, stdin, tty bool) (*websocket.Conn, error) {
 	if up == nil || up.up == nil || up.up.Server == nil {
 		return nil, fmt.Errorf("k8s upstream required")
 	}
-	command = sanitizeCommand(command)
-	if len(command) == 0 {
-		return nil, fmt.Errorf("command required")
+	sub = strings.ToLower(strings.TrimSpace(sub))
+	if sub == "" {
+		sub = "exec"
+	}
+	if sub == "exec" {
+		command = sanitizeCommand(command)
+		if len(command) == 0 {
+			return nil, fmt.Errorf("command required")
+		}
 	}
 	u := *up.up.Server
 	switch u.Scheme {
@@ -101,10 +146,12 @@ func dialExec(ctx context.Context, up *sessionUpstream, ns, pod, container strin
 	case "http":
 		u.Scheme = "ws"
 	}
-	u.Path = "/api/v1/namespaces/" + url.PathEscape(ns) + "/pods/" + url.PathEscape(pod) + "/exec"
+	u.Path = "/api/v1/namespaces/" + url.PathEscape(ns) + "/pods/" + url.PathEscape(pod) + "/" + sub
 	q := url.Values{}
-	for _, c := range command {
-		q.Add("command", c)
+	if sub == "exec" {
+		for _, c := range command {
+			q.Add("command", c)
+		}
 	}
 	q.Set("stdout", "true")
 	q.Set("stderr", "true")
@@ -142,7 +189,7 @@ func dialExec(ctx context.Context, up *sessionUpstream, ns, pod, container strin
 				msg = s
 			}
 		}
-		return nil, fmt.Errorf("exec: %s", msg)
+		return nil, fmt.Errorf("%s: %s", sub, msg)
 	}
 	return conn, nil
 }

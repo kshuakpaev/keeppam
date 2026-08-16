@@ -166,6 +166,7 @@ export function SessionsPage() {
                 <option value="k8s">k8s</option>
                 <option value="command_denied">command_denied</option>
                 <option value="dlp">dlp</option>
+                <option value="http_denied">http_denied</option>
                 <option value="risk">risk</option>
                 <option value="all">все типы</option>
               </select>

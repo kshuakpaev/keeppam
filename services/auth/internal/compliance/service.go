@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/recstore"
+	"github.com/keeppam/auth/internal/sbom"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -326,6 +328,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	st.Controls = append(st.Controls, s.checkAuditChain(ctx))
 	st.Controls = append(st.Controls, s.checkWORM())
 	st.Controls = append(st.Controls, s.checkKMSHSM())
+	st.Controls = append(st.Controls, s.checkFIPS())
+	st.Controls = append(st.Controls, s.checkSBOM())
 	return st, nil
 }
 
@@ -468,6 +472,9 @@ func (s *Service) checkKMSHSM() ControlResult {
 	case "azure":
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
 			Detail: "Azure Key Vault unwrap"}
+	case "pkcs11":
+		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "pass",
+			Detail: "PKCS#11 token / helper (HSM)"}
 	case "file":
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "warn",
 			Detail: "file provider — лучше Vault/KMS/HSM"}
@@ -475,6 +482,42 @@ func (s *Service) checkKMSHSM() ControlResult {
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "fail",
 			Detail: "env data key — не для prod"}
 	}
+}
+
+func (s *Service) checkFIPS() ControlResult {
+	backend := fips.Backend()
+	if fips.Enabled() {
+		return ControlResult{ID: "fips_crypto", Title: "FIPS crypto module", Status: "pass",
+			Detail: backend}
+	}
+	if os.Getenv("KEEPPAM_FIPS_REQUIRED") == "true" || os.Getenv("KEEPPAM_FIPS_REQUIRED") == "1" {
+		return ControlResult{ID: "fips_crypto", Title: "FIPS crypto module", Status: "fail",
+			Detail: "required, but binary is standard Go crypto"}
+	}
+	return ControlResult{ID: "fips_crypto", Title: "FIPS crypto module", Status: "warn",
+		Detail: "standard Go crypto (" + backend + ") — не FIPS-модуль, см. docs/fips-sbom.txt"}
+}
+
+func (s *Service) checkSBOM() ControlResult {
+	bom, err := sbom.Load()
+	if err != nil {
+		return ControlResult{ID: "sbom", Title: "SBOM (CycloneDX)", Status: "fail",
+			Detail: err.Error()}
+	}
+	n := len(bom.Components)
+	if bom.Metadata.Component != nil {
+		n++
+	}
+	if n == 0 {
+		return ControlResult{ID: "sbom", Title: "SBOM (CycloneDX)", Status: "fail",
+			Detail: "пустой BOM"}
+	}
+	src := "runtime"
+	if strings.TrimSpace(os.Getenv("KEEPPAM_SBOM_FILE")) != "" {
+		src = "file"
+	}
+	return ControlResult{ID: "sbom", Title: "SBOM (CycloneDX)", Status: "pass",
+		Detail: fmt.Sprintf("%s · %d components · spec %s", src, n, bom.SpecVersion)}
 }
 
 func ternary(ok bool, a, b string) string {

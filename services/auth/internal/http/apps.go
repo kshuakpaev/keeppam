@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/appaccess"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
@@ -41,7 +42,7 @@ func (s *Server) handlePutAppIntegration(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.apps.UpsertIntegration(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	out, err := s.apps.UpsertIntegration(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -80,7 +81,7 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, body.Reason, clientIP(r), r.UserAgent())
+	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, body.Reason, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return
@@ -162,10 +163,18 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var httpPack policy.HTTPPack
+	hasHTTPPack := false
+	if row.HTTPPolicyPackID != nil && s.policy != nil {
+		if p, err := s.policy.GetHTTPPack(r.Context(), *row.HTTPPolicyPackID); err == nil {
+			httpPack, hasHTTPPack = p, true
+		}
+	}
+
 	justStarted := row.Status == "pending"
 	if justStarted {
 		_ = s.sessionsvc.MarkActive(r.Context(), id)
-		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 			"protocol": "https", "via": "http-proxy", "asset": creds.Asset.Name,
 		})
 	}
@@ -192,5 +201,57 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 			r2.URL.Path = "/"
 		}
 	}
+	if s.denyHTTPRequest(w, r2, row, authSess.Roles, httpPack, hasHTTPPack, rec, s.clientIP(r)) {
+		return
+	}
 	proxy.ServeHTTP(w, r2)
+}
+
+func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row sessionsvc.Session, roles []string, pack policy.HTTPPack, hasPack bool, rec *appaccess.ProxyRecorder, ip string) bool {
+	method := req.Method
+	path := req.URL.RequestURI()
+	if req.URL.Path != "" {
+		path = req.URL.Path
+	}
+	if hasPack {
+		if ok, why := policy.MatchHTTP(pack, method, path); !ok {
+			_ = s.audit.Record(req.Context(), &row.UserID, "session.http.denied", "session", row.ID.String(), ip, "http", map[string]any{
+				"method": method, "path": path, "reason": why, "pack": pack.Name, "mode": pack.Mode,
+			})
+			_ = s.sessionsvc.AddEvent(req.Context(), row.ID, "http_denied", map[string]any{
+				"method": method, "path": path, "reason": why, "pack": pack.Name,
+			})
+			if rec != nil {
+				rec.Record(method, path, http.StatusForbidden)
+			}
+			http.Error(w, why, http.StatusForbidden)
+			return true
+		}
+	}
+	if s.policy == nil {
+		return false
+	}
+	op := policy.HTTPOperation(method)
+	if op == "" {
+		return false
+	}
+	ev, err := s.policy.CheckOpRisk(req.Context(), policy.AccessCheck{
+		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
+		TicketID: row.TicketID, ClientIP: ip, Operation: op,
+	})
+	if err != nil || ev.OK {
+		return false
+	}
+	msg := ev.DenyMessage()
+	_ = s.audit.Record(req.Context(), &row.UserID, "session.http.denied", "session", row.ID.String(), ip, "http", map[string]any{
+		"method": method, "path": path, "reason": "risk", "operation": op, "risk_score": ev.RiskScore, "max_risk": ev.MaxRisk,
+	})
+	_ = s.sessionsvc.AddEvent(req.Context(), row.ID, "risk", map[string]any{
+		"method": method, "path": path, "reason": msg, "operation": op, "risk_score": ev.RiskScore,
+	})
+	if rec != nil {
+		rec.Record(method, path, http.StatusForbidden)
+	}
+	http.Error(w, msg, http.StatusForbidden)
+	return true
 }

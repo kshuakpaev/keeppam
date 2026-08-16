@@ -136,7 +136,7 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// NewKeyProviderFromEnv picks env|file|vault|aws|gcp|azure based on KEEPPAM_DATA_KEY_SOURCE.
+// NewKeyProviderFromEnv picks env|file|vault|aws|gcp|azure|pkcs11 based on KEEPPAM_DATA_KEY_SOURCE.
 func NewKeyProviderFromEnv() (KeyProvider, error) {
 	src := strings.ToLower(strings.TrimSpace(os.Getenv("KEEPPAM_DATA_KEY_SOURCE")))
 	switch src {
@@ -216,7 +216,9 @@ func NewKeyProviderFromEnv() (KeyProvider, error) {
 			ClientSecret: os.Getenv("KEEPPAM_AZURE_CLIENT_SECRET"),
 			Ciphertext:   ct,
 		}, nil
+	case "pkcs11":
+		return NewPKCS11FromEnv()
 	default:
-		return nil, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure")
+		return nil, fmt.Errorf("KEEPPAM_DATA_KEY_SOURCE must be env|file|vault|aws|gcp|azure|pkcs11")
 	}
 }

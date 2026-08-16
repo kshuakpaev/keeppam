@@ -32,7 +32,7 @@ func (s *Server) handleListCompliancePacks(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleApplyCompliancePack(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	id := chi.URLParam(r, "id")
-	p, err := s.compliance.ApplyPack(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	p, err := s.compliance.ApplyPack(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if errors.Is(err, compliance.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -60,7 +60,7 @@ func (s *Server) handlePutRetention(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	p, err := s.compliance.PutRetention(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	p, err := s.compliance.PutRetention(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	h, err := s.compliance.CreateHold(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	h, err := s.compliance.CreateHold(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -100,7 +100,7 @@ func (s *Server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	h, err := s.compliance.ReleaseHold(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	h, err := s.compliance.ReleaseHold(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if errors.Is(err, compliance.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "not found")

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/notify"
@@ -95,6 +95,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 		r.Get("/sessions/{id}/guac", s.handleSessionGuac)
 		r.Get("/sessions/{id}/sql", s.handleSessionSQL)
 		r.Get("/sessions/{id}/k8s/exec", s.handleK8sExecWS)
+		r.Get("/sessions/{id}/k8s/attach", s.handleK8sAttachWS)
 		r.Handle("/sessions/{id}/app", http.HandlerFunc(s.handleSessionApp))
 		r.Handle("/sessions/{id}/app/*", http.HandlerFunc(s.handleSessionApp))
 
@@ -163,6 +164,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Get("/settings/ssh", s.handleGetSSHSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)
+				r.With(s.requireAnyPerm("settings.write", "compliance.read")).Get("/settings/sbom", s.handleSBOM)
 
 				r.With(s.requirePerm("discovery.read")).Get("/discovery/jobs", s.handleListDiscoveryJobs)
 				r.With(s.requirePerm("discovery.run")).Post("/discovery/jobs", s.handleCreateDiscoveryJob)
@@ -240,6 +242,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("jea.write")).Post("/jea/sql-packs", s.handleCreateSQLPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/sql-packs/{id}", s.handleUpdateSQLPack)
 				r.With(s.requirePerm("jea.write")).Delete("/jea/sql-packs/{id}", s.handleDeleteSQLPack)
+				r.With(s.requirePerm("jea.read")).Get("/jea/http-packs", s.handleListHTTPPacks)
+				r.With(s.requirePerm("jea.read")).Get("/jea/http-packs/{id}", s.handleGetHTTPPack)
+				r.With(s.requirePerm("jea.write")).Post("/jea/http-packs", s.handleCreateHTTPPack)
+				r.With(s.requirePerm("jea.write")).Put("/jea/http-packs/{id}", s.handleUpdateHTTPPack)
+				r.With(s.requirePerm("jea.write")).Delete("/jea/http-packs/{id}", s.handleDeleteHTTPPack)
 
 				r.With(s.requirePerm("attacksim.read")).Get("/attack-sim/scenarios", s.handleListAttackScenarios)
 				r.With(s.requirePerm("attacksim.read")).Get("/attack-sim/runs", s.handleListAttackRuns)
@@ -269,6 +276,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Put("/sessions/{id}/k8s/object", s.handleK8sReplace)
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/delete", s.handleK8sDelete)
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/exec", s.handleK8sExecOnce)
+				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/portforward", s.handleK8sPortForwardHTTP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
 			})
@@ -366,8 +374,12 @@ func mustSess(r *http.Request) session.Session {
 
 func (s *Server) bindSession(r *http.Request, sess session.Session) *http.Request {
 	ctx := context.WithValue(r.Context(), sessKey, sess)
-	ctx = policy.WithDevices(ctx, device.Merge(device.FromTLS(r.TLS), sess.Devices))
+	ctx = policy.WithDevices(ctx, s.clientDevices(r, sess.Devices...))
 	return r.WithContext(ctx)
+}
+
+func (s *Server) clientDevices(r *http.Request, extra ...string) []string {
+	return device.FilterTrustDomain(device.Merge(device.FromTLS(r.TLS), extra), s.cfg.SPIFFETrustDomain)
 }
 
 func (s *Server) stampDevice(r *http.Request, token string, extra ...string) {
@@ -378,7 +390,7 @@ func (s *Server) stampDevice(r *http.Request, token string, extra ...string) {
 	if err != nil {
 		return
 	}
-	sess.Devices = device.Merge(device.FromTLS(r.TLS), extra)
+	sess.Devices = s.clientDevices(r, extra...)
 	_ = s.sessions.Update(r.Context(), token, sess)
 }
 
@@ -417,12 +429,8 @@ func (s *Server) clearCookies(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: "", Path: "/", MaxAge: -1})
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+func (s *Server) clientIP(r *http.Request) string {
+	return geoip.RequestClientIP(r, s.cfg.TrustedProxies)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +442,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	res, err := s.auth.Login(r.Context(), body.Username, body.Password, clientIP(r), r.UserAgent())
+	res, err := s.auth.Login(r.Context(), body.Username, body.Password, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
@@ -457,7 +465,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	res, err := s.auth.VerifyMFA(r.Context(), body.ChallengeToken, body.Code, clientIP(r), r.UserAgent())
+	res, err := s.auth.VerifyMFA(r.Context(), body.ChallengeToken, body.Code, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
@@ -476,7 +484,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c != nil {
 		token = c.Value
 	}
-	_ = s.auth.Logout(r.Context(), token, &sess.UserID, clientIP(r), r.UserAgent())
+	_ = s.auth.Logout(r.Context(), token, &sess.UserID, s.clientIP(r), r.UserAgent())
 	s.clearCookies(w)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -527,7 +535,7 @@ func (s *Server) handleMFAConfirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := s.auth.ConfirmMFASetup(r.Context(), sess.UserID, body.Code, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.auth.ConfirmMFASetup(r.Context(), sess.UserID, body.Code, s.clientIP(r), r.UserAgent()); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -550,7 +558,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	res, err := s.users.Create(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	res, err := s.users.Create(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -588,7 +596,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	u, err := s.users.Update(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	u, err := s.users.Update(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -603,7 +611,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	temp, err := s.users.ResetPassword(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	temp, err := s.users.ResetPassword(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -618,7 +626,7 @@ func (s *Server) handleResetMFA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.users.ResetMFA(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.users.ResetMFA(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -655,7 +663,7 @@ func (s *Server) handleAddUserSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	key, err := s.users.AddSSHKey(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	key, err := s.users.AddSSHKey(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -675,7 +683,7 @@ func (s *Server) handleDeleteUserSSHKey(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid key id")
 		return
 	}
-	if err := s.users.DeleteSSHKey(r.Context(), sess.UserID, id, keyID, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.users.DeleteSSHKey(r.Context(), sess.UserID, id, keyID, s.clientIP(r), r.UserAgent()); err != nil {
 		if err.Error() == "not found" {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
@@ -809,7 +817,7 @@ func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	a, err := s.assets.Create(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	a, err := s.assets.Create(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -847,7 +855,7 @@ func (s *Server) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	a, err := s.assets.Update(r.Context(), sess.UserID, id, in, clientIP(r), r.UserAgent())
+	a, err := s.assets.Update(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -866,7 +874,7 @@ func (s *Server) handleClearAssetHostKey(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	a, err := s.assets.ClearHostKey(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	a, err := s.assets.ClearHostKey(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -885,7 +893,7 @@ func (s *Server) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.assets.Delete(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.assets.Delete(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
@@ -908,7 +916,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	acc, err := s.assets.CreateAccount(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
+	acc, err := s.assets.CreateAccount(r.Context(), sess.UserID, assetID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -928,7 +936,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	acc, err := s.assets.UpdateAccount(r.Context(), sess.UserID, accountID, in, clientIP(r), r.UserAgent())
+	acc, err := s.assets.UpdateAccount(r.Context(), sess.UserID, accountID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -957,7 +965,7 @@ func (s *Server) handleRotateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	res, err := s.assets.RotateSecret(r.Context(), sess.UserID, assetID, accountID, in, clientIP(r), r.UserAgent())
+	res, err := s.assets.RotateSecret(r.Context(), sess.UserID, assetID, accountID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -972,7 +980,7 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
-	if err := s.assets.DeleteAccount(r.Context(), sess.UserID, accountID, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.assets.DeleteAccount(r.Context(), sess.UserID, accountID, s.clientIP(r), r.UserAgent()); err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return
@@ -1009,7 +1017,7 @@ func (s *Server) handleCreateACL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	b, err := s.policy.Create(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
+	b, err := s.policy.Create(r.Context(), sess.UserID, assetID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -1024,7 +1032,7 @@ func (s *Server) handleDeleteACL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid binding id")
 		return
 	}
-	if err := s.policy.Delete(r.Context(), sess.UserID, bindingID, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.policy.Delete(r.Context(), sess.UserID, bindingID, s.clientIP(r), r.UserAgent()); err != nil {
 		if policy.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
 			return

@@ -79,6 +79,23 @@ func K8sOperation(verb, subresource string) string {
 	}
 }
 
+// HTTPOperation maps an HTTP method to extra risk (empty = read).
+func HTTPOperation(method string) string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS":
+		return ""
+	case "DELETE":
+		return "http.delete"
+	case "POST", "PUT", "PATCH", "TRACE", "CONNECT":
+		return "http.write"
+	default:
+		if strings.TrimSpace(method) == "" {
+			return ""
+		}
+		return "http.write"
+	}
+}
+
 func operationPoints(op string) (int, string) {
 	switch strings.TrimSpace(op) {
 	case "sql.insert":
@@ -103,6 +120,10 @@ func operationPoints(op string) (int, string) {
 		return 40, "op:ssh.destructive"
 	case "ssh.priv":
 		return 25, "op:ssh.priv"
+	case "http.write":
+		return 20, "op:http.write"
+	case "http.delete":
+		return 35, "op:http.delete"
 	default:
 		return 0, ""
 	}

@@ -395,11 +395,30 @@ export function ConfigPage() {
             <span className="mono">
               {infra.data_key_source === "vault"
                 ? "vault (HSM-capable)"
-                : ["aws", "gcp", "azure"].includes(infra.data_key_source)
-                  ? `${infra.data_key_source} (KMS)`
-                  : infra.data_key_source}
+                : infra.data_key_source === "pkcs11"
+                  ? "pkcs11 (HSM)"
+                  : ["aws", "gcp", "azure"].includes(infra.data_key_source)
+                    ? `${infra.data_key_source} (KMS)`
+                    : infra.data_key_source}
             </span>
           </p>
+          {(infra.data_key_source === "pkcs11" ||
+            infra.pkcs11_token_file ||
+            infra.pkcs11_module ||
+            infra.pkcs11_helper) && (
+            <p>
+              PKCS#11:{" "}
+              <span className="mono">
+                {infra.pkcs11_token_file
+                  ? infra.pkcs11_token_file
+                  : infra.pkcs11_helper
+                    ? "helper"
+                    : infra.pkcs11_module || "—"}
+                {infra.pkcs11_label ? ` · ${infra.pkcs11_label}` : ""}
+                {infra.pkcs11_uri ? " · uri" : ""}
+              </span>
+            </p>
+          )}
           <p>
             TLS / mTLS:{" "}
             <span className="mono">
@@ -414,12 +433,18 @@ export function ConfigPage() {
             GeoIP:{" "}
             <span className="mono">
               {infra.geoip_ready
-                ? infra.geoip_db || "ready"
+                ? `${infra.geoip_type || infra.geoip_db || "ready"}${infra.geoip_nodes ? ` · ${infra.geoip_nodes} nodes` : ""}`
                 : infra.geoip_db
                   ? `${infra.geoip_db} (не загружена)`
                   : "LAN only (нет MMDB)"}
             </span>
           </p>
+          {!!(infra.trusted_proxies && infra.trusted_proxies.length) && (
+            <p>
+              Trusted proxies:{" "}
+              <span className="mono">{infra.trusted_proxies.join(", ")}</span>
+            </p>
+          )}
           <p>
             OPA:{" "}
             <span className="mono">
@@ -427,6 +452,52 @@ export function ConfigPage() {
                 ? `${infra.opa_package || "keeppam.authz"} · ${infra.opa_policy || "ready"}`
                 : infra.opa_policy
                   ? `${infra.opa_policy} (не загружена)`
+                  : "off"}
+            </span>
+          </p>
+          <p>
+            SPIFFE:{" "}
+            <span className="mono">
+              {infra.spiffe_id
+                ? infra.spiffe_id
+                : infra.spiffe_trust_domain
+                  ? `domain ${infra.spiffe_trust_domain}`
+                  : "off"}
+              {infra.spiffe_svid ? " · svid" : ""}
+              {infra.spiffe_bundle ? " · bundle" : ""}
+              {infra.spiffe_id && infra.spiffe_trust_domain ? ` · ${infra.spiffe_trust_domain}` : ""}
+            </span>
+          </p>
+          <p>
+            FIPS:{" "}
+            <span className="mono">
+              {infra.fips || "go"}
+              {infra.fips_required ? " · required" : ""}
+              {infra.go_version ? ` · ${infra.go_version}` : ""}
+              {infra.cgo_enabled ? ` · cgo=${infra.cgo_enabled}` : ""}
+            </span>
+          </p>
+          <p>
+            SBOM:{" "}
+            <span className="mono">
+              {infra.sbom_components ?? 0} components
+              {infra.sbom_file ? " · file" : " · runtime"}
+            </span>{" "}
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={() => void api.downloadSBOM().catch((e) => setError(e instanceof Error ? e.message : "SBOM"))}
+            >
+              Скачать CycloneDX
+            </button>
+          </p>
+          <p>
+            OTEL traces:{" "}
+            <span className="mono">
+              {infra.otel_ready
+                ? infra.otel_endpoint || "on"
+                : infra.otel_endpoint
+                  ? `${infra.otel_endpoint} (не активен)`
                   : "off"}
             </span>
           </p>

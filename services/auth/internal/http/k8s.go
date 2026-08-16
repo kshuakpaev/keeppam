@@ -45,7 +45,7 @@ func (s *Server) handleK8sAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	lease, err := s.apps.RequestK8sAccess(
 		r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass,
-		body.TicketID, body.Reason, clientIP(r), r.UserAgent(),
+		body.TicketID, body.Reason, s.clientIP(r), r.UserAgent(),
 	)
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
@@ -69,6 +69,6 @@ func (s *Server) handleConsumeK8sLease(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_ = s.audit.Record(r.Context(), &sess.UserID, "k8s.lease.consumed", "credential_lease", id.String(), clientIP(r), r.UserAgent(), nil)
+	_ = s.audit.Record(r.Context(), &sess.UserID, "k8s.lease.consumed", "credential_lease", id.String(), s.clientIP(r), r.UserAgent(), nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "consumed"})
 }

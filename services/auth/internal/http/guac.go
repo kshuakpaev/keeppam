@@ -110,7 +110,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("guac tunnel", "err", err, "session", id.String())
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.sessionsvc.MarkActive(r.Context(), id)
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"asset": creds.Asset.Name, "account": creds.Account.Username, "protocol": row.Protocol, "via": "guac",
 	})
 
@@ -197,7 +197,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 	<-ioDone
 
 	_ = s.sessionsvc.MarkEnded(r.Context(), id, "")
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{"via": "guac"})
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"via": "guac"})
 }
 
 func (s *Server) openGuacTunnel(protocol, address string, port int, username, password string, width, height int, sessID uuid.UUID) (guac.Tunnel, error) {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
@@ -36,6 +37,7 @@ type Gateway struct {
 	live     *sessionsvc.LiveHub
 	policy   *policy.Service
 	rolesOf  func(context.Context, uuid.UUID) []string
+	trusted  []string
 
 	mu        sync.Mutex
 	upstreams map[uuid.UUID]*sessionUpstream
@@ -72,6 +74,10 @@ func (g *Gateway) SetPolicy(p *policy.Service) {
 
 func (g *Gateway) SetRoles(fn func(context.Context, uuid.UUID) []string) {
 	g.rolesOf = fn
+}
+
+func (g *Gateway) SetTrustedProxies(cidrs []string) {
+	g.trusted = cidrs
 }
 
 func (g *Gateway) PublicURL() string {
@@ -149,7 +155,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	watch := r.URL.Query().Get("watch") == "true"
 	call := ParseAPIPath(r.Method, r.URL.Path, watch)
 	if IsUpgrade(r) || call.Denied() {
-		_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s.denied", "session", sid.String(), clientIP(r), "k8s", map[string]any{
+		_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s.denied", "session", sid.String(), g.clientIP(r), "k8s", map[string]any{
 			"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
 			"subresource": call.Subresource, "reason": "denied_subresource",
 		})
@@ -157,7 +163,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ok, reason := NamespaceAllowed(row.K8sNamespaces, call); !ok {
-		_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s.denied", "session", sid.String(), clientIP(r), "k8s", map[string]any{
+		_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s.denied", "session", sid.String(), g.clientIP(r), "k8s", map[string]any{
 			"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
 			"name": call.Name, "reason": reason,
 		})
@@ -168,14 +174,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
 		return
 	}
-	if msg, deny := g.denyOpRisk(r.Context(), row, call, clientIP(r)); deny {
+	if msg, deny := g.denyHTTPACL(r.Context(), row, r.Method, r.URL.Path, g.clientIP(r)); deny {
+		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
+		return
+	}
+	if msg, deny := g.denyOpRisk(r.Context(), row, call, g.clientIP(r)); deny {
 		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
 		return
 	}
 	if NeedsNamespaceListFilter(row.K8sNamespaces, call) {
 		if row.Status == "pending" {
 			_ = g.sessions.MarkActive(r.Context(), sid)
-			_ = g.audit.Record(r.Context(), &row.UserID, "session.started", "session", sid.String(), clientIP(r), "k8s", map[string]any{
+			_ = g.audit.Record(r.Context(), &row.UserID, "session.started", "session", sid.String(), g.clientIP(r), "k8s", map[string]any{
 				"protocol": "kubectl",
 			})
 		}
@@ -195,7 +205,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if row.Status == "pending" {
 		_ = g.sessions.MarkActive(r.Context(), sid)
-		_ = g.audit.Record(r.Context(), &row.UserID, "session.started", "session", sid.String(), clientIP(r), "k8s", map[string]any{
+		_ = g.audit.Record(r.Context(), &row.UserID, "session.started", "session", sid.String(), g.clientIP(r), "k8s", map[string]any{
 			"protocol": "kubectl",
 		})
 	}
@@ -260,7 +270,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"verb": call.Verb, "resource": call.Resource, "api_group": call.APIGroup,
 		"namespace": call.Namespace, "name": call.Name, "status": status, "watch": call.Watch,
 	})
-	_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s", "session", sid.String(), clientIP(r), "k8s", map[string]any{
+	_ = g.audit.Record(r.Context(), &row.UserID, "session.k8s", "session", sid.String(), g.clientIP(r), "k8s", map[string]any{
 		"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
 		"name": call.Name, "status": status,
 	})
@@ -429,6 +439,27 @@ func (g *Gateway) DropSession(id uuid.UUID) {
 	}
 }
 
+func (g *Gateway) denyHTTPACL(ctx context.Context, row sessionsvc.Session, method, path, ip string) (string, bool) {
+	if g == nil || g.policy == nil || row.HTTPPolicyPackID == nil {
+		return "", false
+	}
+	pack, err := g.policy.GetHTTPPack(ctx, *row.HTTPPolicyPackID)
+	if err != nil {
+		return "", false
+	}
+	ok, why := policy.MatchHTTP(pack, method, path)
+	if ok {
+		return "", false
+	}
+	_ = g.audit.Record(ctx, &row.UserID, "session.http.denied", "session", row.ID.String(), ip, "k8s", map[string]any{
+		"method": method, "path": path, "reason": why, "pack": pack.Name, "mode": pack.Mode,
+	})
+	_ = g.sessions.AddEvent(ctx, row.ID, "http_denied", map[string]any{
+		"method": method, "path": path, "reason": why, "pack": pack.Name,
+	})
+	return why, true
+}
+
 func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call APICall, ip string) (string, bool) {
 	if g == nil || g.policy == nil {
 		return "", false
@@ -474,12 +505,11 @@ func writeK8sStatus(w http.ResponseWriter, code int, reason, msg string) {
 	})
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+func (g *Gateway) clientIP(r *http.Request) string {
+	if g == nil {
+		return geoip.RequestClientIP(r, nil)
 	}
-	return host
+	return geoip.RequestClientIP(r, g.trusted)
 }
 
 func DefaultPublicURL(corsOrigin, addr string) string {

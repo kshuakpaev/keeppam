@@ -8,22 +8,27 @@
 
 Пусто = любая страна (как пустой CIDR).
 
-`LAN` = loopback / RFC1918 / link-local. На локальном стенде клиент почти всегда `LAN`.
+`LAN` = loopback / RFC1918 / link-local. Браузер на локальном стенде почти всегда `LAN` (даже с MMDB).
 
-Если список задан, а страну определить нельзя (публичный IP без MMDB) — **отказ** (fail closed).
+Если список задан, а страну определить нельзя (публичный IP, которого нет в базе) — **отказ** (fail closed).
 
 ## Резолв
 
 1. Частный IP → `LAN` (без базы).
-2. Иначе `KEEPPAM_GEOIP_DB` = путь к MaxMind **GeoLite2-Country.mmdb**.
+2. Иначе `KEEPPAM_GEOIP_DB` — MaxMind-совместимый Country MMDB (`country.iso_code`).
 3. Нет файла / ошибка открытия → публичные IP дают пустую страну.
 
-```bash
-# пример
-KEEPPAM_GEOIP_DB=/var/lib/keeppam/GeoLite2-Country.mmdb
-```
+Стенд монтирует **демо-базу** `deploy/geoip/country-demo.mmdb` (тип `KeepPAM-Country-Demo`, не GeoLite2): Google/Cloudflare/Quad9 DNS → `US`, Yandex DNS `77.88.8.8` → `RU`. Сборка: `go run ./cmd/geoip-mmdb <path>` из `services/auth`.
 
-Статус: Конфиг → Инфраструктура (`geoip_db`, `geoip_ready`).
+Прод: положить настоящий **GeoLite2-Country.mmdb** (лицензия MaxMind) на тот же путь или сменить `KEEPPAM_GEOIP_DB`.
+
+## Trusted proxies
+
+`KEEPPAM_TRUSTED_PROXIES` — CSV CIDR. Если `RemoteAddr` в списке, берётся первый IP из `X-Forwarded-For` или `X-Real-IP` (nginx на стенде уже шлёт оба).
+
+Пусто = заголовки **не** доверяются (нельзя подделать страну с публичного API). На compose заданы RFC1918 + loopback, чтобы UI за `web` видел IP браузера.
+
+Статус: Конфиг → Инфраструктура (`geoip_db`, `geoip_ready`, `geoip_type`, `trusted_proxies`).
 
 ## UI
 

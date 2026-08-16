@@ -90,7 +90,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 	defer rec.Close()
 
 	_ = s.sessionsvc.MarkActive(r.Context(), id)
-	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"protocol": row.Protocol, "via": "sql-ws", "asset": creds.Asset.Name, "ephemeral_role": ephRole,
 	})
 
@@ -144,7 +144,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			}
 			if ev, err := s.policy.CheckOpRisk(r.Context(), policy.AccessCheck{
 				UserID: authSess.UserID, AssetID: row.AssetID, RoleNames: authSess.Roles,
-				Bypass: bypass, TicketID: row.TicketID, ClientIP: clientIP(r),
+				Bypass: bypass, TicketID: row.TicketID, ClientIP: s.clientIP(r),
 				Operation: policy.SQLOperation(msg.Statement),
 			}); err == nil && !ev.OK {
 				reason := ev.DenyMessage()
@@ -165,7 +165,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 				}
 				_ = s.sessionsvc.AddEvent(r.Context(), id, "sql_denied", denied)
 				s.live.FanoutSQL(r.Context(), id, denied)
-				_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+				_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql.denied", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 					"statement": truncateStr(msg.Statement, 2000), "reason": reason, "pack": sqlPack.Name,
 				})
 				_ = conn.WriteJSON(map[string]any{"type": "error", "error": reason, "duration_ms": res.Duration})
@@ -184,7 +184,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = s.sessionsvc.AddEvent(r.Context(), id, "sql", sqlEv)
 			s.live.FanoutSQL(r.Context(), id, sqlEv)
-			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql", "session", id.String(), clientIP(r), r.UserAgent(), map[string]any{
+			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.sql", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 				"statement": truncateStr(msg.Statement, 2000), "error": errMsg, "row_count": res.RowCount,
 			})
 			if qerr != nil {
@@ -208,7 +208,7 @@ func (s *Server) denySQLClient(r *http.Request, writeJSON func(v any) error, use
 	}
 	_ = s.sessionsvc.AddEvent(r.Context(), sessionID, "sql_denied", denied)
 	s.live.FanoutSQL(r.Context(), sessionID, denied)
-	_ = s.audit.Record(r.Context(), &userID, "session.sql.denied", "session", sessionID.String(), clientIP(r), r.UserAgent(), map[string]any{
+	_ = s.audit.Record(r.Context(), &userID, "session.sql.denied", "session", sessionID.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"statement": truncateStr(stmt, 2000), "reason": reason, "pack": pack,
 	})
 	_ = writeJSON(map[string]any{"type": "error", "error": reason})

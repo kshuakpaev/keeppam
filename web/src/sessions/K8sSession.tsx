@@ -47,7 +47,11 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
   const [execCmd, setExecCmd] = useState("/bin/sh");
   const [runOut, setRunOut] = useState("");
   const [execOpen, setExecOpen] = useState(false);
-  const launchRef = useRef({ ns: "", pod: "", container: "", cmd: "/bin/sh" });
+  const [pfPort, setPfPort] = useState("8080");
+  const [pfMethod, setPfMethod] = useState("GET");
+  const [pfPath, setPfPath] = useState("/");
+  const [pfOut, setPfOut] = useState("");
+  const launchRef = useRef({ ns: "", pod: "", container: "", cmd: "/bin/sh", mode: "exec" as "exec" | "attach" });
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -123,17 +127,20 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
     qs.set("namespace", launch.ns);
     qs.set("pod", launch.pod);
     if (launch.container) qs.set("container", launch.container);
-    const cmd = launch.cmd.trim() || "/bin/sh";
-    if (cmd.includes(" ") || cmd.includes("\t")) {
-      qs.append("command", "/bin/sh");
-      qs.append("command", "-c");
-      qs.append("command", cmd);
-    } else {
-      qs.append("command", cmd);
-    }
     qs.set("cols", String(term.cols));
     qs.set("rows", String(term.rows));
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/sessions/${id}/k8s/exec?${qs}`);
+    if (launch.mode !== "attach") {
+      const cmd = launch.cmd.trim() || "/bin/sh";
+      if (cmd.includes(" ") || cmd.includes("\t")) {
+        qs.append("command", "/bin/sh");
+        qs.append("command", "-c");
+        qs.append("command", cmd);
+      } else {
+        qs.append("command", cmd);
+      }
+    }
+    const path = launch.mode === "attach" ? "attach" : "exec";
+    const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/sessions/${id}/k8s/${path}?${qs}`);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
     ws.onmessage = (ev) => {
@@ -310,6 +317,38 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
     }
   }
 
+  async function runPortForward() {
+    if (!execPod) {
+      setError("Откройте pod");
+      return;
+    }
+    const port = Number(pfPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setError("Порт 1..65535");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setPfOut("");
+    try {
+      const res = await api.k8sPortForwardHTTP(id, {
+        namespace: execNs || ns,
+        pod: execPod,
+        port,
+        method: pfMethod,
+        path: pfPath.trim() || "/",
+      });
+      const hdr = Object.entries(res.headers || {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n");
+      setPfOut(`HTTP ${res.status}${res.truncated ? " (truncated)" : ""}\n${hdr}\n\n${res.body || ""}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка port-forward");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function download() {
     const blob = new Blob([kubeconfig], { type: "text/yaml" });
     const a = document.createElement("a");
@@ -345,8 +384,8 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       </div>
       {error && <p className="error">{error}</p>}
       <p className="muted">
-        Apply / delete / exec в браузере (cookie PAM). kubectl exec/attach на :16443 по-прежнему запрещены. Secret.data
-        маскируется; сохранять замаскированный Secret нельзя.
+        Apply / delete / exec / attach / HTTP port-forward в браузере (cookie PAM). kubectl exec/attach/port-forward
+        на :16443 по-прежнему запрещены. Secret.data маскируется; сохранять замаскированный Secret нельзя.
       </p>
       <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
@@ -461,8 +500,8 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       )}
       {kind?.resource === "pods" && (
         <div className="card" style={{ marginTop: "1rem" }}>
-          <h2>Exec</h2>
-          <p className="muted">Интерактивный shell через PAM (не :16443). Команда по умолчанию /bin/sh.</p>
+          <h2>Exec / Attach</h2>
+          <p className="muted">Интерактивный shell (exec) или attach к процессу контейнера. Не :16443.</p>
           <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: "0.75rem" }}>
             <div>
               <label>Pod</label>
@@ -494,6 +533,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
                   pod: execPod,
                   container: execContainer,
                   cmd: execCmd.trim() || "/bin/sh",
+                  mode: "exec",
                 };
                 setExecOpen(true);
               }}
@@ -503,9 +543,26 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
             <button className="btn secondary" type="button" disabled={loading || !execPod} onClick={() => void runOnce()}>
               Run
             </button>
+            <button
+              className="btn secondary"
+              type="button"
+              disabled={loading || !execPod}
+              onClick={() => {
+                launchRef.current = {
+                  ns: execNs || ns,
+                  pod: execPod,
+                  container: execContainer,
+                  cmd: "",
+                  mode: "attach",
+                };
+                setExecOpen(true);
+              }}
+            >
+              Attach
+            </button>
             {execOpen && (
               <button className="btn secondary" type="button" onClick={() => setExecOpen(false)}>
-                Закрыть shell
+                Закрыть терминал
               </button>
             )}
           </div>
@@ -513,6 +570,48 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
           {runOut && (
             <pre className="mono" style={{ whiteSpace: "pre-wrap", fontSize: "0.8rem", marginTop: "0.75rem" }}>
               {runOut}
+            </pre>
+          )}
+        </div>
+      )}
+      {kind?.resource === "pods" && (
+        <div className="card" style={{ marginTop: "1rem" }}>
+          <h2>Port-forward HTTP</h2>
+          <p className="muted">
+            Одноразовый HTTP к порту контейнера через API portforward. Слушатель на хосте PAM не открывается. Тела
+            Cookie/Authorization в ответе редактируются.
+          </p>
+          <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap", gap: "0.75rem" }}>
+            <div style={{ width: 100 }}>
+              <label>Port</label>
+              <input value={pfPort} onChange={(e) => setPfPort(e.target.value)} placeholder="8080" />
+            </div>
+            <div>
+              <label>Method</label>
+              <select value={pfMethod} onChange={(e) => setPfMethod(e.target.value)}>
+                {["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <label>Path</label>
+              <input value={pfPath} onChange={(e) => setPfPath(e.target.value)} placeholder="/" />
+            </div>
+            <button
+              className="btn"
+              type="button"
+              disabled={loading || !execPod}
+              onClick={() => void runPortForward()}
+            >
+              Запрос
+            </button>
+          </div>
+          {pfOut && (
+            <pre className="mono" style={{ whiteSpace: "pre-wrap", fontSize: "0.8rem", marginTop: "0.75rem" }}>
+              {pfOut}
             </pre>
           )}
         </div>

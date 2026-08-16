@@ -32,7 +32,7 @@ func (s *Server) handlePutDRSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, err := s.dr.PutSettings(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	st, err := s.dr.PutSettings(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -42,7 +42,7 @@ func (s *Server) handlePutDRSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDRBackup(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
-	res, err := s.dr.RunBackup(r.Context(), sess.UserID, clientIP(r), r.UserAgent())
+	res, err := s.dr.RunBackup(r.Context(), sess.UserID, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -57,7 +57,7 @@ func (s *Server) handleDRDrill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, err := s.dr.RecordDrill(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	st, err := s.dr.RecordDrill(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

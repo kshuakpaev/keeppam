@@ -130,8 +130,12 @@ export function AnalyticsPage() {
                 {" · "}
                 Alertmanager: <a href="http://localhost:9093" target="_blank" rel="noreferrer">:9093</a>
                 {" · "}
-                Jaeger:{" "}
-                <a href="http://localhost:16686/search?service=keeppam-api" target="_blank" rel="noreferrer">
+                Tempo:{" "}
+                <a
+                  href="http://localhost:3001/explore?orgId=1&left=%7B%22datasource%22:%22keeppam-tempo%22%7D"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   traces
                 </a>
                 {" · "}

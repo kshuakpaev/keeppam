@@ -36,6 +36,20 @@ func (l *Lookup) Loaded() bool {
 	return l != nil && l.db != nil
 }
 
+func (l *Lookup) DatabaseType() string {
+	if !l.Loaded() {
+		return ""
+	}
+	return l.db.Metadata.DatabaseType
+}
+
+func (l *Lookup) NodeCount() uint {
+	if !l.Loaded() {
+		return 0
+	}
+	return l.db.Metadata.NodeCount
+}
+
 func ParseIP(raw string) net.IP {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

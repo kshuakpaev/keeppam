@@ -1,0 +1,64 @@
+# KeepPAM: PKCS#11 data key (HSM)
+
+KEK не лежит в `KEEPPAM_DATA_KEY`. DEK (32 байта AES-GCM Envelope) при старте API/worker разворачивается через PIN-токен или PKCS#11 helper. Совместимо с CGO_ENABLED=0: бинарник **не** dlopen `.so`.
+
+Стенд compose остаётся на `env`. SoftHSM в compose не добавляется.
+
+## Source
+
+`KEEPPAM_DATA_KEY_SOURCE=pkcs11`
+
+Нужен **один** из путей:
+
+1. **Software token** (демо / air-gap без HSM-библиотеки)
+2. **Helper** — внешняя утилита, которая говорит с настоящим модулем (SoftHSM, Thales, Entrust, Utimaco)
+
+## Software token
+
+PIN-locked JSON (mode **0600**), KEK внутри, DEK снаружи в ciphertext.
+
+| Env | Смысл |
+|-----|--------|
+| `KEEPPAM_PKCS11_TOKEN_FILE` | путь к token.json |
+| `KEEPPAM_PKCS11_PIN` или `KEEPPAM_PKCS11_PIN_FILE` | PIN |
+| `KEEPPAM_KMS_CIPHERTEXT` | base64 AES-GCM(KEK, DEK) |
+
+Генерация (`services/auth`):
+
+```bash
+go run ./cmd/pkcs11-token init --pin 'change-me' --out /etc/keeppam/pkcs11/token.json
+go run ./cmd/pkcs11-token wrap --pin 'change-me' --token /etc/keeppam/pkcs11/token.json \
+  --dek-b64 "$KEEPPAM_DATA_KEY"
+# печатает KEEPPAM_KMS_CIPHERTEXT=...
+```
+
+Миграция с `env`: тот же DEK (`KEEPPAM_DATA_KEY`) обернуть; после переключения `DATA_KEY` из окружения убрать.
+
+## Helper (настоящий PKCS#11)
+
+| Env | Смысл |
+|-----|--------|
+| `KEEPPAM_PKCS11_HELPER` | путь к бинарю |
+| `KEEPPAM_PKCS11_MODULE` | `.so` (передаётся helper в env) |
+| `KEEPPAM_PKCS11_TOKEN` / `KEEPPAM_PKCS11_LABEL` | token / object label |
+| `KEEPPAM_PKCS11_URI` | RFC 7512, опционально (`pkcs11:token=KeepPAM;object=keeppam-kek?...`) |
+
+Helper наследует env (PIN не в argv). Stdout: 32 сырых байта DEK **или** base64. Timeout 20s.
+
+Если задан только `MODULE` без helper и без token file — отказ: CGO-free API не загружает PKCS#11 ABI.
+
+Пример URI (PIN лучше файлом, не `pin-value`):
+
+```text
+pkcs11:token=KeepPAM;object=keeppam-kek;type=secret?module-path=/usr/lib64/softhsm/libsofthsm2.so&pin-source=/run/secrets/pkcs11-pin
+```
+
+## Compliance / UI
+
+Контроль `kms_hsm_key` — **pass** для `pkcs11`. Конфигурация → Инфраструктура: `pkcs11 (HSM)` и путь token/helper.
+
+## Не входит
+
+- SoftHSM контейнер
+- in-process `dlopen` / miekg/pkcs11 (нужен CGO)
+- FIPS module Go crypto (software token использует стандартный `crypto/aes`)

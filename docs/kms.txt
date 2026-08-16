@@ -54,7 +54,7 @@ REST `POST /v1/{name}:decrypt`.
 
 ## Compliance / UI
 
-Контроль `kms_hsm_key`: pass для `vault|aws|gcp|azure`, warn `file`, fail `env`.
-Конфигурация → «Инфраструктура»: `aws/gcp/azure (KMS)`.
+Контроль `kms_hsm_key`: pass для `vault|aws|gcp|azure|pkcs11`, warn `file`, fail `env`.
+Конфигурация → «Инфраструктура»: `aws/gcp/azure (KMS)`, `pkcs11 (HSM)`.
 
-Стенд compose остаётся на `env`. PKCS#11 по-прежнему не встроен.
+Стенд compose остаётся на `env`. PKCS#11: `docs/pkcs11.txt` (token file / helper, без SoftHSM в compose).

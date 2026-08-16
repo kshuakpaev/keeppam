@@ -29,7 +29,7 @@ func (s *Server) handleCreateAccessRequest(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	req, err := s.policy.CreateRequest(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
+	req, err := s.policy.CreateRequest(r.Context(), sess.UserID, assetID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -93,7 +93,7 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	req, err := s.policy.ApproveRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	req, err := s.policy.ApproveRequest(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if policy.IsRequestNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -119,7 +119,7 @@ func (s *Server) handleDenyAccessRequest(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	req, err := s.policy.DenyRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	req, err := s.policy.DenyRequest(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if policy.IsRequestNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -141,7 +141,7 @@ func (s *Server) handleCancelAccessRequest(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	req, err := s.policy.CancelRequest(r.Context(), sess.UserID, id, clientIP(r), r.UserAgent())
+	req, err := s.policy.CancelRequest(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if policy.IsRequestNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -178,7 +178,7 @@ func (s *Server) handleOpenBreakGlass(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	ev, err := s.policy.OpenBreakGlass(r.Context(), sess.UserID, assetID, in, clientIP(r), r.UserAgent())
+	ev, err := s.policy.OpenBreakGlass(r.Context(), sess.UserID, assetID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

@@ -12,6 +12,9 @@
 | `TLS` | клиентский сертификат (mTLS на API) |
 | `WEBAUTHN` | сессия после входа Passkey |
 | `SSH` | SSH publickey на `:2222` |
+| `SPIFFE` | URI SAN `spiffe://…` в клиентском сертификате |
+| `spiffe://trust-domain/path` | точный SPIFFE ID |
+| `spiffe://trust-domain/path*` | префикс (`*` только в конце) |
 | `sha256:<64 hex>` | отпечаток клиентского TLS-серта |
 | `SHA256:<base64>` | fingerprint ключа OpenSSH |
 
@@ -20,7 +23,7 @@
 ## Откуда берётся устройство
 
 1. **WebAuthn login** — в Redis-сессию пишется `WEBAUTHN`.
-2. **mTLS** — `r.TLS.PeerCertificates[0]` → `TLS` + sha256(DER). Терминация TLS должна быть на API (`KEEPPAM_TLS_CLIENT_CA_FILE`). Nginx на стенде сертификат не прокидывает.
+2. **mTLS** — `r.TLS.PeerCertificates[0]` → `TLS` + sha256(DER); URI SAN `spiffe://…` → `SPIFFE` + ID. Терминация TLS должна быть на API (`KEEPPAM_TLS_CLIENT_CA_FILE` и/или `KEEPPAM_SPIFFE_BUNDLE_FILE`). Nginx на стенде сертификат не прокидывает. См. `docs/spiffe.txt`.
 3. **SSH publickey** — `SSH` + `ssh.FingerprintSHA256`.
 
 Password-only SSH / логин паролем без passkey — устройства нет.
@@ -29,4 +32,4 @@ Password-only SSH / логин паролем без passkey — устройс�
 
 ## UI
 
-Карточка актива → ACL → «Allowed devices». Пример: `WEBAUTHN, TLS`.
+Карточка актива → ACL → «Allowed devices». Пример: `WEBAUTHN, TLS, SPIFFE` или `spiffe://keeppam.local/ns/prod/*`.

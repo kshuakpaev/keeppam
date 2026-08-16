@@ -163,6 +163,8 @@ export type AccessBinding = {
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
   sql_policy_pack_name?: string;
+  http_policy_pack_id?: string;
+  http_policy_pack_name?: string;
   max_risk?: number;
   risk_action?: string;
   created_at: string;
@@ -366,9 +368,29 @@ export type InfraStatus = {
   cookie_secure?: boolean;
   geoip_db?: string;
   geoip_ready?: boolean;
+  geoip_type?: string;
+  geoip_nodes?: number;
+  trusted_proxies?: string[];
   opa_policy?: string;
   opa_ready?: boolean;
   opa_package?: string;
+  spiffe_trust_domain?: string;
+  spiffe_id?: string;
+  spiffe_svid?: boolean;
+  spiffe_bundle?: boolean;
+  pkcs11_token_file?: string;
+  pkcs11_module?: string;
+  pkcs11_helper?: boolean;
+  pkcs11_label?: string;
+  pkcs11_uri?: boolean;
+  go_version?: string;
+  cgo_enabled?: string;
+  fips?: string;
+  fips_required?: boolean;
+  sbom_file?: boolean;
+  sbom_components?: number;
+  otel_endpoint?: string;
+  otel_ready?: boolean;
 };
 
 export type DiscoveryJob = {
@@ -598,6 +620,17 @@ export const api = {
   readAllNotifications: () =>
     request<{ status: string }>("/api/v1/notifications/read-all", { method: "POST" }),
   getInfraStatus: () => request<InfraStatus>("/api/v1/admin/settings/infra"),
+  getSBOM: () => request<Record<string, unknown>>("/api/v1/admin/settings/sbom"),
+  downloadSBOM: async () => {
+    const bom = await request<Record<string, unknown>>("/api/v1/admin/settings/sbom");
+    const blob = new Blob([JSON.stringify(bom, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keeppam-api.cdx.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   getSSHSettings: () => request<SSHSettings>("/api/v1/admin/settings/ssh"),
   putSSHSettings: (body: Partial<SSHSettings>) =>
     request<SSHSettings>("/api/v1/admin/settings/ssh", {
@@ -883,6 +916,7 @@ export const api = {
       allowed_namespaces?: string[];
       command_policy_pack_id?: string;
       sql_policy_pack_id?: string;
+      http_policy_pack_id?: string;
       max_risk?: number;
       risk_action?: string;
     },
@@ -1041,6 +1075,14 @@ export const api = {
       `/api/v1/admin/sessions/${id}/k8s/exec`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  k8sPortForwardHTTP: (
+    id: string,
+    body: { namespace: string; pod: string; port: number; method?: string; path?: string; body?: string },
+  ) =>
+    request<{ status: number; headers: Record<string, string>; body: string; truncated?: boolean }>(
+      `/api/v1/admin/sessions/${id}/k8s/portforward`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
   getAppIntegration: (assetId: string) =>
     request<AppIntegration>(`/api/v1/admin/assets/${assetId}/app`),
@@ -1132,6 +1174,19 @@ export const api = {
     }),
   deleteSQLPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/sql-packs/${id}`, { method: "DELETE" }),
+  listHTTPPacks: () => request<{ packs: HTTPPolicyPack[] }>("/api/v1/admin/jea/http-packs"),
+  createHTTPPack: (body: HTTPPolicyPackInput) =>
+    request<HTTPPolicyPack>("/api/v1/admin/jea/http-packs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateHTTPPack: (id: string, body: HTTPPolicyPackInput) =>
+    request<HTTPPolicyPack>(`/api/v1/admin/jea/http-packs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteHTTPPack: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/jea/http-packs/${id}`, { method: "DELETE" }),
   listAttackScenarios: () =>
     request<{ scenarios: AttackSimScenario[] }>("/api/v1/admin/attack-sim/scenarios"),
   listAttackRuns: () => request<{ runs: AttackSimRun[] }>("/api/v1/admin/attack-sim/runs"),
@@ -1215,6 +1270,23 @@ export type SQLPolicyPackInput = {
   mask_replacement?: string;
   max_rows?: number;
   dlp_action?: string;
+};
+
+export type HTTPPolicyPack = {
+  id: string;
+  name: string;
+  description: string;
+  mode: "allowlist" | "denylist" | string;
+  rules: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type HTTPPolicyPackInput = {
+  name: string;
+  description?: string;
+  mode: string;
+  rules: string[];
 };
 
 export type SessionEventHit = {

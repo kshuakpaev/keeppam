@@ -39,7 +39,7 @@ func (s *Server) handlePutAuthSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.settings.Update(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	out, err := s.settings.Update(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -85,7 +85,7 @@ func (s *Server) handlePutSSHSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.sshca.Update(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	out, err := s.sshca.Update(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -100,7 +100,7 @@ func (s *Server) handlePutSIEMSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.siem.Update(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	out, err := s.siem.Update(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -136,7 +136,7 @@ func (s *Server) handlePutITSMSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	out, err := s.itsm.Update(r.Context(), sess.UserID, in, clientIP(r), r.UserAgent())
+	out, err := s.itsm.Update(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -218,7 +218,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settings.OIDCErrorRedirect(base, err.Error()), http.StatusFound)
 		return
 	}
-	res, err := s.auth.LoginOIDC(r.Context(), claims, clientIP(r), r.UserAgent())
+	res, err := s.auth.LoginOIDC(r.Context(), claims, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		http.Redirect(w, r, settings.OIDCErrorRedirect(base, err.Error()), http.StatusFound)
 		return
@@ -294,7 +294,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
 		return
 	}
-	res, err := s.auth.LoginSAML(r.Context(), claims, clientIP(r), r.UserAgent())
+	res, err := s.auth.LoginSAML(r.Context(), claims, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
 		return
@@ -337,7 +337,7 @@ func (s *Server) handleSAMLSLO(w http.ResponseWriter, r *http.Request) {
 		if sess, gerr := s.sessions.Get(r.Context(), c.Value); gerr == nil {
 			nameID = sess.SAMLNameID
 		}
-		_ = s.auth.Logout(r.Context(), c.Value, nil, clientIP(r), r.UserAgent())
+		_ = s.auth.Logout(r.Context(), c.Value, nil, s.clientIP(r), r.UserAgent())
 	}
 	s.clearCookies(w)
 
