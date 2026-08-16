@@ -271,13 +271,23 @@ func (s *Service) CloseStale(ctx context.Context, olderThan time.Duration) (int,
 }
 
 func (s *Service) AddEvent(ctx context.Context, sessionID uuid.UUID, eventType string, payload map[string]any) error {
+	return s.AddEventAt(ctx, sessionID, time.Time{}, eventType, payload)
+}
+
+func (s *Service) AddEventAt(ctx context.Context, sessionID uuid.UUID, ts time.Time, eventType string, payload map[string]any) error {
 	if payload == nil {
 		payload = map[string]any{}
 	}
 	b, _ := json.Marshal(payload)
+	if ts.IsZero() {
+		_, err := s.db.Pool.Exec(ctx, `
+			INSERT INTO session_events (id, session_id, ts, event_type, payload)
+			VALUES ($1,$2,NOW(),$3,$4)`, store.NewID(), sessionID, eventType, b)
+		return err
+	}
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO session_events (id, session_id, ts, event_type, payload)
-		VALUES ($1,$2,NOW(),$3,$4)`, store.NewID(), sessionID, eventType, b)
+		VALUES ($1,$2,$3,$4,$5)`, store.NewID(), sessionID, ts, eventType, b)
 	return err
 }
 

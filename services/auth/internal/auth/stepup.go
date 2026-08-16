@@ -38,7 +38,7 @@ func (s *Service) MFAMethods(ctx context.Context, userID uuid.UUID) (MFAMethods,
 	}, nil
 }
 
-func (s *Service) BeginStepUp(ctx context.Context, userID uuid.UUID, username string, assetID uuid.UUID) (string, MFAMethods, error) {
+func (s *Service) BeginStepUp(ctx context.Context, userID uuid.UUID, username string, assetID, sessionID uuid.UUID) (string, MFAMethods, error) {
 	methods, err := s.MFAMethods(ctx, userID)
 	if err != nil {
 		return "", methods, err
@@ -46,9 +46,13 @@ func (s *Service) BeginStepUp(ctx context.Context, userID uuid.UUID, username st
 	if !methods.TOTP && !methods.WebAuthn {
 		return "", methods, fmt.Errorf("mfa not enrolled")
 	}
-	tok, err := s.sessions.CreateChallenge(ctx, session.Challenge{
+	chal := session.Challenge{
 		UserID: userID, Username: username, Purpose: stepUpPurpose, AssetID: assetID.String(),
-	}, s.cfg.ChallengeTTL)
+	}
+	if sessionID != uuid.Nil {
+		chal.SessionID = sessionID.String()
+	}
+	tok, err := s.sessions.CreateChallenge(ctx, chal, s.cfg.ChallengeTTL)
 	if err != nil {
 		return "", methods, err
 	}
@@ -87,6 +91,7 @@ func (s *Service) VerifyStepUpTOTP(ctx context.Context, challengeToken, code, ip
 		return StepUpResult{}, err
 	}
 	_ = s.sessions.DeleteChallenge(ctx, challengeToken)
+	s.bindOpGrant(ctx, chal)
 	tok, err := s.issueStepUpGrant(ctx, chal.UserID, assetID)
 	if err != nil {
 		return StepUpResult{}, err
@@ -108,6 +113,7 @@ func (s *Service) FinishStepUpWebAuthn(ctx context.Context, challengeToken strin
 		return StepUpResult{}, err
 	}
 	_ = s.sessions.DeleteChallenge(ctx, challengeToken)
+	s.bindOpGrant(ctx, chal)
 	tok, err := s.issueStepUpGrant(ctx, chal.UserID, assetID)
 	if err != nil {
 		return StepUpResult{}, err
@@ -128,6 +134,43 @@ func (s *Service) ConsumeStepUp(ctx context.Context, token string, userID, asset
 		return fmt.Errorf("invalid or expired step-up token")
 	}
 	return nil
+}
+
+func (s *Service) bindOpGrant(ctx context.Context, chal session.Challenge) {
+	sid, err := uuid.Parse(chal.SessionID)
+	if err != nil || sid == uuid.Nil {
+		return
+	}
+	_ = s.sessions.PutOpStepUp(ctx, sid, chal.UserID)
+	s.sessions.ClearOpStepUpPending(ctx, sid)
+}
+
+func (s *Service) HasOpStepUp(ctx context.Context, sessionID, userID uuid.UUID) bool {
+	if s == nil || s.sessions == nil {
+		return false
+	}
+	return s.sessions.HasOpStepUp(ctx, sessionID, userID)
+}
+
+func (s *Service) ClearOpStepUp(ctx context.Context, sessionID uuid.UUID) {
+	if s == nil || s.sessions == nil {
+		return
+	}
+	s.sessions.ClearOpStepUp(ctx, sessionID)
+}
+
+func (s *Service) PutOpStepUpPending(ctx context.Context, sessionID uuid.UUID, p session.OpStepUpPending) error {
+	if s == nil || s.sessions == nil {
+		return fmt.Errorf("session store unavailable")
+	}
+	return s.sessions.PutOpStepUpPending(ctx, sessionID, p)
+}
+
+func (s *Service) GetOpStepUpPending(ctx context.Context, sessionID uuid.UUID) (session.OpStepUpPending, bool) {
+	if s == nil || s.sessions == nil {
+		return session.OpStepUpPending{}, false
+	}
+	return s.sessions.GetOpStepUpPending(ctx, sessionID)
 }
 
 func (s *Service) VerifyUserTOTP(ctx context.Context, userID uuid.UUID, code, ip, ua, via string, assetID uuid.UUID) error {

@@ -18,6 +18,7 @@ type aclConstraints struct {
 	AllowedCountries    []string
 	AllowedDevices      []string
 	AllowedNamespaces   []string
+	AllowedEgress       []string
 	CommandPolicyPackID *uuid.UUID
 	SQLPolicyPackID     *uuid.UUID
 	HTTPPolicyPackID    *uuid.UUID
@@ -59,6 +60,9 @@ func overlayConstraints(base aclConstraints, pol aclConstraints, hasPolicy bool)
 	}
 	if len(out.AllowedNamespaces) == 0 {
 		out.AllowedNamespaces = pol.AllowedNamespaces
+	}
+	if len(out.AllowedEgress) == 0 {
+		out.AllowedEgress = pol.AllowedEgress
 	}
 	if out.CommandPolicyPackID == nil {
 		out.CommandPolicyPackID = pol.CommandPolicyPackID

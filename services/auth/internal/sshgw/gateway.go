@@ -27,9 +27,11 @@ import (
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/itsm"
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
+	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -44,6 +46,18 @@ type Gateway struct {
 	audit       *audit.Service
 	live        *sessionsvc.LiveHub
 	itsm        *itsm.Service
+	ops         *opapprove.Service
+	conns       sync.Map // *ssh.ServerConn → *sshConnState
+}
+
+const maxEgressForwards = 8
+
+type sshConnState struct {
+	mu        sync.Mutex
+	userID    uuid.UUID
+	sessionID uuid.UUID
+	snap      policy.Snapshot
+	forwards  int32
 }
 
 func New(
@@ -55,11 +69,12 @@ func New(
 	auditSvc *audit.Service,
 	live *sessionsvc.LiveHub,
 	itsmSvc *itsm.Service,
+	opsSvc *opapprove.Service,
 ) *Gateway {
 	return &Gateway{
 		addr: addr, hostKeyPath: hostKeyPath,
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
-		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc,
+		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc, ops: opsSvc,
 	}
 }
 
@@ -125,8 +140,16 @@ func (g *Gateway) handleConn(tcp net.Conn, cfg *ssh.ServerConfig) {
 
 	go g.handleGlobalReqs(sc, reqs)
 
+	st := &sshConnState{}
+	g.conns.Store(sc, st)
+	defer g.conns.Delete(sc)
+
 	for newCh := range chans {
 		chType := newCh.ChannelType()
+		if chType == "direct-tcpip" {
+			go g.handleDirectTCPIP(sc, newCh)
+			continue
+		}
 		if reason, deny := policy.SSHChannelDLP(chType); deny {
 			_ = newCh.Reject(ssh.Prohibited, reason)
 			g.auditSSHDLP(sc, reason, chType)
@@ -168,6 +191,114 @@ func (g *Gateway) auditSSHDLP(sc *ssh.ServerConn, reason, detail string) {
 	_ = g.audit.Record(context.Background(), &uid, "session.dlp.denied", "session", "", ip, "ssh", map[string]any{
 		"reason": reason, "detail": detail,
 	})
+}
+
+func (g *Gateway) handleDirectTCPIP(sc *ssh.ServerConn, newCh ssh.NewChannel) {
+	var msg struct {
+		Host     string
+		Port     uint32
+		OrigHost string
+		OrigPort uint32
+	}
+	if err := ssh.Unmarshal(newCh.ExtraData(), &msg); err != nil || strings.TrimSpace(msg.Host) == "" || msg.Port == 0 || msg.Port > 65535 {
+		_ = newCh.Reject(ssh.ConnectionFailed, "invalid direct-tcpip")
+		return
+	}
+	host := strings.TrimSpace(msg.Host)
+	port := int(msg.Port)
+
+	v, ok := g.conns.Load(sc)
+	if !ok {
+		_ = newCh.Reject(ssh.Prohibited, "open a KeepPAM SSH session first")
+		return
+	}
+	st := v.(*sshConnState)
+	st.mu.Lock()
+	snap := st.snap
+	sessID := st.sessionID
+	userID := st.userID
+	st.mu.Unlock()
+	if sessID == uuid.Nil {
+		_ = newCh.Reject(ssh.Prohibited, "open a KeepPAM SSH session first")
+		g.auditSSHDLP(sc, "ssh egress requires an active session", "direct-tcpip")
+		return
+	}
+
+	if reason, deny := policy.AllowSSHEgress(snap, host, port); deny {
+		_ = newCh.Reject(ssh.Prohibited, reason)
+		g.auditEgress(sc, userID, sessID, "session.egress.denied", host, port, reason)
+		_ = g.sessions.AddEvent(context.Background(), sessID, "egress_denied", map[string]any{
+			"host": host, "port": port, "reason": reason,
+		})
+		return
+	}
+
+	n := atomic.AddInt32(&st.forwards, 1)
+	if n > maxEgressForwards {
+		atomic.AddInt32(&st.forwards, -1)
+		_ = newCh.Reject(ssh.ResourceShortage, "too many forwards")
+		return
+	}
+	defer atomic.AddInt32(&st.forwards, -1)
+
+	dest := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", dest, 10*time.Second)
+	if err != nil {
+		_ = newCh.Reject(ssh.ConnectionFailed, "egress dial failed")
+		g.auditEgress(sc, userID, sessID, "session.egress.denied", host, port, err.Error())
+		_ = g.sessions.AddEvent(context.Background(), sessID, "egress_denied", map[string]any{
+			"host": host, "port": port, "reason": "dial failed",
+		})
+		return
+	}
+	if ta, ok := conn.RemoteAddr().(*net.TCPAddr); ok && policy.BlockedEgressIP(ta.IP) {
+		_ = conn.Close()
+		_ = newCh.Reject(ssh.Prohibited, "blocked destination")
+		g.auditEgress(sc, userID, sessID, "session.egress.denied", host, port, "blocked destination")
+		_ = g.sessions.AddEvent(context.Background(), sessID, "egress_denied", map[string]any{
+			"host": host, "port": port, "reason": "blocked destination",
+		})
+		return
+	}
+
+	ch, reqs, err := newCh.Accept()
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	defer ch.Close()
+	defer conn.Close()
+	go ssh.DiscardRequests(reqs)
+
+	g.auditEgress(sc, userID, sessID, "session.egress.opened", host, port, "")
+	_ = g.sessions.AddEvent(context.Background(), sessID, "egress", map[string]any{
+		"host": host, "port": port,
+	})
+
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(conn, ch)
+		_ = conn.Close()
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(ch, conn)
+		_ = ch.Close()
+		done <- struct{}{}
+	}()
+	<-done
+	_ = conn.Close()
+	_ = ch.Close()
+	<-done
+}
+
+func (g *Gateway) auditEgress(sc *ssh.ServerConn, userID, sessionID uuid.UUID, action, host string, port int, reason string) {
+	ip, _, _ := net.SplitHostPort(sc.RemoteAddr().String())
+	payload := map[string]any{"host": host, "port": port, "detail": "direct-tcpip"}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	_ = g.audit.Record(context.Background(), &userID, action, "session", sessionID.String(), ip, "ssh", payload)
 }
 
 type ptyInfo struct {
@@ -413,6 +544,21 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
 		return
 	}
+	if v, ok := g.conns.Load(sc); ok {
+		st := v.(*sshConnState)
+		st.mu.Lock()
+		st.userID = userID
+		st.sessionID = pamSess.ID
+		st.snap = frozen
+		st.mu.Unlock()
+		defer func() {
+			st.mu.Lock()
+			if st.sessionID == pamSess.ID {
+				st.sessionID = uuid.Nil
+			}
+			st.mu.Unlock()
+		}()
+	}
 
 	rec, err := sshproxy.NewRecorder(pamSess.RecordingPath, cols, rows, chosen.Label)
 	if err != nil {
@@ -436,10 +582,16 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		agentUpstream = sc
 	}
 	var injectMu sync.Mutex
-	opts := g.buildSSHSessionOpts(ctx, userID, chosen.AssetID, pamSess.ID, roles, bypassConnect, ticketID, snap, func(p []byte) {
-		injectMu.Lock()
-		defer injectMu.Unlock()
-		_, _ = ch.Write(p)
+	opts := sshcmd.Deps{Policy: g.policy, Ops: g.ops, Sessions: g.sessions, Audit: g.audit}.BuildOpts(ctx, sshcmd.Meta{
+		UserID: userID, AssetID: chosen.AssetID, SessionID: pamSess.ID,
+		Username: ext["username"], AssetName: chosen.AssetName, IP: ip,
+		Roles: roles, Bypass: bypassConnect, BreakGlass: usedBreakGlass,
+		TicketID: ticketID, Snap: snap,
+		Inject: func(p []byte) {
+			injectMu.Lock()
+			defer injectMu.Unlock()
+			_, _ = ch.Write(p)
+		},
 	})
 	opts.AgentUpstream = agentUpstream
 	bridge, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
@@ -742,51 +894,6 @@ func parseString(b []byte) (string, []byte, bool) {
 
 func be32(b []byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-}
-
-func (g *Gateway) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, snap *policy.Snapshot, inject func([]byte)) sshproxy.SessionOpts {
-	opts := sshproxy.SessionOpts{LocalInject: inject}
-	var pack policy.CommandPack
-	hasPack := false
-	maxRisk := 0
-	check := policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, Snapshot: snap,
-	}
-	if snap != nil {
-		maxRisk = snap.MaxRisk
-		if snap.CommandPolicyPackID != nil {
-			if p, perr := g.policy.GetCommandPack(ctx, *snap.CommandPolicyPackID); perr == nil {
-				pack, hasPack = p, true
-			}
-		}
-	} else {
-		ev, err := g.policy.Evaluate(ctx, policy.AccessCheck{
-			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
-		})
-		if err == nil && ev.OK {
-			maxRisk = ev.MaxRisk
-			if ev.CommandPolicyPackID != nil {
-				if p, perr := g.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); perr == nil {
-					pack, hasPack = p, true
-				}
-			}
-		}
-	}
-	if !hasPack && maxRisk <= 0 {
-		return opts
-	}
-	opts.QuietEcho = true
-	opts.Guard = sshproxy.NewCommandGuard(func(line string) bool {
-		v := g.policy.EvaluateSSHLine(ctx, check, pack, hasPack, line)
-		return v.Allow
-	})
-	opts.OnDenied = func(line string) {
-		bg := context.Background()
-		v := g.policy.EvaluateSSHLine(bg, check, pack, hasPack, line)
-		_ = g.audit.Record(bg, &userID, v.AuditAction(), "session", sessionID.String(), "", "ssh", v.Payload(line))
-		_ = g.sessions.AddEvent(bg, sessionID, v.EventType(), v.Payload(line))
-	}
-	return opts
 }
 
 func loadOrCreateHostKey(path string) (ssh.Signer, error) {

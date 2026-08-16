@@ -19,8 +19,10 @@ func SSHChannelDLP(chType string) (reason string, deny bool) {
 	switch chType {
 	case "session":
 		return "", false
-	case "direct-tcpip", "forwarded-tcpip":
-		return "ssh port-forward denied by DLP", true
+	case "direct-tcpip":
+		return "", false // allowlist in sshgw via allowed_egress
+	case "forwarded-tcpip":
+		return "ssh remote port-forward denied by DLP", true
 	case "x11":
 		return "ssh X11 forwarding denied by DLP", true
 	case "tun@openssh.com":

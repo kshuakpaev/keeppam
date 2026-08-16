@@ -209,6 +209,9 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 	} else {
 		binding["asset_match_tags"] = res.MatchTags
 	}
+	if res.MatchMode != "" {
+		binding["asset_match_mode"] = res.MatchMode
+	}
 	binding["max_risk"] = res.MaxRisk
 	binding["risk_action"] = res.RiskAction
 	if res.AllowedNamespaces == nil {
@@ -216,12 +219,19 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 	} else {
 		binding["allowed_namespaces"] = res.AllowedNamespaces
 	}
+	if res.AllowedEgress == nil {
+		binding["allowed_egress"] = []string{}
+	} else {
+		binding["allowed_egress"] = res.AllowedEgress
+	}
 	if userTags == nil {
 		userTags = []string{}
 	}
 	if assetTags == nil {
 		assetTags = []string{}
 	}
+	userTags = expandTagAncestors(userTags)
+	assetTags = expandTagAncestors(assetTags)
 	devices := in.ClientDevices
 	if devices == nil {
 		devices = []string{}

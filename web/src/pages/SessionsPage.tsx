@@ -16,7 +16,8 @@ function snapshotHint(s: PamSession): string {
   if (p.sql_policy_pack_name) bits.push(`sql:${p.sql_policy_pack_name}`);
   if (p.http_policy_pack_name) bits.push(`http:${p.http_policy_pack_name}`);
   if (p.app_object_pack_name) bits.push(`obj:${p.app_object_pack_name}`);
-  if (p.tag_acl) bits.push("tag-acl");
+  if ((p.allowed_egress || []).length) bits.push(`egress:${(p.allowed_egress || []).length}`);
+  if (p.tag_acl) bits.push(p.match_mode === "any" ? "tag-acl:any" : "tag-acl");
   if (p.admin_bypass) bits.push("bypass");
   return bits.join(" · ");
 }
@@ -108,7 +109,7 @@ export function SessionsPage() {
         <div>
           <h1>Сессии</h1>
           <p className="muted">
-            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / JEA deny.
+            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / команды SSH / JEA.
             Лента по пользователю — <Link to="/forensic">Расследование</Link>.
           </p>
         </div>
@@ -180,11 +181,17 @@ export function SessionsPage() {
                 <option value="sql">sql</option>
                 <option value="sql_denied">sql_denied</option>
                 <option value="k8s">k8s</option>
+                <option value="command">command</option>
                 <option value="command_denied">command_denied</option>
+                <option value="command_approval">command_approval</option>
+                <option value="command_approved">command_approved</option>
                 <option value="dlp">dlp</option>
+                <option value="egress">egress</option>
+                <option value="egress_denied">egress_denied</option>
                 <option value="http_denied">http_denied</option>
                 <option value="app_denied">app_denied</option>
                 <option value="app_approval">app_approval</option>
+                <option value="app_approved">app_approved</option>
                 <option value="risk">risk</option>
                 <option value="all">все типы</option>
               </select>
@@ -296,7 +303,7 @@ export function SessionsPage() {
             {events.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  Нет событий за выбранное окно. SQL / kubectl / JEA deny попадают сюда; интерактивный SSH — в replay.
+                  Нет событий за выбранное окно. SQL / kubectl / команды SSH (PTY или индекс записи) попадают сюда.
                 </td>
               </tr>
             )}

@@ -4,13 +4,14 @@
 
 На ACL-привязке актива:
 
-- `required_tags` — теги должны быть и у пользователя, и у актива
+- `required_tags` — теги должны быть и у пользователя, и у актива (иерархия `prod/linux` — `docs/tag-acl.txt`)
 - `require_ticket` — при сессии нужен ticket_id
 - `require_reason` — при сессии нужна текстовая причина
 - `allowed_cidrs` — IP клиента (или CIDR); пусто = любой
 - `allowed_countries` — ISO 3166-1 (`RU`) и/или `LAN`; пусто = любая; без MMDB публичный IP → отказ. См. `docs/geoip.txt`
 - `allowed_devices` — `TLS` / `WEBAUTHN` / `SSH` / `SPIFFE` / `spiffe://…` / fingerprint; пусто = любое. См. `docs/managed-device.txt`, `docs/spiffe.txt`
 - `allowed_namespaces` — kubectl proxy; пусто = любой ns. См. `docs/k8s-pam.txt`
+- `allowed_egress` — SSH `direct-tcpip` / `-L`; пусто = туннели запрещены. См. `docs/network-pam.txt`
 - окно времени / дни недели / JIT `expires_at`
 
 Deny-by-default: нет совпавшей привязки — отказ.
@@ -31,12 +32,14 @@ Score 0–100 (сумма, cap 100). **Connect / JIT request** — фактор�
 | `concurrent` | pending+active сессии: 3–4 / ≥5 | 10 / 20 |
 | `anom_brute` | ≥8 fail за 24ч | 20 |
 | `anom_multi` | ≥4 разных актива за 24ч | 15 |
+| `ueba_new_asset` | актив вне 30-дневного набора (≥3 обычных) | 25 |
+| `ueba_spread` | за 24ч целей ≥2× от 30-дневного набора и ≥6 | 20 |
 | `op:sql.insert` / `update` / `delete` / `ddl` / `drop` / `export` | SQL DML/DDL/`DROP DATABASE`/COPY | 15 / 20 / 30 / 45 / 100 / 50 |
 | `op:k8s.write` / `delete` / `exec` | kubectl create/patch; delete; exec | 20 / 35 / 45 |
 | `op:ssh.status` / `restart` / `priv` / `chmod` / `chmod777` / `user` / `firewall` / `destructive` | парсер sudo/su; баллы 5…90, см. `docs/command-risk.txt` |
 | `op:http.write` / `delete` | HTTPS/kubectl POST/PUT/PATCH; DELETE | 20 / 35 |
 
-`SELECT` / k8s GET не добавляют баллов и не перепроверяются.
+`SELECT` / k8s GET не добавляют баллов и не перепроверяются. Baseline «обычных серверов» — `docs/ueba.txt`.
 
 Если score > `max_risk`:
 - `deny` — отказ (в т.ч. создать JIT; операция в сессии — отказ без нового JIT)

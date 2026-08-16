@@ -217,9 +217,11 @@ func EvidenceCategory(source, kind string) string {
 		switch kind {
 		case "sql", "sql_denied":
 			return CatSQL
-		case "command_denied", "command", "k8s", "http_denied", "app_denied", "app_approval", "risk":
+		case "command_denied", "command", "command_approval", "k8s", "http_denied", "app_denied", "app_approval", "risk":
 			return CatCommands
-		case "dlp":
+		case "app_approved", "command_approved":
+			return CatApprovals
+		case "dlp", "egress", "egress_denied":
 			return CatDownloads
 		case "created", "started", "ended":
 			return CatConnections
@@ -230,21 +232,25 @@ func EvidenceCategory(source, kind string) string {
 	switch kind {
 	case "asset.acl.granted":
 		return CatAccess
+	case "asset.acl.updated":
+		return CatChanges
 	case "asset.acl.revoked", "access.request.cancelled", "user.disabled":
 		return CatRevoked
 	case "access.breakglass.opened", "session.admin_bypass":
 		return CatPrivileged
 	case "access.request.approved", "access.request.denied", "access.request.stage",
-		"asset.account.checkout.approved", "asset.account.checkout.denied":
+		"asset.account.checkout.approved", "asset.account.checkout.denied",
+		"session.app.approved", "session.op.approved", "session.op.denied", "session.command.approved":
 		return CatApprovals
 	case "session.created", "session.started", "session.ended", "session.denied",
 		"app.access.granted", "app.access.denied", "k8s.access.granted", "k8s.access.denied":
 		return CatConnections
 	case "session.sql", "session.sql.denied":
 		return CatSQL
-	case "asset.account.secret_revealed", "session.export_mp4", "session.dlp.denied":
+	case "asset.account.secret_revealed", "session.export_mp4", "session.dlp.denied",
+		"session.egress.denied", "session.egress.opened":
 		return CatDownloads
-	case "session.command.denied", "session.command.approval_required", "session.risk.denied",
+	case "session.command.denied", "session.command.approval_required", "session.command.approval_timeout", "session.risk.denied",
 		"session.app.denied", "session.app.approval_required":
 		return CatCommands
 	}
@@ -306,7 +312,7 @@ func (s *ReportSummary) add(cat string, n int) {
 
 func reportNotes() []string {
 	return []string{
-		"Команды SSH: в evidence попадают JEA deny, k8s и HTTP ACL — не полный shell-транскрипт (asciicast вне scope).",
+		"Команды SSH: PTY-журнал и индекс stdin asciicast (не вывод терминала и не RDP).",
 		"SQL: разрешённые и запрещённые statements из session_events.",
 		"Framework задаёт подписи контролей (ISO A.9 / PCI 7–10 / SOC2 CC6–CC7 / NIST AC,AU,CM), не разные выборки.",
 		"Snapshot — live ACL/сессии/JIT/break-glass на момент генерации, не за период.",
@@ -448,7 +454,7 @@ func (s *Service) reportEvidence(ctx context.Context, from, to time.Time, limit 
 			JOIN sessions s ON s.id = e.session_id
 			JOIN users u ON u.id = s.user_id
 			WHERE e.ts >= $1 AND e.ts <= $2
-			  AND e.event_type IN ('sql','sql_denied','command_denied','command','k8s','http_denied','app_denied','app_approval','dlp','created','started','ended')
+			  AND e.event_type IN ('sql','sql_denied','command_denied','command','command_approval','command_approved','k8s','http_denied','app_denied','app_approval','app_approved','dlp','egress','egress_denied','created','started','ended')
 		) x
 		ORDER BY ts DESC, id DESC
 		LIMIT $3`, from, to, limit*4)

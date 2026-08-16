@@ -24,8 +24,10 @@ type Snapshot struct {
 	AppObjectPackID       *uuid.UUID `json:"app_object_pack_id,omitempty"`
 	AppObjectPackName     string     `json:"app_object_pack_name,omitempty"`
 	AllowedNamespaces     []string   `json:"allowed_namespaces,omitempty"`
+	AllowedEgress         []string   `json:"allowed_egress,omitempty"`
 	TagACL                bool       `json:"tag_acl,omitempty"`
 	MatchTags             []string   `json:"match_tags,omitempty"`
+	MatchMode             string     `json:"match_mode,omitempty"`
 	BreakGlass            bool       `json:"break_glass,omitempty"`
 	AdminBypass           bool       `json:"admin_bypass,omitempty"`
 }
@@ -34,6 +36,10 @@ func FromResult(ev AccessResult) Snapshot {
 	ns := ev.AllowedNamespaces
 	if ns == nil {
 		ns = []string{}
+	}
+	eg := ev.AllowedEgress
+	if eg == nil {
+		eg = []string{}
 	}
 	tags := ev.MatchTags
 	if tags == nil {
@@ -50,8 +56,10 @@ func FromResult(ev AccessResult) Snapshot {
 		HTTPPolicyPackID:    ev.HTTPPolicyPackID,
 		AppObjectPackID:     ev.AppObjectPackID,
 		AllowedNamespaces:   ns,
+		AllowedEgress:       eg,
 		TagACL:              ev.TagACL,
 		MatchTags:           tags,
+		MatchMode:           ev.MatchMode,
 	}
 }
 
@@ -66,10 +74,12 @@ func (sn Snapshot) toResult() AccessResult {
 		HTTPPolicyPackID:    sn.HTTPPolicyPackID,
 		AppObjectPackID:     sn.AppObjectPackID,
 		AllowedNamespaces:   sn.AllowedNamespaces,
+		AllowedEgress:       sn.AllowedEgress,
 		MaxRisk:             sn.MaxRisk,
 		RiskAction:          sn.RiskAction,
 		TagACL:              sn.TagACL,
 		MatchTags:           sn.MatchTags,
+		MatchMode:           sn.MatchMode,
 	}
 }
 

@@ -17,6 +17,7 @@ const emptyPolicyForm = {
   allowed_countries: "",
   allowed_devices: "",
   allowed_namespaces: "",
+  allowed_egress: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -31,6 +32,17 @@ function splitCSV(s: string): string[] {
     .map((x) => x.trim())
     .filter(Boolean);
 }
+
+const emptyTagForm = {
+  who: "group" as "user" | "role" | "group",
+  user_id: "",
+  role_id: "",
+  group_id: "",
+  asset_match_tags: "",
+  asset_match_mode: "all" as "all" | "any",
+  access_policy_id: "",
+  duration_minutes: "",
+};
 
 export function JeaPage() {
   const { user } = useAuth();
@@ -85,6 +97,7 @@ export function JeaPage() {
   const [tryAppMethod, setTryAppMethod] = useState("GET");
   const [tryAppPath, setTryAppPath] = useState("/api/customers/1");
   const [tryAppPack, setTryAppPack] = useState("");
+  const [tryAppQuery, setTryAppQuery] = useState("");
   const [tryAppOut, setTryAppOut] = useState<AppObjectPreview | null>(null);
   const [policyEditId, setPolicyEditId] = useState<string | null>(null);
   const [policyForm, setPolicyForm] = useState({ ...emptyPolicyForm });
@@ -95,15 +108,10 @@ export function JeaPage() {
   const [tagUsers, setTagUsers] = useState<User[]>([]);
   const [tagRoles, setTagRoles] = useState<Role[]>([]);
   const [tagGroups, setTagGroups] = useState<PamGroup[]>([]);
-  const [tagForm, setTagForm] = useState({
-    who: "group" as "user" | "role" | "group",
-    user_id: "",
-    role_id: "",
-    group_id: "",
-    asset_match_tags: "",
-    access_policy_id: "",
-    duration_minutes: "",
-  });
+  const [tagForm, setTagForm] = useState({ ...emptyTagForm });
+  const [tagEditId, setTagEditId] = useState<string | null>(null);
+  const [tagRaw, setTagRaw] = useState<AccessBinding | null>(null);
+  const [tagPermanent, setTagPermanent] = useState(false);
 
   async function load() {
     setError("");
@@ -469,6 +477,7 @@ export function JeaPage() {
         method: tryAppMethod,
         path: tryAppPath,
         pack_id: tryAppPack || undefined,
+        query: tryAppQuery.trim() || undefined,
       });
       setTryAppOut(out);
     } catch (err) {
@@ -493,6 +502,7 @@ export function JeaPage() {
       allowed_countries: (p.allowed_countries || []).join(", "),
       allowed_devices: (p.allowed_devices || []).join(", "),
       allowed_namespaces: (p.allowed_namespaces || []).join(", "),
+      allowed_egress: (p.allowed_egress || []).join(", "),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
       http_policy_pack_id: p.http_policy_pack_id || "",
@@ -527,6 +537,8 @@ export function JeaPage() {
     if ((p.allowed_cidrs || []).length) bits.push(p.allowed_cidrs.join(","));
     if ((p.allowed_countries || []).length) bits.push(p.allowed_countries.join(","));
     if ((p.allowed_devices || []).length) bits.push(p.allowed_devices.join(","));
+    if ((p.allowed_namespaces || []).length) bits.push("ns:" + p.allowed_namespaces.join(","));
+    if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
     if (p.command_policy_pack_name) bits.push(`ssh:${p.command_policy_pack_name}`);
@@ -555,6 +567,7 @@ export function JeaPage() {
         allowed_countries: splitCSV(policyForm.allowed_countries),
         allowed_devices: splitCSV(policyForm.allowed_devices),
         allowed_namespaces: splitCSV(policyForm.allowed_namespaces),
+        allowed_egress: splitCSV(policyForm.allowed_egress),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
       };
@@ -598,6 +611,42 @@ export function JeaPage() {
     }
   }
 
+  function resetTagForm() {
+    setTagEditId(null);
+    setTagRaw(null);
+    setTagPermanent(false);
+    setTagForm({
+      ...emptyTagForm,
+      who: tagForm.who,
+      asset_match_tags: tagForm.asset_match_tags,
+      asset_match_mode: tagForm.asset_match_mode,
+    });
+  }
+
+  async function startTagEdit(b: AccessBinding) {
+    if (!canACL) return;
+    setError("");
+    try {
+      const raw = await api.getACL("_", b.id);
+      setTagEditId(raw.id);
+      setTagRaw(raw);
+      setTagPermanent(!raw.expires_at);
+      setTagForm({
+        who: raw.user_id ? "user" : raw.group_id ? "group" : "role",
+        user_id: raw.user_id || "",
+        role_id: raw.role_id || "",
+        group_id: raw.group_id || "",
+        asset_match_tags: (raw.asset_match_tags || []).join(", "),
+        asset_match_mode: raw.asset_match_mode === "any" ? "any" : "all",
+        access_policy_id: raw.access_policy_id || "",
+        duration_minutes: "",
+      });
+      setMsg("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка загрузки tag ACL");
+    }
+  }
+
   async function onTagSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canACL) return;
@@ -610,28 +659,62 @@ export function JeaPage() {
     setError("");
     setMsg("");
     try {
-      const body: Parameters<typeof api.createTagACL>[0] = { asset_match_tags: tags };
-      if (tagForm.who === "user" && tagForm.user_id) body.user_id = tagForm.user_id;
-      else if (tagForm.who === "role" && tagForm.role_id) body.role_id = tagForm.role_id;
-      else if (tagForm.who === "group" && tagForm.group_id) body.group_id = tagForm.group_id;
-      else {
-        setError("выберите субъекта");
-        setBusy(false);
-        return;
+      if (tagEditId && tagRaw) {
+        const body: Parameters<typeof api.updateACL>[2] = {
+          time_start: tagRaw.time_start || "",
+          time_end: tagRaw.time_end || "",
+          days_of_week: tagRaw.days_of_week,
+          required_tags: tagRaw.required_tags || [],
+          require_ticket: !!tagRaw.require_ticket,
+          require_reason: !!tagRaw.require_reason,
+          allowed_cidrs: tagRaw.allowed_cidrs || [],
+          allowed_countries: tagRaw.allowed_countries || [],
+          allowed_devices: tagRaw.allowed_devices || [],
+          allowed_namespaces: tagRaw.allowed_namespaces || [],
+          allowed_egress: tagRaw.allowed_egress || [],
+          command_policy_pack_id: tagRaw.command_policy_pack_id || null,
+          sql_policy_pack_id: tagRaw.sql_policy_pack_id || null,
+          http_policy_pack_id: tagRaw.http_policy_pack_id || null,
+          app_object_pack_id: tagRaw.app_object_pack_id || null,
+          max_risk: tagRaw.max_risk || 0,
+          risk_action: tagRaw.risk_action || "deny",
+          asset_match_tags: tags,
+          asset_match_mode: tagForm.asset_match_mode,
+          access_policy_id: tagForm.access_policy_id || null,
+        };
+        if (tagPermanent) body.permanent = true;
+        else if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
+        await api.updateACL("_", tagEditId, body);
+        setMsg("Tag ACL обновлён");
+        resetTagForm();
+      } else {
+        const body: Parameters<typeof api.createTagACL>[0] = {
+          asset_match_tags: tags,
+          asset_match_mode: tagForm.asset_match_mode,
+        };
+        if (tagForm.who === "user" && tagForm.user_id) body.user_id = tagForm.user_id;
+        else if (tagForm.who === "role" && tagForm.role_id) body.role_id = tagForm.role_id;
+        else if (tagForm.who === "group" && tagForm.group_id) body.group_id = tagForm.group_id;
+        else {
+          setError("выберите субъекта");
+          setBusy(false);
+          return;
+        }
+        if (tagForm.access_policy_id) body.access_policy_id = tagForm.access_policy_id;
+        if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
+        await api.createTagACL(body);
+        setMsg("Tag ACL создан");
+        setTagForm({
+          who: tagForm.who,
+          user_id: "",
+          role_id: "",
+          group_id: "",
+          asset_match_tags: tagForm.asset_match_tags,
+          asset_match_mode: tagForm.asset_match_mode,
+          access_policy_id: "",
+          duration_minutes: "",
+        });
       }
-      if (tagForm.access_policy_id) body.access_policy_id = tagForm.access_policy_id;
-      if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
-      await api.createTagACL(body);
-      setMsg("Tag ACL создан");
-      setTagForm({
-        who: tagForm.who,
-        user_id: "",
-        role_id: "",
-        group_id: "",
-        asset_match_tags: tagForm.asset_match_tags,
-        access_policy_id: "",
-        duration_minutes: "",
-      });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка tag ACL");
@@ -647,6 +730,7 @@ export function JeaPage() {
     try {
       await api.deleteACL("_", b.id);
       setMsg("Отозван");
+      if (tagEditId === b.id) resetTagForm();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка отзыва");
@@ -659,7 +743,7 @@ export function JeaPage() {
     <div>
       <h1>JEA</h1>
       <p className="muted">
-        SSH / SQL / HTTP-пакеты, Policy, Command Risk и ACL на теги активов (без строки на каждый хост).
+        SSH / SQL / HTTP-пакеты, Policy, Command Risk и ACL на теги активов (путь prod/linux, без строки на каждый хост).
       </p>
       <div className="row" style={{ gap: "0.5rem", marginBottom: "1rem" }}>
         <button
@@ -1003,7 +1087,7 @@ export function JeaPage() {
             <p className="muted">
               Правило: METHOD PATH. METHOD = GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS/*. PATH glob, * совпадает с /.
               Allowlist — только совпавшие; denylist — запрет совпавших. Без пакета на ACL URL не режется.
-              Isolated browser (VNC) не видит HTTP ACL.
+              Isolated browser ходит через reverse-proxy KeepPAM — тот же HTTP ACL, что у recording_mode=full.
             </p>
             <table>
               <thead>
@@ -1101,8 +1185,8 @@ export function JeaPage() {
             <h2>Объекты приложения</h2>
             <p className="muted">
               Правило: METHOD PATH OBJECT ACTION. ACTION = allow / deny / approval. Первое совпадение побеждает.
-              unmatched=deny — allowlist функций (как CRM). APPROVAL в HTTP не ждёт: 403 + аудит. Isolated browser пакет не
-              видит.
+              unmatched=deny — allowlist функций (как CRM). APPROVAL держит HTTPS/isolated/kubectl до 60 с. Isolated
+              browser ходит через тот же reverse-proxy.
             </p>
             <table>
               <thead>
@@ -1180,6 +1264,15 @@ export function JeaPage() {
                 />
               </div>
             </div>
+            <label>GraphQL query (опц. — верхнеуровневые поля)</label>
+            <textarea
+              rows={4}
+              value={tryAppQuery}
+              onChange={(e) => setTryAppQuery(e.target.value)}
+              placeholder={'mutation { deleteCustomer(id: "1") { id } }'}
+              className="mono"
+              style={{ width: "100%" }}
+            />
             <button className="btn" type="submit" disabled={busy || !tryAppPath.trim()} style={{ marginTop: "0.75rem" }}>
               Проверить
             </button>
@@ -1189,6 +1282,9 @@ export function JeaPage() {
                 {tryAppOut.object ? ` · ${tryAppOut.object}` : ""}
                 {tryAppOut.code ? ` · ${tryAppOut.code}` : ""}
                 {tryAppOut.reason ? ` — ${tryAppOut.reason}` : ""}
+                {tryAppOut.graphql_fields?.length
+                  ? ` · gql:${tryAppOut.graphql_fields.join(",")}`
+                  : ""}
               </p>
             )}
           </form>
@@ -1215,7 +1311,7 @@ export function JeaPage() {
                 <option value="allow">allow — overlay, остальное не режется</option>
                 <option value="deny">deny — allowlist функций</option>
               </select>
-              <label>Правила (METHOD PATH OBJECT ACTION)</label>
+              <label>Правила (METHOD PATH OBJECT ACTION). GraphQL: OBJECT — glob полей (`delete*`, `*`)</label>
               <textarea
                 rows={9}
                 value={appForm.rules}
@@ -1351,7 +1447,7 @@ export function JeaPage() {
               <input
                 value={policyForm.required_tags}
                 onChange={(e) => setPolicyForm({ ...policyForm, required_tags: e.target.value })}
-                placeholder="pci, prod"
+                placeholder="pci, prod/sre"
               />
               <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
                 <input
@@ -1391,6 +1487,12 @@ export function JeaPage() {
               <input
                 value={policyForm.allowed_namespaces}
                 onChange={(e) => setPolicyForm({ ...policyForm, allowed_namespaces: e.target.value })}
+              />
+              <label>Allowed egress (SSH -L; пусто = туннели запрещены)</label>
+              <input
+                value={policyForm.allowed_egress}
+                onChange={(e) => setPolicyForm({ ...policyForm, allowed_egress: e.target.value })}
+                placeholder="10.1.2.0/24:5432, db.prod.local:5432"
               />
               <label>SSH JEA pack</label>
               <select
@@ -1483,8 +1585,11 @@ export function JeaPage() {
           <div className="card" style={{ marginBottom: "1.25rem" }}>
             <h2>ACL на теги активов</h2>
             <p className="muted">
-              WHO (пользователь / роль / группа) + теги WHAT. Актив подходит, если у него есть <strong>все</strong>{" "}
-              перечисленные теги. Прямой ACL на карточке актива побеждает. Нужны права assets.read / assets.acl.
+              WHO (пользователь / роль / группа) + теги WHAT. Путь <span className="mono">prod/linux</span> —
+              потомок покрывает предка (ACL на <span className="mono">prod</span> видит хост с{" "}
+              <span className="mono">prod/linux</span>). Режим <strong>все</strong> — каждый тег селектора;
+              <strong> любой</strong> — достаточно одного. Прямой ACL на карточке актива побеждает. Нужны права
+              assets.read / assets.acl.
             </p>
             {!canSeeACL && <p className="error">Нужно право assets.read</p>}
             {canSeeACL && (
@@ -1493,6 +1598,7 @@ export function JeaPage() {
                   <tr>
                     <th>Субъект</th>
                     <th>Теги активов</th>
+                    <th>Совпадение</th>
                     <th>Policy</th>
                     <th>Истекает</th>
                     <th />
@@ -1517,27 +1623,38 @@ export function JeaPage() {
                         )}
                       </td>
                       <td className="mono">{(b.asset_match_tags || []).join(", ") || "—"}</td>
+                      <td>{b.asset_match_mode === "any" ? "любой" : "все"}</td>
                       <td className="mono">{b.access_policy_name || "—"}</td>
                       <td className="mono">
                         {b.expires_at ? new Date(b.expires_at).toLocaleString() : "постоянно"}
                       </td>
                       <td>
                         {canACL && (
-                          <button
-                            className="btn danger"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void onDeleteTagACL(b)}
-                          >
-                            Отозвать
-                          </button>
+                          <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void startTagEdit(b)}
+                            >
+                              Изменить
+                            </button>
+                            <button
+                              className="btn danger"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void onDeleteTagACL(b)}
+                            >
+                              Отозвать
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
                   ))}
                   {tagBindings.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="muted">
+                      <td colSpan={6} className="muted">
                         Нет tag ACL
                       </td>
                     </tr>
@@ -1548,10 +1665,19 @@ export function JeaPage() {
           </div>
           {canACL && (
             <form className="card" style={{ maxWidth: 560 }} onSubmit={(e) => void onTagSubmit(e)}>
-              <h2>Новый tag ACL</h2>
+              <h2>{tagEditId ? "Изменить tag ACL" : "Новый tag ACL"}</h2>
+              {tagEditId && (
+                <p className="muted">
+                  WHO нельзя сменить. Остальные ограничения (время, JEA, ABAC) сохраняются; меняются теги, Policy и TTL.
+                  {tagRaw?.expires_at
+                    ? ` Сейчас истекает ${new Date(tagRaw.expires_at).toLocaleString()}.`
+                    : " Сейчас без TTL."}
+                </p>
+              )}
               <label>WHO</label>
               <select
                 value={tagForm.who}
+                disabled={!!tagEditId}
                 onChange={(e) => setTagForm({ ...tagForm, who: e.target.value as typeof tagForm.who })}
               >
                 <option value="group">Группа</option>
@@ -1561,12 +1687,13 @@ export function JeaPage() {
               {tagForm.who === "group" && (
                 <select
                   value={tagForm.group_id}
+                  disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, group_id: e.target.value })}
                 >
                   <option value="">выберите группу</option>
                   {tagGroups.map((g) => (
                     <option key={g.id} value={g.id}>
-                      {g.name}
+                      {g.parent_name ? `${g.parent_name} / ${g.name}` : g.name}
                     </option>
                   ))}
                 </select>
@@ -1574,6 +1701,7 @@ export function JeaPage() {
               {tagForm.who === "role" && (
                 <select
                   value={tagForm.role_id}
+                  disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, role_id: e.target.value })}
                 >
                   <option value="">выберите роль</option>
@@ -1587,6 +1715,7 @@ export function JeaPage() {
               {tagForm.who === "user" && (
                 <select
                   value={tagForm.user_id}
+                  disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, user_id: e.target.value })}
                 >
                   <option value="">выберите пользователя</option>
@@ -1597,13 +1726,23 @@ export function JeaPage() {
                   ))}
                 </select>
               )}
-              <label>Теги активов (все сразу, через запятую)</label>
+              <label>Теги активов (через запятую)</label>
               <input
                 required
                 value={tagForm.asset_match_tags}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_tags: e.target.value })}
-                placeholder="prod, linux"
+                placeholder="prod/linux, pci"
               />
+              <label>Совпадение</label>
+              <select
+                value={tagForm.asset_match_mode}
+                onChange={(e) =>
+                  setTagForm({ ...tagForm, asset_match_mode: e.target.value as "all" | "any" })
+                }
+              >
+                <option value="all">Все перечисленные (AND)</option>
+                <option value="any">Любой из перечисленных (OR)</option>
+              </select>
               <label>Policy (опц.)</label>
               <select
                 value={tagForm.access_policy_id}
@@ -1616,17 +1755,40 @@ export function JeaPage() {
                   </option>
                 ))}
               </select>
-              <label>TTL минут (опц., пусто = постоянно)</label>
+              <label>TTL минут (опц., пусто = {tagEditId ? "оставить" : "постоянно"})</label>
               <input
                 type="number"
                 min={1}
                 max={1440}
                 value={tagForm.duration_minutes}
-                onChange={(e) => setTagForm({ ...tagForm, duration_minutes: e.target.value })}
+                onChange={(e) => {
+                  setTagPermanent(false);
+                  setTagForm({ ...tagForm, duration_minutes: e.target.value });
+                }}
               />
-              <button className="btn" type="submit" disabled={busy} style={{ marginTop: "0.75rem" }}>
-                Создать
-              </button>
+              {tagEditId && (
+                <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={tagPermanent}
+                    onChange={(e) => {
+                      setTagPermanent(e.target.checked);
+                      if (e.target.checked) setTagForm({ ...tagForm, duration_minutes: "" });
+                    }}
+                  />
+                  Постоянно (снять TTL)
+                </label>
+              )}
+              <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+                <button className="btn" type="submit" disabled={busy}>
+                  {tagEditId ? "Сохранить" : "Создать"}
+                </button>
+                {tagEditId && (
+                  <button className="btn secondary" type="button" disabled={busy} onClick={resetTagForm}>
+                    Отмена
+                  </button>
+                )}
+              </div>
             </form>
           )}
         </>

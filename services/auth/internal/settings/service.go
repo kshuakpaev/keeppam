@@ -67,6 +67,12 @@ type AuthSettings struct {
 	SAMLMetadataURL     string            `json:"saml_metadata_url,omitempty"`
 	SAMLSLOURL          string            `json:"saml_slo_url,omitempty"`
 
+	SCIMEnabled     bool   `json:"scim_enabled"`
+	SCIMToken       string `json:"scim_token,omitempty"` // write-only; never returned filled from DB
+	HasSCIMToken    bool   `json:"has_scim_token"`
+	SCIMDefaultRole string `json:"scim_default_role"`
+	SCIMBaseURL     string `json:"scim_base_url,omitempty"`
+
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
@@ -74,7 +80,8 @@ type PublicAuthMethods struct {
 	Mode      string `json:"mode"`
 	OIDCReady bool   `json:"oidc_ready"`
 	LDAPReady bool   `json:"ldap_ready"`
-	SAMLReady bool   `json:"saml_ready"`
+	SAMLReady bool           `json:"saml_ready"`
+	SAMLIdPs  []PublicSAMLIdP `json:"saml_idps"`
 }
 
 type Service struct {
@@ -89,7 +96,7 @@ func New(db *store.DB, aud *audit.Service, env *crypto.Envelope) *Service {
 
 func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error) {
 	var out AuthSettings
-	var oidcSec, ldapSec, samlKey []byte
+	var oidcSec, ldapSec, samlKey, scimEnc []byte
 	var updatedAt time.Time
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT mode, public_base_url,
@@ -103,6 +110,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			saml_attr_username, saml_attr_email, saml_attr_display_name,
 			saml_auto_provision, saml_skip_mfa, saml_default_role,
 			COALESCE(saml_group_attr,'groups'), COALESCE(saml_group_role_map,'{}'::jsonb),
+			COALESCE(scim_enabled, FALSE), scim_token_enc, COALESCE(scim_default_role, 'operator'),
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -116,6 +124,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.SAMLAttrUsername, &out.SAMLAttrEmail, &out.SAMLAttrDisplayName,
 		&out.SAMLAutoProvision, &out.SAMLSkipMFA, &out.SAMLDefaultRole,
 		&out.SAMLGroupAttr, &out.SAMLGroupRoleMap,
+		&out.SCIMEnabled, &scimEnc, &out.SCIMDefaultRole,
 		&updatedAt,
 	)
 	if err != nil {
@@ -124,11 +133,13 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 	out.HasOIDCSecret = len(oidcSec) > 0
 	out.HasLDAPBindPassword = len(ldapSec) > 0
 	out.HasSAMLSPKey = len(samlKey) > 0
+	out.HasSCIMToken = len(scimEnc) > 0
 	out.UpdatedAt = &updatedAt
 	if out.SAMLGroupRoleMap == nil {
 		out.SAMLGroupRoleMap = map[string]string{}
 	}
 	s.fillSAMLDerived(&out)
+	s.fillSCIMDerived(&out)
 	return out, oidcSec, ldapSec, nil
 }
 
@@ -136,6 +147,51 @@ func (s *Service) GetSAMLSPKeyEnc(ctx context.Context) ([]byte, error) {
 	var enc []byte
 	err := s.db.Pool.QueryRow(ctx, `SELECT saml_sp_key_enc FROM auth_settings WHERE id=1`).Scan(&enc)
 	return enc, err
+}
+
+func (s *Service) scimTokenEnc(ctx context.Context) ([]byte, error) {
+	var enc []byte
+	err := s.db.Pool.QueryRow(ctx, `SELECT scim_token_enc FROM auth_settings WHERE id=1`).Scan(&enc)
+	return enc, err
+}
+
+func (s *Service) fillSCIMDerived(out *AuthSettings) {
+	base := strings.TrimRight(out.PublicBaseURL, "/")
+	if base != "" {
+		out.SCIMBaseURL = base + "/scim/v2"
+	}
+	out.SCIMDefaultRole = clampSCIMRole(out.SCIMDefaultRole)
+}
+
+type SCIMRuntime struct {
+	Enabled     bool
+	Token       string
+	DefaultRole string
+}
+
+func (s *Service) SCIMRuntime(ctx context.Context) (SCIMRuntime, error) {
+	var enabled bool
+	var enc []byte
+	var role string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(scim_enabled, FALSE), scim_token_enc, COALESCE(scim_default_role, 'operator')
+		FROM auth_settings WHERE id=1`).Scan(&enabled, &enc, &role)
+	if err != nil {
+		return SCIMRuntime{}, err
+	}
+	token, err := s.DecryptSecret(enc)
+	if err != nil {
+		return SCIMRuntime{}, err
+	}
+	return SCIMRuntime{Enabled: enabled, Token: token, DefaultRole: clampSCIMRole(role)}, nil
+}
+
+func clampSCIMRole(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" || role == "admin" {
+		return "operator"
+	}
+	return role
 }
 
 func (s *Service) fillSAMLDerived(out *AuthSettings) {
@@ -156,11 +212,13 @@ func (s *Service) PublicMethods(ctx context.Context) (PublicAuthMethods, error) 
 		return PublicAuthMethods{}, err
 	}
 	_ = ldapSec
+	idps := s.PublicSAMLIdPs(ctx, cfg)
 	return PublicAuthMethods{
 		Mode:      cfg.Mode,
 		OIDCReady: cfg.Mode == "oidc" && cfg.OIDCIssuer != "" && cfg.OIDCClientID != "" && len(oidcSec) > 0,
 		LDAPReady: cfg.Mode == "ldap" && cfg.LDAPURL != "" && cfg.LDAPUserBaseDN != "",
-		SAMLReady: cfg.Mode == "saml" && SAMLConfigured(cfg),
+		SAMLReady: cfg.Mode == "saml" && cfg.HasSAMLSPKey && len(idps) > 0,
+		SAMLIdPs:  idps,
 	}, nil
 }
 
@@ -242,6 +300,18 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 	if in.SAMLGroupRoleMap == nil {
 		in.SAMLGroupRoleMap = map[string]string{}
 	}
+	in.SCIMDefaultRole = clampSCIMRole(in.SCIMDefaultRole)
+	scimEnc, err := s.scimTokenEnc(ctx)
+	if err != nil {
+		return AuthSettings{}, err
+	}
+	if strings.TrimSpace(in.SCIMToken) != "" {
+		enc, err := s.env.Encrypt([]byte(strings.TrimSpace(in.SCIMToken)))
+		if err != nil {
+			return AuthSettings{}, err
+		}
+		scimEnc = enc
+	}
 	publicURL := strings.TrimRight(strings.TrimSpace(in.PublicBaseURL), "/")
 	if publicURL == "" {
 		publicURL = cur.PublicBaseURL
@@ -276,7 +346,8 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			saml_attr_username=$30, saml_attr_email=$31, saml_attr_display_name=$32,
 			saml_auto_provision=$33, saml_skip_mfa=$34, saml_default_role=$35,
 			saml_group_attr=$36, saml_group_role_map=$37,
-			updated_at=NOW(), updated_by=$38
+			scim_enabled=$38, scim_token_enc=$39, scim_default_role=$40,
+			updated_at=NOW(), updated_by=$41
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -289,12 +360,16 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		strings.TrimSpace(in.SAMLAttrUsername), strings.TrimSpace(in.SAMLAttrEmail), strings.TrimSpace(in.SAMLAttrDisplayName),
 		in.SAMLAutoProvision, in.SAMLSkipMFA, strings.TrimSpace(in.SAMLDefaultRole),
 		strings.TrimSpace(in.SAMLGroupAttr), in.SAMLGroupRoleMap,
+		in.SCIMEnabled, scimEnc, in.SCIMDefaultRole,
 		actorID,
 	)
 	if err != nil {
 		return AuthSettings{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "settings.auth.updated", "settings", "auth", ip, ua, map[string]any{"mode": mode})
+	if err := s.upsertDefaultIdP(ctx, in); err != nil {
+		return AuthSettings{}, err
+	}
 	out, _, _, err := s.Get(ctx)
 	return out, err
 }

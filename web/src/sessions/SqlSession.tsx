@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { ApiError, api } from "../api";
+import { StepUpDialog } from "../pages/StepUpDialog";
 
 type ResultMsg = {
   type: string;
@@ -12,6 +13,14 @@ type ResultMsg = {
   ephemeral_role?: string;
   db_privilege?: string;
   database_name?: string;
+  code?: string;
+  challenge_token?: string;
+  totp?: boolean;
+  webauthn?: boolean;
+  risk_score?: number;
+  max_risk?: number;
+  risk_factors?: string[];
+  operation?: string;
 };
 
 type Props = {
@@ -32,6 +41,7 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
   const wsRef = useRef<WebSocket | null>(null);
   const [ready, setReady] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [stepUp, setStepUp] = useState<ApiError | null>(null);
 
   useEffect(() => {
     void api
@@ -64,6 +74,20 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
           setStatus("ready");
           setEph({ role: msg.ephemeral_role, privilege: msg.db_privilege });
           if (msg.database_name) setDatabase(msg.database_name);
+        } else if (msg.type === "mfa_required") {
+          setStepUp(
+            new ApiError(msg.error || "mfa_required", 403, {
+              code: "mfa_required",
+              challenge_token: msg.challenge_token,
+              totp: msg.totp,
+              webauthn: msg.webauthn,
+              risk_score: msg.risk_score,
+              max_risk: msg.max_risk,
+              risk_factors: msg.risk_factors,
+              operation: msg.operation,
+            }),
+          );
+          setError(msg.error || "Нужен повторный MFA");
         } else if (msg.type === "result" || msg.type === "error") {
           setResult(msg);
           if (msg.error) setError(msg.error);
@@ -149,6 +173,16 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
           Выполнить
         </button>
       </div>
+      {stepUp && (
+        <StepUpDialog
+          err={stepUp}
+          onDone={() => {
+            setStepUp(null);
+            run();
+          }}
+          onCancel={() => setStepUp(null)}
+        />
+      )}
       {result?.type === "result" && (
         <div className="card" style={{ marginTop: "1rem", overflowX: "auto" }}>
           <p className="muted">

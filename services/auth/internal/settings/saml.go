@@ -62,9 +62,22 @@ func (s *Service) buildSAMLSP(ctx context.Context, cfg AuthSettings, needIDP boo
 		return nil, fmt.Errorf("saml sp key must be RSA")
 	}
 
-	metadataURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/metadata")
-	acsURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/acs")
-	sloURL, _ := url.Parse(cfg.PublicBaseURL + "/api/v1/auth/saml/slo")
+	base := strings.TrimRight(cfg.PublicBaseURL, "/")
+	metaStr := cfg.SAMLMetadataURL
+	if metaStr == "" {
+		metaStr = base + "/api/v1/auth/saml/metadata"
+	}
+	acsStr := cfg.SAMLACSURL
+	if acsStr == "" {
+		acsStr = base + "/api/v1/auth/saml/acs"
+	}
+	sloStr := cfg.SAMLSLOURL
+	if sloStr == "" {
+		sloStr = base + "/api/v1/auth/saml/slo"
+	}
+	metadataURL, _ := url.Parse(metaStr)
+	acsURL, _ := url.Parse(acsStr)
+	sloURL, _ := url.Parse(sloStr)
 	entityID := cfg.SAMLSPEntityID
 	if entityID == "" {
 		entityID = metadataURL.String()

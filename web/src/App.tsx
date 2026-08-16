@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { api, hasPerm, type AccessRequest, type InboxNotification } from "./api";
 import { useAuth } from "./auth";
+import { ProfileMenu } from "./components/ProfileMenu";
 import { SessionKeepAliveHost } from "./components/SessionKeepAliveHost";
 import { SessionTabBar } from "./components/SessionTabBar";
 
@@ -30,12 +31,14 @@ export function AppLayout() {
     ["terminal", "sql", "desktop", "app", "k8s"].includes(sessionMatch.params.kind)
   );
   const [pendingApprove, setPendingApprove] = useState(0);
+  const [pendingOps, setPendingOps] = useState(0);
   const [myPending, setMyPending] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
   const [inbox, setInbox] = useState<InboxNotification[]>([]);
   const [inboxUnread, setInboxUnread] = useState(0);
   const [inboxOpen, setInboxOpen] = useState(false);
   const prevPending = useRef(0);
+  const prevOps = useRef(0);
   const notifyAsked = useRef(false);
 
   useEffect(() => {
@@ -55,6 +58,7 @@ export function AppLayout() {
         const sum = await api.accessRequestsSummary();
         if (cancelled) return;
         setPendingApprove(sum.pending_approve || 0);
+        setPendingOps(sum.pending_ops || 0);
         setMyPending(sum.my_pending || 0);
 
         if (
@@ -73,7 +77,19 @@ export function AppLayout() {
             }
           }
         }
+        if (
+          (hasPerm(user, "access.approve") || hasPerm(user, "access.approve.security")) &&
+          (sum.pending_ops || 0) > prevOps.current &&
+          prevOps.current >= 0
+        ) {
+          const msg = `Операций в сессии ждут согласования: ${sum.pending_ops}`;
+          setToasts((t) => [...t, msg].slice(-5));
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("KeepPAM", { body: msg });
+          }
+        }
         prevPending.current = sum.pending_approve || 0;
+        prevOps.current = sum.pending_ops || 0;
 
         const seen = loadSeen();
         const fresh = (sum.my_recent_decisions || []).filter((d: AccessRequest) => !seen.has(d.id));
@@ -94,7 +110,7 @@ export function AppLayout() {
     }
 
     void tick();
-    const id = window.setInterval(() => void tick(), 30000);
+    const id = window.setInterval(() => void tick(), 8000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -140,7 +156,7 @@ export function AppLayout() {
     nav("/login");
   }
 
-  const badge = pendingApprove > 0 ? pendingApprove : myPending > 0 ? myPending : 0;
+  const badge = pendingApprove + pendingOps > 0 ? pendingApprove + pendingOps : myPending > 0 ? myPending : 0;
 
   return (
     <div className="shell">
@@ -232,14 +248,10 @@ export function AppLayout() {
           {hasPerm(user, "audit.read") && <NavLink to="/audit">Аудит</NavLink>}
           {hasPerm(user, "settings.write") && <NavLink to="/config">Конфигурация</NavLink>}
         </nav>
-        <div style={{ marginTop: "auto" }}>
-          <p className="muted" style={{ marginBottom: "0.5rem" }}>
-            {user.display_name || user.username}
-          </p>
-          <button className="btn secondary" type="button" onClick={() => void logout()}>
-            Выйти
-          </button>
-        </div>
+        <ProfileMenu
+          name={user.display_name || user.username}
+          onLogout={() => void logout()}
+        />
       </aside>
       <main className="main">
         <SessionTabBar />

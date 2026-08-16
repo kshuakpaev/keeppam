@@ -254,6 +254,19 @@ func bridgeAgentChannels(chans <-chan ssh.NewChannel, upstream ssh.Conn) {
 
 func (b *Bridge) Write(p []byte) (int, error) {
 	if b.Guard != nil {
+		if b.Guard.Notify == nil {
+			b.Guard.Notify = func(chunk []byte) {
+				if len(chunk) == 0 {
+					return
+				}
+				if b.LocalInject != nil {
+					b.LocalInject(chunk)
+				}
+				if b.Recorder != nil {
+					b.Recorder.WriteOutput(chunk)
+				}
+			}
+		}
 		forward, echo, denied := b.Guard.Feed(p)
 		if len(echo) > 0 {
 			if b.LocalInject != nil {

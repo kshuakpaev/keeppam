@@ -126,8 +126,8 @@ export function ForensicPage() {
         <div>
           <h1>Расследование</h1>
           <p className="muted">
-            Лента действий пользователя: аудит (вход, ACL, JIT) и события сессий (SQL, k8s, JEA, DLP). Не полнотекст
-            asciicast/RDP.
+            Лента действий пользователя: аудит (вход, ACL, JIT) и события сессий (SQL, k8s, команды SSH, JEA, DLP).
+            RDP/видео не индексируются.
           </p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void onCsv()} disabled={busy || total === 0}>

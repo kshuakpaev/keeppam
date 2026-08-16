@@ -146,12 +146,20 @@ export function WatchPage() {
             if (msg.ts) line.ts = new Date(msg.ts).toLocaleTimeString();
             if (et === "sql_denied") line.kind = "deny";
             pushLog(line);
-          } else if (et === "command_denied") {
+          } else if (et === "command" || et === "command_denied" || et === "command_approval" || et === "command_approved") {
             const p = msg.payload || {};
+            const prefix =
+              et === "command"
+                ? "SSH"
+                : et === "command_approved"
+                  ? "JEA approved"
+                  : et === "command_approval"
+                    ? "JEA waiting"
+                    : "JEA deny";
             pushLog({
               ts: msg.ts ? new Date(msg.ts).toLocaleTimeString() : new Date().toLocaleTimeString(),
-              text: `JEA deny: ${String((p as { command?: string }).command || (p as { reason?: string }).reason || et)}`,
-              kind: "deny",
+              text: `${prefix}: ${String((p as { command?: string }).command || (p as { reason?: string }).reason || et)}`,
+              kind: et === "command" || et === "command_approved" ? "ok" : "deny",
             });
           }
         }

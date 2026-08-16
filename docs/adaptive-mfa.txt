@@ -1,8 +1,8 @@
 # KeepPAM: Adaptive MFA (step-up)
 
-Повторный фактор на **connect**, если риск сессии выше порога ACL/Policy. Это не логин-MFA: пользователь уже в KeepPAM.
+Повторный фактор, если риск выше порога ACL/Policy. Это не логин-MFA: пользователь уже в KeepPAM.
 
-## Когда
+## Connect
 
 ACL или именованная Policy: `max_risk` > 0 и `risk_action=require_mfa`.
 
@@ -19,7 +19,20 @@ SSH-шлюз: интерактивный TOTP в канале (WebAuthn на `:2
 
 ## Операции внутри сессии
 
-`require_mfa` на SQL/k8s/SSH-команду **не** запрашивает MFA: порог как `deny`. Интерактивного шага в протоколе нет.
+Тот же `require_mfa`, но score = connect-факторы + баллы операции (`docs/command-risk.txt`).
+
+| Канал | Поведение |
+|-------|-----------|
+| HTTPS reverse-proxy | держит запрос до 60 с; диалог в рамке сессии; грант на сессию 30 мин |
+| Web SQL | WS `mfa_required` + диалог; повтор statement |
+| kubectl UI / cookie API | `403` `mfa_required` + диалог; повтор вызова |
+| kubectl `:16443` | держит до 60 с, пока MFA в KeepPAM; затем тот же запрос проходит |
+| Native SQL wire | deny + текст «confirm MFA in web SQL console» (диалога нет) |
+| SSH PTY | **deny** (интерактива на команду нет) |
+
+Грант Redis `stepup-op:{session}` после успешного MFA. Повторные опасные операции в этой сессии не спрашивают фактор снова, пока грант жив.
+
+`GET /api/v1/admin/sessions/{id}/op-stepup` — pending challenge для UI (poll).
 
 JIT по-прежнему можно создать (как при `require_approval`). Break-glass и admin bypass (`users.write`) шаг пропускают.
 
@@ -30,6 +43,7 @@ JIT по-прежнему можно создать (как при `require_appr
 | POST | `/api/v1/auth/stepup/totp` | сессия |
 | POST | `/api/v1/auth/stepup/webauthn/begin` | сессия |
 | POST | `/api/v1/auth/stepup/webauthn/finish` | сессия |
+| GET | `/api/v1/admin/sessions/{id}/op-stepup` | `sessions.connect` |
 
 Connect: `step_up_token` в теле `POST /admin/sessions`, `/assets/{id}/app/access`, `/assets/{id}/k8s/access`.
 
@@ -37,8 +51,8 @@ Connect: `step_up_token` в теле `POST /admin/sessions`, `/assets/{id}/app/a
 
 ## Аудит
 
-`access.stepup.challenged` / `access.stepup.ok` / `access.stepup.failure`. Оценка по-прежнему `access.risk.evaluated` (`decision=require_mfa`).
+`access.stepup.challenged` / `access.stepup.ok` / `access.stepup.failure`. Оценка по-прежнему `access.risk.evaluated` (`decision=require_mfa`, `phase=operation` для in-session).
 
 ## Вне scope
 
-Step-up на каждую опасную команду внутри сессии. WebAuthn на SSH-gateway. Remember-device / TTL длиннее 2 мин.
+WebAuthn на SSH-gateway. Remember-device. Step-up на каждую SSH-команду в PTY.

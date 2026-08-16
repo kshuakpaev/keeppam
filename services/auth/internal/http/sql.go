@@ -146,7 +146,23 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 				UserID: authSess.UserID, AssetID: row.AssetID, RoleNames: authSess.Roles,
 				Bypass: bypass, TicketID: row.TicketID, ClientIP: s.clientIP(r),
 				Operation: policy.SQLOperation(msg.Statement), Snapshot: row.PolicySnapshot,
+				StepUpVerified: s.auth != nil && s.auth.HasOpStepUp(r.Context(), id, authSess.UserID),
 			}); err == nil && !ev.OK {
+				if ev.NeedsStepUp() {
+					pending, aerr := s.armOpStepUp(r.Context(), authSess.UserID, authSess.Username, row.AssetID, id, ev)
+					if aerr != nil {
+						s.denySQLClient(r, conn.WriteJSON, authSess.UserID, id, msg.Statement, "step-up MFA required but MFA is not enrolled", sqlPack.Name)
+						continue
+					}
+					_ = s.audit.Record(r.Context(), &authSess.UserID, "access.stepup.challenged", "asset", row.AssetID.String(), s.clientIP(r), r.UserAgent(), map[string]any{
+						"code": "mfa_required", "operation": ev.Operation, "risk_score": ev.RiskScore, "max_risk": ev.MaxRisk,
+					})
+					fields := stepUpFields(pending, ev)
+					fields["type"] = "mfa_required"
+					fields["error"] = ev.RiskDenyMessage()
+					_ = conn.WriteJSON(fields)
+					continue
+				}
 				reason := ev.DenyMessage()
 				s.denySQLClient(r, conn.WriteJSON, authSess.UserID, id, msg.Statement, reason, sqlPack.Name)
 				_ = s.sessionsvc.AddEvent(r.Context(), id, "risk", map[string]any{

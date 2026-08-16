@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
@@ -29,6 +31,7 @@ func (s *Server) handleGetAuthSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.OIDCClientSecret = ""
 	cfg.LDAPBindPassword = ""
+	cfg.SCIMToken = ""
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -46,6 +49,7 @@ func (s *Server) handlePutAuthSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	out.OIDCClientSecret = ""
 	out.LDAPBindPassword = ""
+	out.SCIMToken = ""
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -238,6 +242,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSAMLMetadata(w http.ResponseWriter, r *http.Request) {
+	s.writeSAMLMetadata(w, r, chi.URLParam(r, "slug"))
+}
+
+func (s *Server) writeSAMLMetadata(w http.ResponseWriter, r *http.Request, slug string) {
 	cfg, _, _, err := s.settings.Get(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -247,6 +255,12 @@ func (s *Server) handleSAMLMetadata(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "saml sp key not generated; save mode=saml in settings first")
 		return
 	}
+	idp, err := s.settings.ResolveIdP(r.Context(), slug)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "saml idp not found")
+		return
+	}
+	cfg = s.settings.OverlaySAML(cfg, idp)
 	xmlBytes, err := s.settings.SAMLMetadataXML(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -258,6 +272,10 @@ func (s *Server) handleSAMLMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSAMLStart(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	if slug == "" {
+		slug = r.URL.Query().Get("idp")
+	}
 	cfg, _, _, err := s.settings.Get(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -267,6 +285,16 @@ func (s *Server) handleSAMLStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "saml is not enabled")
 		return
 	}
+	idp, err := s.settings.ResolveIdP(r.Context(), slug)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "saml idp not found")
+		return
+	}
+	if !idp.Enabled || !settings.IdPConfigured(idp) {
+		writeErr(w, http.StatusBadRequest, "saml idp is not configured")
+		return
+	}
+	cfg = s.settings.OverlaySAML(cfg, idp)
 	u, err := s.settings.SAMLAuthRedirect(r.Context(), s.sessions.Redis(), cfg)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -276,6 +304,10 @@ func (s *Server) handleSAMLStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
+	s.completeSAMLACS(w, r, chi.URLParam(r, "slug"))
+}
+
+func (s *Server) completeSAMLACS(w http.ResponseWriter, r *http.Request, slug string) {
 	cfg, _, _, err := s.settings.Get(r.Context())
 	base := cfg.PublicBaseURL
 	if base == "" {
@@ -289,12 +321,18 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, settings.SAMLErrorRedirect(base, "saml is not enabled"), http.StatusFound)
 		return
 	}
+	idp, err := s.settings.ResolveIdP(r.Context(), slug)
+	if err != nil || !idp.Enabled {
+		http.Redirect(w, r, settings.SAMLErrorRedirect(base, "saml idp not found"), http.StatusFound)
+		return
+	}
+	cfg = s.settings.OverlaySAML(cfg, idp)
 	claims, err := s.settings.SAMLParseACS(r.Context(), s.sessions.Redis(), cfg, r)
 	if err != nil {
 		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
 		return
 	}
-	res, err := s.auth.LoginSAML(r.Context(), claims, s.clientIP(r), r.UserAgent())
+	res, err := s.auth.LoginSAML(r.Context(), claims, idp, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		http.Redirect(w, r, settings.SAMLErrorRedirect(base, err.Error()), http.StatusFound)
 		return
@@ -314,6 +352,10 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSAMLSLO(w http.ResponseWriter, r *http.Request) {
+	s.completeSAMLSLO(w, r, chi.URLParam(r, "slug"))
+}
+
+func (s *Server) completeSAMLSLO(w http.ResponseWriter, r *http.Request, slug string) {
 	cfg, _, _, err := s.settings.Get(r.Context())
 	base := cfg.PublicBaseURL
 	if base == "" {
@@ -324,28 +366,42 @@ func (s *Server) handleSAMLSLO(w http.ResponseWriter, r *http.Request) {
 
 	_ = r.ParseForm()
 	if r.Form.Get("SAMLResponse") != "" {
-		if vErr := s.settings.SAMLValidateLogoutResponse(r.Context(), cfg, r); vErr != nil {
-			slog.Warn("saml slo response", "err", vErr)
+		idp, rerr := s.settings.ResolveIdP(r.Context(), slug)
+		if rerr == nil {
+			ov := s.settings.OverlaySAML(cfg, idp)
+			if vErr := s.settings.SAMLValidateLogoutResponse(r.Context(), ov, r); vErr != nil {
+				slog.Warn("saml slo response", "err", vErr)
+			}
 		}
 		s.clearCookies(w)
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}
 
-	var nameID string
+	var nameID, sessSlug string
 	if c, _ := r.Cookie(sessionCookie); c != nil && c.Value != "" {
 		if sess, gerr := s.sessions.Get(r.Context(), c.Value); gerr == nil {
 			nameID = sess.SAMLNameID
+			sessSlug = sess.SAMLIdP
 		}
 		_ = s.auth.Logout(r.Context(), c.Value, nil, s.clientIP(r), r.UserAgent())
 	}
 	s.clearCookies(w)
 
+	if slug == "" {
+		slug = sessSlug
+	}
 	if err != nil || cfg.Mode != "saml" || nameID == "" {
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}
-	loc, lerr := s.settings.SAMLLogoutRedirect(r.Context(), cfg, nameID)
+	idp, rerr := s.settings.ResolveIdP(r.Context(), slug)
+	if rerr != nil {
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+	ov := s.settings.OverlaySAML(cfg, idp)
+	loc, lerr := s.settings.SAMLLogoutRedirect(r.Context(), ov, nameID)
 	if lerr != nil || loc == nil {
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return

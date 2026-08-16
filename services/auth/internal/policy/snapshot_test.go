@@ -13,6 +13,7 @@ func TestFromResultCopiesFields(t *testing.T) {
 		OK: true, MaxRisk: 40, RiskAction: "require_mfa",
 		HTTPPolicyPackID: &id, AccessPolicyID: &pol,
 		TagACL: true, MatchTags: []string{"prod"}, AllowedNamespaces: []string{"kube-system"},
+		AllowedEgress: []string{"10.1.2.0/24:5432"},
 	}
 	sn := FromResult(ev)
 	if sn.MaxRisk != 40 || sn.RiskAction != "require_mfa" || sn.HTTPPolicyPackID == nil || *sn.HTTPPolicyPackID != id {
@@ -24,6 +25,9 @@ func TestFromResultCopiesFields(t *testing.T) {
 	got := sn.toResult()
 	if !got.OK || got.MaxRisk != 40 || got.HTTPPolicyPackID == nil {
 		t.Fatalf("%+v", got)
+	}
+	if len(sn.AllowedEgress) != 1 || sn.AllowedEgress[0] != "10.1.2.0/24:5432" {
+		t.Fatalf("egress %+v", sn.AllowedEgress)
 	}
 }
 

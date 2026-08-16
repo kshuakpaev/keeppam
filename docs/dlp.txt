@@ -10,7 +10,8 @@
 |-------|-----------|
 | `scp` / `sftp` / `rsync` через `exec` (в т.ч. `sudo scp`) | `Reply(false)`, аудит `session.dlp.denied` |
 | subsystem `sftp` | отказ + аудит |
-| каналы `direct-tcpip`, `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
+| каналы `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
+| `direct-tcpip` | пустой `allowed_egress` — deny (как DLP); иначе allowlist назначений, см. `docs/network-pam.txt` |
 | global/session `tcpip-forward`, `x11-req` | отказ + аудит |
 
 Интерактивный `shell` / `pty-req`: line-buffer включается при command pack **или** `max_risk > 0` на ACL (`docs/command-risk.txt`). Если pack есть, `scp`/`sftp`/`rsync` в шелле запрещены DLP даже когда pack их разрешает. Событие сессии: `dlp`.

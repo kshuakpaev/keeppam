@@ -12,6 +12,7 @@ import (
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/obs"
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/store"
 )
@@ -213,6 +214,35 @@ func (s *Service) OnJITDecided(ctx context.Context, req policy.AccessRequest) {
 	s.insert(ctx, []uuid.UUID{req.RequesterID}, kind, title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload(kind, req))
 	s.fireMail(ctx, []uuid.UUID{req.RequesterID}, title, body)
+}
+
+func (s *Service) OnOpApproval(ctx context.Context, rec opapprove.Approval) {
+	if s == nil {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "access.approve")
+	if err != nil {
+		return
+	}
+	if extra, err := s.UsersWithPermission(ctx, "access.approve.security"); err == nil {
+		ids = append(ids, extra...)
+	}
+	to := FilterRecipients(ids, rec.UserID)
+	who := nonEmpty(rec.Username, rec.UserID.String())
+	what := nonEmpty(rec.AssetName, rec.AssetID.String())
+	obj := nonEmpty(rec.Object, rec.Path)
+	title := "Операция в сессии ждёт согласования"
+	body := fmt.Sprintf("%s: %s %s (%s)", who, rec.Method, obj, what)
+	s.insert(ctx, to, "op.created", title, body, "session_op_approval", rec.ID.String())
+	s.fireWebhook(ctx, map[string]any{
+		"source": "keeppam", "event": "op.created",
+		"id": rec.ID.String(), "session_id": rec.SessionID.String(),
+		"user_id": rec.UserID.String(), "username": rec.Username,
+		"asset_id": rec.AssetID.String(), "asset_name": rec.AssetName,
+		"method": rec.Method, "path": rec.Path, "object": rec.Object,
+		"channel": rec.Channel, "ts": time.Now().UTC().Format(time.RFC3339),
+	})
+	s.fireMail(ctx, to, title, body)
 }
 
 func (s *Service) OnAlertmanager(ctx context.Context, evs []obs.AlertEvent) {

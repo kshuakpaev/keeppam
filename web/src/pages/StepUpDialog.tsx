@@ -48,9 +48,10 @@ export function StepUpDialog(props: {
   return (
     <div className="overlay" role="dialog" aria-modal="true">
       <div className="card" style={{ width: "min(420px, 92vw)" }}>
-        <h2 style={{ marginTop: 0 }}>Повторный MFA</h2>
+        <h2 style={{ marginTop: 0 }}>{err.operation ? "Повторный MFA на операцию" : "Повторный MFA"}</h2>
         <p className="muted">
-          Риск {err.risk_score ?? "—"} &gt; {err.max_risk ?? "—"} ({factors}). Подтвердите вход.
+          Риск {err.risk_score ?? "—"} &gt; {err.max_risk ?? "—"} ({factors})
+          {err.operation ? ` · ${err.operation}` : ""}. Подтвердите {err.operation ? "операцию" : "вход"}.
         </p>
         {error && <p className="error">{error}</p>}
         {err.totp && (

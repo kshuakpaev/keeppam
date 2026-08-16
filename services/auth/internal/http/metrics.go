@@ -43,7 +43,7 @@ func (s *Server) metricsMW(next http.Handler) http.Handler {
 			obs.Default.ObserveAuth("webauthn", d)
 		case "/api/v1/auth/oidc/callback":
 			obs.Default.ObserveAuth("oidc", d)
-		case "/api/v1/auth/saml/acs":
+		case "/api/v1/auth/saml/acs", "/api/v1/auth/saml/idp/{slug}/acs":
 			obs.Default.ObserveAuth("saml", d)
 		}
 	})

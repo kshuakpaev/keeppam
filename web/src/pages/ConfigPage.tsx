@@ -8,6 +8,7 @@ import {
   type NotifySettings,
   type SIEMSettings,
   type SSHSettings,
+  type SAMLIdP,
 } from "../api";
 import { useAuth } from "../auth";
 
@@ -48,6 +49,28 @@ const empty: AuthSettings = {
   saml_default_role: "operator",
   saml_group_attr: "groups",
   saml_group_role_map: {},
+  scim_enabled: false,
+  has_scim_token: false,
+  scim_default_role: "operator",
+};
+
+const emptyExtraIdP: SAMLIdP = {
+  id: "",
+  slug: "",
+  name: "",
+  enabled: true,
+  metadata_url: "",
+  entity_id: "",
+  sso_url: "",
+  cert_pem: "",
+  attr_username: "uid",
+  attr_email: "email",
+  attr_display_name: "displayName",
+  auto_provision: true,
+  skip_mfa: true,
+  default_role: "operator",
+  group_attr: "groups",
+  group_role_map: {},
 };
 
 const emptySSH: SSHSettings = {
@@ -119,6 +142,7 @@ export function ConfigPage() {
   const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
+  const [scimToken, setScimToken] = useState("");
   const [webhookAuth, setWebhookAuth] = useState("");
   const [kafkaPassword, setKafkaPassword] = useState("");
   const [natsToken, setNatsToken] = useState("");
@@ -129,19 +153,23 @@ export function ConfigPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [groupMapText, setGroupMapText] = useState("");
+  const [extraIdPs, setExtraIdPs] = useState<SAMLIdP[]>([]);
+  const [extraForm, setExtraForm] = useState<SAMLIdP>(emptyExtraIdP);
+  const [extraMapText, setExtraMapText] = useState("");
   const canWrite = hasPerm(user, "settings.write");
 
   useEffect(() => {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, nt] = await Promise.all([
+        const [s, si, sh, inf, it, nt, idps] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
           api.getInfraStatus(),
           api.getITSMSettings(),
           api.getNotifySettings(),
+          api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
         ]);
         setForm({ ...empty, ...s });
         setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
@@ -154,6 +182,7 @@ export function ConfigPage() {
           ok_statuses: it.ok_statuses?.length ? it.ok_statuses : emptyITSM.ok_statuses,
         });
         setNotify({ ...emptyNotify, ...nt });
+        setExtraIdPs(idps.idps || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Ошибка загрузки");
       }
@@ -173,18 +202,22 @@ export function ConfigPage() {
       const body: Partial<AuthSettings> = { ...form };
       if (secret.trim()) body.oidc_client_secret = secret.trim();
       if (ldapPass.trim()) body.ldap_bind_password = ldapPass.trim();
+      if (scimToken.trim()) body.scim_token = scimToken.trim();
       delete body.has_oidc_secret;
       delete body.has_ldap_bind_password;
       delete body.has_saml_sp_key;
+      delete body.has_scim_token;
       delete body.saml_acs_url;
       delete body.saml_metadata_url;
       delete body.saml_slo_url;
+      delete body.scim_base_url;
       body.saml_group_role_map = parseGroupRoleMap(groupMapText);
       const saved = await api.putAuthSettings(body);
       setForm({ ...empty, ...saved, rotate_saml_sp_key: false });
       setGroupMapText(formatGroupRoleMap(saved.saml_group_role_map));
       setSecret("");
       setLdapPass("");
+      setScimToken("");
       setMsg("Авторизация сохранена");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения");
@@ -536,6 +569,8 @@ export function ConfigPage() {
           <span className="mono">{form.public_base_url || "…"}/api/v1/auth/oidc/callback</span>
           <br />
           SAML ACS: <span className="mono">{form.public_base_url || "…"}/api/v1/auth/saml/acs</span>
+          <br />
+          SCIM: <span className="mono">{form.scim_base_url || `${form.public_base_url || "…"}/scim/v2`}</span>
         </p>
 
         {form.mode === "oidc" && (
@@ -703,6 +738,156 @@ export function ConfigPage() {
               />
               Пересоздать SP signing key
             </label>
+
+            <h2>Дополнительные SAML IdP</h2>
+            <p className="muted">
+              Один SP (ключ / Entity ID выше). Каждый IdP — своя кнопка на логине и ACS{" "}
+              <span className="mono">/api/v1/auth/saml/idp/&#123;slug&#125;/acs</span>. Максимум 8.
+            </p>
+            {extraIdPs.map((idp) => (
+              <div key={idp.id} className="row" style={{ gap: "0.5rem", alignItems: "center", marginBottom: "0.35rem" }}>
+                <span className="mono" style={{ flex: 1 }}>
+                  {idp.name} ({idp.slug}){idp.enabled ? "" : " — выкл"}
+                </span>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setExtraForm({ ...emptyExtraIdP, ...idp });
+                    setExtraMapText(formatGroupRoleMap(idp.group_role_map));
+                  }}
+                >
+                  Изменить
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await api.deleteSAMLIdP(idp.id);
+                        setExtraIdPs((list) => list.filter((x) => x.id !== idp.id));
+                        if (extraForm.id === idp.id) {
+                          setExtraForm(emptyExtraIdP);
+                          setExtraMapText("");
+                        }
+                        setMsg("IdP удалён");
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Ошибка удаления IdP");
+                      }
+                    })();
+                  }}
+                >
+                  Удалить
+                </button>
+              </div>
+            ))}
+            <label>Slug (латиница, не default)</label>
+            <input
+              value={extraForm.slug}
+              onChange={(e) => setExtraForm({ ...extraForm, slug: e.target.value })}
+              placeholder="okta"
+              disabled={!!extraForm.id}
+            />
+            <label>Имя на кнопке входа</label>
+            <input
+              value={extraForm.name}
+              onChange={(e) => setExtraForm({ ...extraForm, name: e.target.value })}
+              placeholder="Okta"
+            />
+            <label>IdP Metadata URL</label>
+            <input
+              value={extraForm.metadata_url}
+              onChange={(e) => setExtraForm({ ...extraForm, metadata_url: e.target.value })}
+            />
+            <label>IdP Entity ID / SSO URL / cert — ручной fallback</label>
+            <input
+              value={extraForm.entity_id}
+              onChange={(e) => setExtraForm({ ...extraForm, entity_id: e.target.value })}
+              placeholder="Entity ID"
+            />
+            <input
+              value={extraForm.sso_url}
+              onChange={(e) => setExtraForm({ ...extraForm, sso_url: e.target.value })}
+              placeholder="SSO URL"
+            />
+            <textarea
+              value={extraForm.cert_pem}
+              onChange={(e) => setExtraForm({ ...extraForm, cert_pem: e.target.value })}
+              rows={3}
+              placeholder="-----BEGIN CERTIFICATE-----"
+            />
+            <label>Group → role</label>
+            <textarea
+              value={extraMapText}
+              onChange={(e) => setExtraMapText(e.target.value)}
+              rows={3}
+              placeholder={"keeppam-admins=admin"}
+            />
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={extraForm.enabled}
+                onChange={(e) => setExtraForm({ ...extraForm, enabled: e.target.checked })}
+              />
+              Включён
+            </label>
+            {extraForm.sp_metadata_url && (
+              <p className="muted">
+                ACS: <span className="mono">{extraForm.acs_url}</span>
+                <br />
+                Metadata:{" "}
+                <a className="mono" href={extraForm.sp_metadata_url.replace(/^https?:\/\/[^/]+/, "")} target="_blank" rel="noreferrer">
+                  {extraForm.sp_metadata_url}
+                </a>
+              </p>
+            )}
+            <div className="row" style={{ gap: "0.5rem" }}>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true);
+                    setError("");
+                    setMsg("");
+                    try {
+                      const body = {
+                        ...extraForm,
+                        group_role_map: parseGroupRoleMap(extraMapText),
+                      };
+                      const saved = extraForm.id
+                        ? await api.putSAMLIdP(extraForm.id, body)
+                        : await api.createSAMLIdP(body);
+                      const list = await api.listSAMLIdPs();
+                      setExtraIdPs(list.idps || []);
+                      setExtraForm({ ...emptyExtraIdP, ...saved });
+                      setExtraMapText(formatGroupRoleMap(saved.group_role_map));
+                      setMsg("SAML IdP сохранён");
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Ошибка сохранения IdP");
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {extraForm.id ? "Сохранить IdP" : "Добавить IdP"}
+              </button>
+              {extraForm.id && (
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    setExtraForm(emptyExtraIdP);
+                    setExtraMapText("");
+                  }}
+                >
+                  Новый
+                </button>
+              )}
+            </div>
           </>
         )}
 
@@ -804,6 +989,55 @@ export function ConfigPage() {
             </label>
           </>
         )}
+
+        <h2>SCIM 2.0</h2>
+        <p className="muted">
+          Провижининг пользователей и групп из Entra / Okta. Не зависит от режима входа (можно вместе с SAML).
+          Tenant URL:{" "}
+          <span className="mono">{form.scim_base_url || `${form.public_base_url || "…"}/scim/v2`}</span>
+        </p>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={form.scim_enabled}
+            onChange={(e) => setForm({ ...form, scim_enabled: e.target.checked })}
+          />
+          Включить inbound SCIM
+        </label>
+        <label>
+          Bearer-токен {form.has_scim_token ? "(задан, оставьте пустым чтобы не менять)" : ""}
+        </label>
+        <input
+          type="password"
+          value={scimToken}
+          onChange={(e) => setScimToken(e.target.value)}
+          autoComplete="off"
+          placeholder={form.has_scim_token ? "••••••••" : ""}
+        />
+        <button
+          className="btn secondary"
+          type="button"
+          style={{ marginTop: "0.35rem" }}
+          onClick={() => {
+            const bytes = new Uint8Array(32);
+            crypto.getRandomValues(bytes);
+            const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+            setScimToken(token);
+            void navigator.clipboard.writeText(token).then(
+              () => setMsg("SCIM-токен сгенерирован и скопирован — сохраните настройки"),
+              () => setMsg("SCIM-токен сгенерирован — скопируйте из поля и сохраните"),
+            );
+          }}
+        >
+          Сгенерировать токен
+        </button>
+        <label>Роль по умолчанию для новых пользователей</label>
+        <input
+          value={form.scim_default_role}
+          onChange={(e) => setForm({ ...form, scim_default_role: e.target.value })}
+          placeholder="operator"
+        />
+        <p className="muted">admin через SCIM не выдаётся — значение clamp в operator.</p>
 
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
           Сохранить авторизацию

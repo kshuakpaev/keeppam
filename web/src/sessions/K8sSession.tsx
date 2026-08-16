@@ -2,7 +2,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
-import { api, type K8sBrowseItem, type K8sResourceKind } from "../api";
+import { api, ApiError, type K8sBrowseItem, type K8sResourceKind } from "../api";
+import { SessionStepUpHost } from "../components/SessionStepUpHost";
+import { StepUpDialog } from "../pages/StepUpDialog";
 
 type Props = {
   id: string;
@@ -56,6 +58,17 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const [stepUp, setStepUp] = useState<ApiError | null>(null);
+  const retryRef = useRef<(() => void) | null>(null);
+
+  function catchStepUp(err: unknown, fallback: string, retry: () => void) {
+    if (ApiError.isStepUp(err)) {
+      retryRef.current = retry;
+      setStepUp(err);
+      return;
+    }
+    setError(err instanceof Error ? err.message : fallback);
+  }
 
   const kind = catalog.find((k) => k.resource === resource && (k.group || "") === group) || catalog.find((k) => k.resource === resource);
 
@@ -242,7 +255,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       setObjectText(JSON.stringify(res.object, null, 2));
       await refreshList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      catchStepUp(err, "Ошибка сохранения", () => void saveObject());
     } finally {
       setLoading(false);
     }
@@ -265,7 +278,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       }
       await refreshList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      catchStepUp(err, "Ошибка удаления", () => void deleteNamed(name, namespace));
     } finally {
       setLoading(false);
     }
@@ -287,7 +300,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       }
       await refreshList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка apply");
+      catchStepUp(err, "Ошибка apply", () => void applyYaml());
     } finally {
       setLoading(false);
     }
@@ -311,7 +324,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
       const parts = [res.stdout, res.stderr, res.message].filter(Boolean);
       setRunOut(parts.join("\n"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка exec");
+      catchStepUp(err, "Ошибка exec", () => void runOnce());
     } finally {
       setLoading(false);
     }
@@ -343,7 +356,7 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
         .join("\n");
       setPfOut(`HTTP ${res.status}${res.truncated ? " (truncated)" : ""}\n${hdr}\n\n${res.body || ""}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка port-forward");
+      catchStepUp(err, "Ошибка port-forward", () => void runPortForward());
     } finally {
       setLoading(false);
     }
@@ -370,6 +383,22 @@ export function K8sSession({ id, title, visible, onClose }: Props) {
 
   return (
     <div className="session-panel-inner" style={{ maxWidth: 960, display: visible ? undefined : "none" }}>
+      <SessionStepUpHost sessionId={id} />
+      {stepUp && (
+        <StepUpDialog
+          err={stepUp}
+          onDone={() => {
+            setStepUp(null);
+            const fn = retryRef.current;
+            retryRef.current = null;
+            fn?.();
+          }}
+          onCancel={() => {
+            setStepUp(null);
+            retryRef.current = null;
+          }}
+        />
+      )}
       <div className="toolbar">
         <div>
           <h1>kubectl через PAM</h1>

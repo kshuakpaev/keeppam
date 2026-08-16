@@ -9,6 +9,32 @@ const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"]
 const TYPES = ["host", "db", "k8s", "api"];
 const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 
+const emptyAclForm = {
+  kind: "role" as "role" | "user" | "group",
+  role_id: "",
+  user_id: "",
+  group_id: "",
+  time_start: "",
+  time_end: "",
+  days_of_week: 127,
+  duration_minutes: "",
+  required_tags: "",
+  require_ticket: false,
+  require_reason: false,
+  allowed_cidrs: "",
+  allowed_countries: "",
+  allowed_devices: "",
+  allowed_namespaces: "",
+  allowed_egress: "",
+  command_policy_pack_id: "",
+  sql_policy_pack_id: "",
+  http_policy_pack_id: "",
+  app_object_pack_id: "",
+  access_policy_id: "",
+  max_risk: "0",
+  risk_action: "deny",
+};
+
 export function AssetEditPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
@@ -60,30 +86,10 @@ export function AssetEditPage() {
     k8s_impersonate_prefix: "keeppam:",
     k8s_bind_user: false,
   });
-  const [aclForm, setAclForm] = useState({
-    kind: "role" as "role" | "user" | "group",
-    role_id: "",
-    user_id: "",
-    group_id: "",
-    time_start: "",
-    time_end: "",
-    days_of_week: 127,
-    duration_minutes: "",
-    required_tags: "",
-    require_ticket: false,
-    require_reason: false,
-    allowed_cidrs: "",
-    allowed_countries: "",
-    allowed_devices: "",
-    allowed_namespaces: "",
-    command_policy_pack_id: "",
-    sql_policy_pack_id: "",
-    http_policy_pack_id: "",
-    app_object_pack_id: "",
-    access_policy_id: "",
-    max_risk: "0",
-    risk_action: "deny",
-  });
+  const [aclForm, setAclForm] = useState({ ...emptyAclForm });
+  const [aclEditId, setAclEditId] = useState<string | null>(null);
+  const [aclEditExpires, setAclEditExpires] = useState<string | null>(null);
+  const [aclPermanent, setAclPermanent] = useState(false);
   const [jitForm, setJitForm] = useState({ reason: "", duration_minutes: 60, ticket_id: "" });
   const [bgForm, setBgForm] = useState({ reason: "", duration_minutes: 30 });
   const [connectTicket, setConnectTicket] = useState("");
@@ -579,6 +585,59 @@ export function AssetEditPage() {
     return false;
   }
 
+  function resetAclForm() {
+    setAclEditId(null);
+    setAclEditExpires(null);
+    setAclPermanent(false);
+    setAclForm({ ...emptyAclForm, role_id: roles[0]?.id || "" });
+  }
+
+  function splitCSV(s: string): string[] {
+    return s
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+
+  async function startAclEdit(b: AccessBinding) {
+    if (!id || !canACL) return;
+    setError("");
+    try {
+      const raw = await api.getACL(id, b.id);
+      setAclEditId(raw.id);
+      setAclEditExpires(raw.expires_at || null);
+      setAclPermanent(!raw.expires_at);
+      setAclForm({
+        kind: raw.user_id ? "user" : raw.group_id ? "group" : "role",
+        role_id: raw.role_id || "",
+        user_id: raw.user_id || "",
+        group_id: raw.group_id || "",
+        time_start: raw.time_start || "",
+        time_end: raw.time_end || "",
+        days_of_week: raw.days_of_week,
+        duration_minutes: "",
+        required_tags: (raw.required_tags || []).join(", "),
+        require_ticket: !!raw.require_ticket,
+        require_reason: !!raw.require_reason,
+        allowed_cidrs: (raw.allowed_cidrs || []).join(", "),
+        allowed_countries: (raw.allowed_countries || []).join(", "),
+        allowed_devices: (raw.allowed_devices || []).join(", "),
+        allowed_namespaces: (raw.allowed_namespaces || []).join(", "),
+        allowed_egress: (raw.allowed_egress || []).join(", "),
+        command_policy_pack_id: raw.command_policy_pack_id || "",
+        sql_policy_pack_id: raw.sql_policy_pack_id || "",
+        http_policy_pack_id: raw.http_policy_pack_id || "",
+        app_object_pack_id: raw.app_object_pack_id || "",
+        access_policy_id: raw.access_policy_id || "",
+        max_risk: String(raw.max_risk || 0),
+        risk_action: raw.risk_action || "deny",
+      });
+      setMsg("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка загрузки ACL");
+    }
+  }
+
   async function onAddACL(e: FormEvent) {
     e.preventDefault();
     if (!id || !canACL) return;
@@ -592,6 +651,7 @@ export function AssetEditPage() {
         time_end?: string;
         days_of_week?: number;
         duration_minutes?: number;
+        permanent?: boolean;
         required_tags?: string[];
         require_ticket?: boolean;
         require_reason?: boolean;
@@ -599,11 +659,12 @@ export function AssetEditPage() {
         allowed_countries?: string[];
         allowed_devices?: string[];
         allowed_namespaces?: string[];
-        command_policy_pack_id?: string;
-        sql_policy_pack_id?: string;
-        http_policy_pack_id?: string;
-        app_object_pack_id?: string;
-        access_policy_id?: string;
+        allowed_egress?: string[];
+        command_policy_pack_id?: string | null;
+        sql_policy_pack_id?: string | null;
+        http_policy_pack_id?: string | null;
+        app_object_pack_id?: string | null;
+        access_policy_id?: string | null;
         max_risk?: number;
         risk_action?: string;
       } = {
@@ -611,92 +672,68 @@ export function AssetEditPage() {
         require_ticket: aclForm.require_ticket,
         require_reason: aclForm.require_reason,
       };
-      if (aclForm.kind === "role") {
-        if (!aclForm.role_id) throw new Error("выберите роль");
-        body.role_id = aclForm.role_id;
-      } else if (aclForm.kind === "group") {
-        if (!aclForm.group_id) throw new Error("выберите группу");
-        body.group_id = aclForm.group_id;
-      } else {
-        if (!aclForm.user_id) throw new Error("выберите пользователя");
-        body.user_id = aclForm.user_id;
+      if (!aclEditId) {
+        if (aclForm.kind === "role") {
+          if (!aclForm.role_id) throw new Error("выберите роль");
+          body.role_id = aclForm.role_id;
+        } else if (aclForm.kind === "group") {
+          if (!aclForm.group_id) throw new Error("выберите группу");
+          body.group_id = aclForm.group_id;
+        } else {
+          if (!aclForm.user_id) throw new Error("выберите пользователя");
+          body.user_id = aclForm.user_id;
+        }
       }
-      if (aclForm.time_start) body.time_start = aclForm.time_start;
-      if (aclForm.time_end) body.time_end = aclForm.time_end;
-      if (aclForm.duration_minutes) {
-        body.duration_minutes = Number(aclForm.duration_minutes);
-      }
-      const tags = aclForm.required_tags
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      if (tags.length) body.required_tags = tags;
-      const cidrs = aclForm.allowed_cidrs
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      if (cidrs.length) body.allowed_cidrs = cidrs;
-      const countries = aclForm.allowed_countries
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      if (countries.length) body.allowed_countries = countries;
-      const devices = aclForm.allowed_devices
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      if (devices.length) body.allowed_devices = devices;
-      const namespaces = aclForm.allowed_namespaces
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
-      if (namespaces.length) body.allowed_namespaces = namespaces;
-      if (aclForm.command_policy_pack_id) {
-        body.command_policy_pack_id = aclForm.command_policy_pack_id;
-      }
-      if (aclForm.sql_policy_pack_id) {
-        body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
-      }
-      if (aclForm.http_policy_pack_id) {
-        body.http_policy_pack_id = aclForm.http_policy_pack_id;
-      }
-      if (aclForm.app_object_pack_id) {
-        body.app_object_pack_id = aclForm.app_object_pack_id;
-      }
-      if (aclForm.access_policy_id) {
-        body.access_policy_id = aclForm.access_policy_id;
-      }
-      const maxRisk = Number(aclForm.max_risk);
-      if (maxRisk > 0) {
-        body.max_risk = maxRisk;
+      const tags = splitCSV(aclForm.required_tags);
+      const cidrs = splitCSV(aclForm.allowed_cidrs);
+      const countries = splitCSV(aclForm.allowed_countries);
+      const devices = splitCSV(aclForm.allowed_devices);
+      const namespaces = splitCSV(aclForm.allowed_namespaces);
+      const egress = splitCSV(aclForm.allowed_egress);
+      if (aclEditId) {
+        body.time_start = aclForm.time_start;
+        body.time_end = aclForm.time_end;
+        body.required_tags = tags;
+        body.allowed_cidrs = cidrs;
+        body.allowed_countries = countries;
+        body.allowed_devices = devices;
+        body.allowed_namespaces = namespaces;
+        body.allowed_egress = egress;
+        body.command_policy_pack_id = aclForm.command_policy_pack_id || null;
+        body.sql_policy_pack_id = aclForm.sql_policy_pack_id || null;
+        body.http_policy_pack_id = aclForm.http_policy_pack_id || null;
+        body.app_object_pack_id = aclForm.app_object_pack_id || null;
+        body.access_policy_id = aclForm.access_policy_id || null;
+        body.max_risk = Number(aclForm.max_risk) || 0;
         body.risk_action = aclForm.risk_action;
+        if (aclPermanent) body.permanent = true;
+        else if (aclForm.duration_minutes) body.duration_minutes = Number(aclForm.duration_minutes);
+        await api.updateACL(id, aclEditId, body);
+        setMsg("Доступ обновлён");
+      } else {
+        if (aclForm.time_start) body.time_start = aclForm.time_start;
+        if (aclForm.time_end) body.time_end = aclForm.time_end;
+        if (aclForm.duration_minutes) body.duration_minutes = Number(aclForm.duration_minutes);
+        if (tags.length) body.required_tags = tags;
+        if (cidrs.length) body.allowed_cidrs = cidrs;
+        if (countries.length) body.allowed_countries = countries;
+        if (devices.length) body.allowed_devices = devices;
+        if (namespaces.length) body.allowed_namespaces = namespaces;
+        if (egress.length) body.allowed_egress = egress;
+        if (aclForm.command_policy_pack_id) body.command_policy_pack_id = aclForm.command_policy_pack_id;
+        if (aclForm.sql_policy_pack_id) body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
+        if (aclForm.http_policy_pack_id) body.http_policy_pack_id = aclForm.http_policy_pack_id;
+        if (aclForm.app_object_pack_id) body.app_object_pack_id = aclForm.app_object_pack_id;
+        if (aclForm.access_policy_id) body.access_policy_id = aclForm.access_policy_id;
+        const maxRisk = Number(aclForm.max_risk);
+        if (maxRisk > 0) {
+          body.max_risk = maxRisk;
+          body.risk_action = aclForm.risk_action;
+        }
+        await api.createACL(id, body);
+        setMsg("Доступ выдан");
       }
-      await api.createACL(id, body);
-      setMsg("Доступ выдан");
-      setAclForm({
-        kind: "role",
-        role_id: roles[0]?.id || "",
-        user_id: "",
-        group_id: "",
-        time_start: "",
-        time_end: "",
-        days_of_week: 127,
-        duration_minutes: "",
-        required_tags: "",
-        require_ticket: false,
-        require_reason: false,
-        allowed_cidrs: "",
-        allowed_countries: "",
-        allowed_devices: "",
-        allowed_namespaces: "",
-        command_policy_pack_id: "",
-        sql_policy_pack_id: "",
-        http_policy_pack_id: "",
-        app_object_pack_id: "",
-        access_policy_id: "",
-        max_risk: "0",
-        risk_action: "deny",
-      });
+      resetAclForm();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка ACL");
@@ -746,6 +783,7 @@ export function AssetEditPage() {
     try {
       await api.deleteACL(id, b.id);
       setMsg("Доступ отозван");
+      if (aclEditId === b.id) resetAclForm();
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
@@ -888,7 +926,11 @@ export function AssetEditPage() {
           value={form.tags}
           onChange={(e) => setForm({ ...form, tags: e.target.value })}
           disabled={!canWrite}
+          placeholder="prod/linux, pci"
         />
+        <p className="muted" style={{ marginTop: 0 }}>
+          Путь через / : <span className="mono">prod/linux</span> покрывает ACL на <span className="mono">prod</span>.
+        </p>
         <label>JIT согласование</label>
         <select
           value={form.approval_mode}
@@ -951,7 +993,7 @@ export function AssetEditPage() {
           }}
         >
           <h2>Приложение (PAM)</h2>
-          <p className="muted">SSO/JIT lease, HTTPS proxy (full) или изолированный Chromium (isolated)</p>
+          <p className="muted">SSO/JIT lease, HTTPS proxy (full) или изолированный Chromium через тот же proxy (isolated)</p>
           <label>Режим auth</label>
           <select
             value={appForm.auth_mode}
@@ -1725,6 +1767,7 @@ export function AssetEditPage() {
                   {b.inherited ? (
                     <div className="muted" style={{ fontSize: "0.8rem" }}>
                       по тегу {(b.asset_match_tags || []).join(", ")}
+                      {b.asset_match_mode === "any" ? " · любой" : " · все"}
                     </div>
                   ) : null}
                 </td>
@@ -1745,6 +1788,7 @@ export function AssetEditPage() {
                   {(b.allowed_countries || []).length ? ` · ${b.allowed_countries!.join(",")}` : ""}
                   {(b.allowed_devices || []).length ? ` · ${b.allowed_devices!.join(",")}` : ""}
                   {(b.allowed_namespaces || []).length ? ` · ns=${b.allowed_namespaces!.join(",")}` : ""}
+                  {(b.allowed_egress || []).length ? ` · egress=${b.allowed_egress!.join(",")}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -1777,9 +1821,14 @@ export function AssetEditPage() {
                 </td>
                 <td>
                   {canACL && !b.inherited && (
-                    <button className="btn danger" type="button" onClick={() => void onDeleteACL(b)}>
-                      Отозвать
-                    </button>
+                    <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                      <button className="btn secondary" type="button" onClick={() => void startAclEdit(b)}>
+                        Изменить
+                      </button>
+                      <button className="btn danger" type="button" onClick={() => void onDeleteACL(b)}>
+                        Отозвать
+                      </button>
+                    </div>
                   )}
                   {b.inherited ? (
                     <Link to="/jea" className="muted" style={{ fontSize: "0.85rem" }}>
@@ -1802,7 +1851,16 @@ export function AssetEditPage() {
 
       {canACL && (
         <form className="card" onSubmit={onAddACL} style={{ maxWidth: 560 }}>
-          <h2>Выдать доступ</h2>
+          <h2>{aclEditId ? "Изменить доступ" : "Выдать доступ"}</h2>
+          {aclEditId && (
+            <p className="muted">
+              Субъект и актив нельзя сменить. Список выше показывает эффективные поля после Policy; здесь — как
+              записано в ACL.
+              {aclEditExpires
+                ? ` Сейчас истекает ${new Date(aclEditExpires).toLocaleString()}.`
+                : " Сейчас без TTL."}
+            </p>
+          )}
           <label>Access Policy (опц.)</label>
           <select
             value={aclForm.access_policy_id}
@@ -1821,6 +1879,7 @@ export function AssetEditPage() {
           <label>Тип</label>
           <select
             value={aclForm.kind}
+            disabled={!!aclEditId}
             onChange={(e) =>
               setAclForm({ ...aclForm, kind: e.target.value as "role" | "user" | "group" })
             }
@@ -1836,6 +1895,7 @@ export function AssetEditPage() {
                 value={aclForm.role_id}
                 onChange={(e) => setAclForm({ ...aclForm, role_id: e.target.value })}
                 required
+                disabled={!!aclEditId}
               >
                 <option value="">—</option>
                 {roles.map((r) => (
@@ -1852,11 +1912,12 @@ export function AssetEditPage() {
                 value={aclForm.group_id}
                 onChange={(e) => setAclForm({ ...aclForm, group_id: e.target.value })}
                 required
+                disabled={!!aclEditId}
               >
                 <option value="">—</option>
                 {pamGroups.map((g) => (
                   <option key={g.id} value={g.id}>
-                    {g.name}
+                    {g.parent_name ? `${g.parent_name} / ${g.name}` : g.name}
                   </option>
                 ))}
               </select>
@@ -1868,6 +1929,7 @@ export function AssetEditPage() {
                 value={aclForm.user_id}
                 onChange={(e) => setAclForm({ ...aclForm, user_id: e.target.value })}
                 required
+                disabled={!!aclEditId}
               >
                 <option value="">—</option>
                 {users.map((u) => (
@@ -1901,12 +1963,28 @@ export function AssetEditPage() {
                 type="number"
                 min={1}
                 max={1440}
-                placeholder="постоянно"
+                placeholder={aclEditId ? "оставить" : "постоянно"}
                 value={aclForm.duration_minutes}
-                onChange={(e) => setAclForm({ ...aclForm, duration_minutes: e.target.value })}
+                onChange={(e) => {
+                  setAclPermanent(false);
+                  setAclForm({ ...aclForm, duration_minutes: e.target.value });
+                }}
               />
             </div>
           </div>
+          {aclEditId && (
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={aclPermanent}
+                onChange={(e) => {
+                  setAclPermanent(e.target.checked);
+                  if (e.target.checked) setAclForm({ ...aclForm, duration_minutes: "" });
+                }}
+              />
+              Постоянно (снять TTL)
+            </label>
+          )}
           <label>Дни недели</label>
           <div className="row" style={{ marginBottom: "0.9rem" }}>
             {DAY_LABELS.map((label, i) => {
@@ -1928,7 +2006,7 @@ export function AssetEditPage() {
           <input
             value={aclForm.required_tags}
             onChange={(e) => setAclForm({ ...aclForm, required_tags: e.target.value })}
-            placeholder="pci, prod"
+            placeholder="pci, prod/sre"
           />
           <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
             <input
@@ -1969,6 +2047,12 @@ export function AssetEditPage() {
             value={aclForm.allowed_namespaces}
             onChange={(e) => setAclForm({ ...aclForm, allowed_namespaces: e.target.value })}
             placeholder="prod, kube-system"
+          />
+          <label>Allowed egress (SSH -L / direct-tcpip; пусто = туннели запрещены)</label>
+          <input
+            value={aclForm.allowed_egress}
+            onChange={(e) => setAclForm({ ...aclForm, allowed_egress: e.target.value })}
+            placeholder="10.1.2.0/24:5432, db.prod.local:5432"
           />
           <label>JEA command pack (SSH, опц.)</label>
           <select
@@ -2043,12 +2127,20 @@ export function AssetEditPage() {
           </div>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
             Score: off_hours 25, break_glass 40, failed_logins 15–45, concurrent 10–20, anom_brute 20,
-            anom_multi 15 + операция (DROP/DDL 45, delete 30, k8s write 20…). Cap 100. 0 = выкл. и на connect, и на операции.
+            anom_multi 15, ueba_new_asset 25, ueba_spread 20 + операция (DROP/DDL 45, delete 30, k8s write 20…).
+            Cap 100. 0 = выкл. и на connect, и на операции.
             require_mfa — повторный TOTP/Passkey на connect; операции внутри сессии всё равно deny.
           </p>
-          <button className="btn" type="submit">
-            Выдать
-          </button>
+          <div className="row" style={{ gap: "0.5rem" }}>
+            <button className="btn" type="submit">
+              {aclEditId ? "Сохранить" : "Выдать"}
+            </button>
+            {aclEditId && (
+              <button className="btn secondary" type="button" onClick={resetAclForm}>
+                Отмена
+              </button>
+            )}
+          </div>
         </form>
       )}
     </div>

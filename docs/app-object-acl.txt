@@ -44,13 +44,20 @@ DELETE /api/customers/*   customer.delete   deny
 | Канал | Поведение |
 |-------|-----------|
 | HTTPS reverse-proxy `recording_mode=full` | 403 JSON до upstream |
+| Isolated Chromium (`recording_mode=isolated`) | тот же proxy `/iso/{session}/{token}`; Chromium origin — KeepPAM API |
 | kubectl `:16443` и cookie API | 403, тот же pack по method+path |
-
-Isolated Chromium (VNC) пакет не видит.
 
 ## APPROVAL
 
-В HTTP-запросе ждать согласование нельзя (как Command Risk в PTY): **deny + аудит**. Ответ `403` `{code:approval_required, object, action}`. Событие сессии `app_approval`, аудит `session.app.approval_required`.
+`action=approval` в object ACL **держит** HTTPS reverse-proxy, isolated browser и kubectl до 60 с, пока кто-то с `access.approve` (не заявитель) не одобрит или не отклонит. Повтор того же session+method+path, пока pending, не плодит очередь. Step-up MFA для isolated — диалог в UI KeepPAM вокруг VNC (не внутри Chromium).
+
+Ответ при отказе/таймауте: `403` `{code:approval_denied|approval_timeout|approval_required, object, action}`.
+
+Break-glass и snapshot `AdminBypass`/`BreakGlass` — wait пропускается (как allow). Preview (`app-object-preview`) по-прежнему dry-run, без ожидания.
+
+Очередь: **Запросы доступа** → «Операции в сессии». API: `GET /api/v1/admin/op-approvals`, `POST .../approve|deny`. Inbox `op.created`. SSH PTY с Command Risk `require_approval` тоже ждёт (`docs/command-risk.txt`).
+
+HTTP pack deny без изменений (сразу deny).
 
 ## Preview
 
@@ -59,9 +66,12 @@ Isolated Chromium (VNC) пакет не видит.
 ## Аудит / forensic
 
 - `session.app.denied` / событие `app_denied`
-- `session.app.approval_required` / `app_approval`
-- Сессии → События, фильтры `app_denied` / `app_approval`
+- `session.app.approval_required` / `app_approval` (ожидание или таймаут)
+- `session.app.approved` / `app_approved`
+- `session.app.approval_timeout`
+- `session.op.approved` / `session.op.denied` (кто нажал)
+- Сессии → События, фильтры `app_denied` / `app_approval` / `app_approved`
 
 ## Вне scope
 
-GraphQL field, тело запроса, живой JIT-approve внутри HTTP, привязка объекта без URL, isolated browser.
+Полный GraphQL AST и field-path; тело кроме GraphQL; привязка объекта без URL; HTML `<base>` rewrite.

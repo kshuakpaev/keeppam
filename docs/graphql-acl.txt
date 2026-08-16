@@ -1,0 +1,35 @@
+# KeepPAM: GraphQL field ACL
+
+Не полный GraphQL-сервер и не разбор вложенных selection. PAM смотрит **верхнеуровневые поля** операции в теле запроса и сопоставляет их с OBJECT в пакете объектов (`docs/app-object-acl.txt`).
+
+## Зазор
+
+HTTP ACL и object ACL матчили только method+path. `POST /graphql` с `listCustomers` и `deleteCustomer` выглядели одинаково.
+
+## Правила
+
+Тот же формат `METHOD PATH OBJECT ACTION`. Для GraphQL-запроса OBJECT — glob имени поля (`delete*`, `__schema`, `*`). Первое совпадение **на каждое поле**; если в одном query несколько полей — **худшее** побеждает (deny > approval > allow), чтобы denied-поле не проезжало рядом с allowed.
+
+REST без GraphQL-тела: как раньше, OBJECT — метка, матч только method+path.
+
+## Что считается GraphQL
+
+- `Content-Type: application/graphql` (тело = document)
+- JSON `{ "query", "operationName?" }` или batch `[{query}, …]`
+- Только если `Content-Length` известен и ≤ 256 KiB (chunked / большие тела не разбираются)
+
+Берётся выбранная операция (`operationName` или первая). Alias `gone: deleteCustomer` → поле `deleteCustomer`. Фрагменты `...frag` не раскрываются. Вложенные поля игнорируются.
+
+## Enforce
+
+HTTPS reverse-proxy `recording_mode=full` и isolated browser (`/iso/…`) — тот же `denyHTTPRequest`. kubectl не читает GraphQL-тело.
+
+Сид `graphql-objects` (миграция `061`): introspection и `delete*`/`remove*` deny, остальное POST `/graphql*` allow, unmatched deny.
+
+Preview: JEA → Объекты → поле GraphQL query.
+
+Аудит `session.app.denied`: `graphql_fields`.
+
+## Вне scope
+
+Полный GraphQL AST, field-path `user.roles.name`, variables/ACL по аргументам, GET `?query=`, schema-aware types, k8s body.

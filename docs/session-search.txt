@@ -1,8 +1,10 @@
 # KeepPAM: forensic-поиск по сессиям
 
-Поиск по `session_events` (SQL, kubectl, JEA deny, DLP, risk, HTTP ACL) без разбора asciicast/видео.
+Поиск по `session_events`: SQL, kubectl, **команды SSH**, JEA deny, DLP, risk, HTTP/object ACL, **SSH egress**.
 
-Лента «все действия пользователя за день» (аудит + сессии) — `docs/forensic.txt`.
+SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay (не output, не RDP/видео).
+
+Лента «все действия пользователя за день» — `docs/forensic.txt`.
 
 ## API
 
@@ -11,22 +13,25 @@
 | Query | Смысл |
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
-| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command_denied`, `dlp`, `risk`, `http_denied`, `app_denied`, `app_approval`); `all` = любые; иначе точный тип |
+| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command`, `command_denied`, `command_approval`, `command_approved`, `dlp`, `risk`, `http_denied`, `app_denied`, `app_approval`, `app_approved`, `egress`, `egress_denied`); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 
+`GET /api/v1/admin/sessions/{id}/transcript` — команды этой сессии.  
+`POST .../transcript` `{force?}` — разобрать asciicast (если нет PTY-журнала).
+
 Оператор видит только свои сессии; `audit.read` / `users.write` — все.
 
-Ответ: `{events: [{snippet, type, ts, session_id, username, asset_name, protocol, …}], total}`. Тела Secret/паролей в payload нет (k8s body_redacted).
+Ответ поиска: `{events: [{snippet, type, ts, session_id, username, asset_name, protocol, …}], total}`. Тела Secret/паролей в payload нет (k8s body_redacted). Ввод пароля в PTY может попасть в индекс как строка — как и в самой записи.
 
 ## UI
 
-Сессии → вкладка **События**. Клик по строке → replay / watch / recording.
+Сессии → вкладка **События**. Replay SSH: список команд + «Индексировать команды».
 
 ## Индекс
 
-Миграция `036`: `pg_trgm` GIN на `payload::text`, btree `(event_type, ts DESC)`.
+Миграция `036`: `pg_trgm` GIN на `payload::text`. Миграция `063`: `sessions.transcript_indexed_at`. До 400 строк / 8 MiB записи, строка ≤ 512 рун.
 
 ## Вне scope
 
-Полнотекст asciicast/RDP, маскирование колонок в сниппете (это SQL JEA), отдельный OpenSearch.
+Полнотекст **вывода** asciicast, OCR/RDP/Guacamole, OpenSearch, маскирование паролей в stdin.

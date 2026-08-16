@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type SecretCheckoutRequest } from "../api";
+import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type SecretCheckoutRequest } from "../api";
 import { useAuth } from "../auth";
 
 export function AccessRequestsPage() {
@@ -8,6 +8,7 @@ export function AccessRequestsPage() {
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [checkouts, setCheckouts] = useState<SecretCheckoutRequest[]>([]);
   const [glasses, setGlasses] = useState<BreakGlassEvent[]>([]);
+  const [ops, setOps] = useState<OpApproval[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("pending");
   const [error, setError] = useState("");
@@ -35,6 +36,10 @@ export function AccessRequestsPage() {
         const bg = await api.listBreakGlass(false);
         setGlasses(bg.events || []);
       }
+      if (canApprove || canApproveSecurity) {
+        const op = await api.listOpApprovals();
+        setOps(op.approvals || []);
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
@@ -44,6 +49,12 @@ export function AccessRequestsPage() {
   useEffect(() => {
     if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass) void load();
   }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, load]);
+
+  useEffect(() => {
+    if (!(canApprove || canApproveSecurity)) return;
+    const id = window.setInterval(() => void load(), 4000);
+    return () => window.clearInterval(id);
+  }, [canApprove, canApproveSecurity, load]);
 
   async function onApprove(id: string) {
     setError("");
@@ -95,6 +106,26 @@ export function AccessRequestsPage() {
     }
   }
 
+  async function onApproveOp(id: string) {
+    setError("");
+    try {
+      await api.approveOpApproval(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось одобрить операцию");
+    }
+  }
+
+  async function onDenyOp(id: string) {
+    setError("");
+    try {
+      await api.denyOpApproval(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось отклонить операцию");
+    }
+  }
+
   if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass) {
     return <p className="error">Недостаточно прав</p>;
   }
@@ -104,7 +135,7 @@ export function AccessRequestsPage() {
       <div className="toolbar">
         <div>
           <h1>Запросы доступа</h1>
-          <p className="muted">JIT к активам (руководитель → ИБ), dual-control checkout и break-glass</p>
+          <p className="muted">JIT к активам, операции в сессии (object ACL), dual-control checkout и break-glass</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
           Обновить
@@ -112,6 +143,75 @@ export function AccessRequestsPage() {
       </div>
 
       {error && <p className="error">{error}</p>}
+
+      {(canApprove || canApproveSecurity) && (
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <h2>Операции в сессии</h2>
+          <p className="muted">
+            HTTP/kubectl object ACL и SSH-команды с risk_action=require_approval. Запрос держится до 60 с,
+            пока кто-то с access.approve не нажмёт. Свой запрос одобрить нельзя. Команда на хост не уходит, пока нет approve.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Когда</th>
+                <th>Кто</th>
+                <th>Актив</th>
+                <th>Канал</th>
+                <th>Операция</th>
+                <th>До</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {ops.map((o) => (
+                <tr key={o.id}>
+                  <td className="mono">{new Date(o.created_at).toLocaleString()}</td>
+                  <td>{o.username || o.user_id}</td>
+                  <td>
+                    <Link to={`/assets/${o.asset_id}`}>{o.asset_name || o.asset_id}</Link>
+                    <div className="muted mono">
+                      <Link to={o.channel === "k8s" ? `/sessions/${o.session_id}/k8s` : o.channel === "ssh" ? `/sessions/${o.session_id}` : `/sessions/${o.session_id}/app`}>
+                        сессия
+                      </Link>
+                    </div>
+                  </td>
+                  <td className="mono">{o.channel}</td>
+                  <td>
+                    <div className="mono">
+                      {o.method} {o.path}
+                    </div>
+                    <div className="muted">{o.object}</div>
+                  </td>
+                  <td className="mono">{new Date(o.expires_at).toLocaleString()}</td>
+                  <td>
+                    <div className="row">
+                      {o.user_id !== user?.id && (
+                        <>
+                          <button className="btn" type="button" onClick={() => void onApproveOp(o.id)}>
+                            Одобрить
+                          </button>
+                          <button className="btn danger" type="button" onClick={() => void onDenyOp(o.id)}>
+                            Отклонить
+                          </button>
+                        </>
+                      )}
+                      {o.user_id === user?.id && <span className="muted">свой запрос</span>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {ops.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="muted">
+                    Нет операций, ждущих согласования.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {canBreakGlass && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>

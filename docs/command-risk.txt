@@ -38,17 +38,20 @@ Line-buffer (QuietEcho) включается, если есть command pack **�
 
 | `risk_action` | Если score > max_risk |
 |---------------|------------------------|
-| `deny` / `require_mfa` (операция) | DENY, событие `risk` |
-| `require_approval` | команда не выполняется; аудит `session.command.approval_required`; нужен JIT на новую сессию (PTY не ждёт approve) |
+| `deny` | DENY, событие `risk` |
+| `require_mfa` | SSH PTY: DENY. HTTP/SQL/kubectl: step-up MFA (`docs/adaptive-mfa.txt`) |
+| `require_approval` | PTY **ждёт** до 60 с: команда не уходит на хост, пока кто-то с `access.approve` (не заявитель) не одобрит. Таймаут/deny — команда не выполняется. Очередь: Запросы доступа → «Операции в сессии», канал `ssh`. |
 
-Break-glass и admin bypass — как у остального op-risk. Порог `max_risk` внутри сессии — из снимка connect (`docs/access-policy.txt`), не из live Policy.
+Break-glass и admin bypass — wait пропускается, команда выполняется. Аудит: `session.command.approval_required` / `approved` / `denied` / `approval_timeout`. События сессии: `command_approval` / `command_approved` / `command_denied`.
+
+Порог `max_risk` внутри сессии — из снимка connect (`docs/access-policy.txt`), не из live Policy.
 
 ## API / UI
 
 `POST /api/v1/admin/jea/command-preview` (`jea.read`): `{ command, pack_id? }` → parsed + JEA + points.
 
-JEA → SSH → «Проверить команду».
+JEA → SSH → «Проверить команду». Сессии → События и replay индексируют выполненные строки (`docs/session-search.txt`).
 
 ## Вне scope
 
-Полный shell AST / pipes / `bash -c`. Step-up MFA на каждую команду (только connect, `docs/adaptive-mfa.txt`). Пауза PTY до approve.
+Полный shell AST / pipes / `bash -c`. Step-up MFA на SSH-команду в PTY.

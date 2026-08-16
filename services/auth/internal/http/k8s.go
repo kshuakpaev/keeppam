@@ -50,7 +50,7 @@ func (s *Server) handleK8sAccess(w http.ResponseWriter, r *http.Request) {
 		s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken),
 	)
 	if se, ok := isStepUpErr(err); ok {
-		s.writeStepUpChallenge(w, r, sess, se.Result, assetID)
+		s.writeStepUpChallenge(w, r, sess, se.Result, assetID, uuid.Nil)
 		return
 	}
 	if err != nil {

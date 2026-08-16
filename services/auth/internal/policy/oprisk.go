@@ -242,7 +242,7 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 	res.RiskScore = score
 	res.RiskFactors = factors
 	res.Operation = in.Operation
-	decideRisk(res, false, in.Operation)
+	decideRisk(res, in.StepUpVerified, in.Operation)
 	decision := "allow"
 	if res.DeniedByRisk {
 		decision = res.RiskAction
@@ -254,6 +254,11 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 		"score": res.RiskScore, "max_risk": res.MaxRisk, "action": res.RiskAction,
 		"factors": res.RiskFactors, "decision": decision, "denied_by_risk": res.DeniedByRisk,
 		"operation": in.Operation, "phase": "operation",
+	}
+	if inputs.UnusualAsset || inputs.SpreadBurst {
+		payload["ueba_baseline"] = inputs.UEBABaseline
+		payload["ueba_new_asset"] = inputs.UnusualAsset
+		payload["ueba_spread"] = inputs.SpreadBurst
 	}
 	if res.BindingID != nil {
 		payload["binding_id"] = res.BindingID.String()

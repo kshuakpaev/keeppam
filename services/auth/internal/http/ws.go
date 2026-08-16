@@ -19,6 +19,7 @@ import (
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
+	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
 )
 
@@ -103,7 +104,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ok = true
 	}
 	if !ok && ev.NeedsStepUp() {
-		s.writeStepUpChallenge(w, r, sess, ev, assetID)
+		s.writeStepUpChallenge(w, r, sess, ev, assetID, uuid.Nil)
 		return
 	}
 	if !ok {
@@ -569,10 +570,16 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 
 	bypass := rbac.HasPermission(authSess.Permissions, "users.write")
 	var injectMu sync.Mutex
-	opts := s.buildSSHSessionOpts(r.Context(), authSess.UserID, row.AssetID, id, authSess.Roles, bypass, row.TicketID, row.PolicySnapshot, func(p []byte) {
-		injectMu.Lock()
-		defer injectMu.Unlock()
-		_ = conn.WriteMessage(websocket.BinaryMessage, p)
+	opts := sshcmd.Deps{Policy: s.policy, Ops: s.ops, Sessions: s.sessionsvc, Audit: s.audit}.BuildOpts(r.Context(), sshcmd.Meta{
+		UserID: authSess.UserID, AssetID: row.AssetID, SessionID: id,
+		Username: authSess.Username, AssetName: row.AssetName, IP: s.clientIP(r),
+		Roles: authSess.Roles, Bypass: bypass, BreakGlass: row.BreakGlass,
+		TicketID: row.TicketID, Snap: row.PolicySnapshot,
+		Inject: func(p []byte) {
+			injectMu.Lock()
+			defer injectMu.Unlock()
+			_ = conn.WriteMessage(websocket.BinaryMessage, p)
+		},
 	})
 	bridge, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
 	if err != nil {

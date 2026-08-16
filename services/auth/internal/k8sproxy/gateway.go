@@ -22,6 +22,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/geoip"
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
@@ -35,8 +36,11 @@ type Gateway struct {
 	sessions *sessionsvc.Service
 	audit    *audit.Service
 	live     *sessionsvc.LiveHub
-	policy   *policy.Service
-	rolesOf  func(context.Context, uuid.UUID) []string
+	policy      *policy.Service
+	ops         *opapprove.Service
+	hasOpStepUp func(context.Context, uuid.UUID, uuid.UUID) bool
+	onNeedMFA   func(context.Context, sessionsvc.Session, policy.AccessResult) error
+	rolesOf     func(context.Context, uuid.UUID) []string
 	groupsOf func(context.Context, uuid.UUID) []string
 	trusted  []string
 
@@ -71,6 +75,15 @@ func New(addr, publicURL string, cert tls.Certificate, rdb *redis.Client, assets
 
 func (g *Gateway) SetPolicy(p *policy.Service) {
 	g.policy = p
+}
+
+func (g *Gateway) SetOps(ops *opapprove.Service) {
+	g.ops = ops
+}
+
+func (g *Gateway) SetOpStepUp(has func(context.Context, uuid.UUID, uuid.UUID) bool, onNeed func(context.Context, sessionsvc.Session, policy.AccessResult) error) {
+	g.hasOpStepUp = has
+	g.onNeedMFA = onNeed
 }
 
 func (g *Gateway) SetRoles(fn func(context.Context, uuid.UUID) []string) {
@@ -183,9 +196,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
 		return
 	}
-	if msg, deny := g.denyOpRisk(r.Context(), row, call, g.clientIP(r)); deny {
-		writeK8sStatus(w, http.StatusForbidden, "Forbidden", msg)
-		return
+	if ev, deny := g.denyOpRisk(r.Context(), row, call, g.clientIP(r)); deny {
+		if ev.NeedsStepUp() {
+			if g.waitOpStepUp(r.Context(), row, ev) {
+				// MFA completed; continue proxy
+			} else {
+				writeK8sStatus(w, http.StatusForbidden, "Forbidden", ev.RiskDenyMessage()+"; confirm MFA in KeepPAM")
+				return
+			}
+		} else {
+			writeK8sStatus(w, http.StatusForbidden, "Forbidden", ev.DenyMessage())
+			return
+		}
 	}
 	if NeedsNamespaceListFilter(row.K8sNamespaces, call) {
 		if row.Status == "pending" {
@@ -471,43 +493,48 @@ func (g *Gateway) denyHTTPACL(ctx context.Context, row sessionsvc.Session, metho
 		if err == nil {
 			d := policy.MatchAppObject(pack, method, path)
 			if !d.Allowed {
-				action := "session.app.denied"
-				evt := "app_denied"
 				if d.Code == "approval_required" {
-					action = "session.app.approval_required"
-					evt = "app_approval"
+					if msg, deny := g.holdAppObject(ctx, row, method, path, ip, d, pack.Name); deny {
+						return msg, true
+					}
+				} else {
+					payload := map[string]any{
+						"method": method, "path": path, "reason": d.Reason, "pack": pack.Name,
+						"object": d.Object, "action": d.Action, "code": d.Code,
+					}
+					_ = g.audit.Record(ctx, &row.UserID, "session.app.denied", "session", row.ID.String(), ip, "k8s", payload)
+					_ = g.sessions.AddEvent(ctx, row.ID, "app_denied", payload)
+					return d.Reason, true
 				}
-				payload := map[string]any{
-					"method": method, "path": path, "reason": d.Reason, "pack": pack.Name,
-					"object": d.Object, "action": d.Action, "code": d.Code,
-				}
-				_ = g.audit.Record(ctx, &row.UserID, action, "session", row.ID.String(), ip, "k8s", payload)
-				_ = g.sessions.AddEvent(ctx, row.ID, evt, payload)
-				return d.Reason, true
 			}
 		}
 	}
 	return "", false
 }
 
-func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call APICall, ip string) (string, bool) {
+func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call APICall, ip string) (policy.AccessResult, bool) {
 	if g == nil || g.policy == nil {
-		return "", false
+		return policy.AccessResult{OK: true}, false
 	}
 	op := policy.K8sOperation(call.Verb, call.Subresource)
 	if op == "" {
-		return "", false
+		return policy.AccessResult{OK: true}, false
 	}
 	var roles []string
 	if g.rolesOf != nil {
 		roles = g.rolesOf(ctx, row.UserID)
 	}
+	stepOK := g.hasOpStepUp != nil && g.hasOpStepUp(ctx, row.ID, row.UserID)
 	ev, err := g.policy.CheckOpRisk(ctx, policy.AccessCheck{
 		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
 		TicketID: row.TicketID, ClientIP: ip, Operation: op, Snapshot: row.PolicySnapshot,
+		StepUpVerified: stepOK,
 	})
 	if err != nil || ev.OK {
-		return "", false
+		return ev, false
+	}
+	if ev.NeedsStepUp() {
+		return ev, true
 	}
 	msg := ev.DenyMessage()
 	_ = g.audit.Record(ctx, &row.UserID, "session.k8s.denied", "session", row.ID.String(), ip, "k8s", map[string]any{
@@ -518,7 +545,7 @@ func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call A
 		"verb": call.Verb, "resource": call.Resource, "namespace": call.Namespace,
 		"reason": msg, "operation": op, "risk_score": ev.RiskScore,
 	})
-	return msg, true
+	return ev, true
 }
 
 func writeK8sStatus(w http.ResponseWriter, code int, reason, msg string) {
@@ -559,4 +586,81 @@ func DefaultPublicURL(corsOrigin, addr string) string {
 		port = strings.TrimPrefix(addr, ":")
 	}
 	return fmt.Sprintf("https://%s:%s", host, port)
+}
+
+func (g *Gateway) holdAppObject(ctx context.Context, row sessionsvc.Session, method, path, ip string, d policy.AppObjectDecision, packName string) (string, bool) {
+	if g.ops == nil {
+		return d.Reason, true
+	}
+	hr := g.ops.Hold(ctx, opapprove.HoldInput{
+		SessionID:  row.ID,
+		UserID:     row.UserID,
+		AssetID:    row.AssetID,
+		Username:   row.Username,
+		AssetName:  row.AssetName,
+		Method:     method,
+		Path:       path,
+		Object:     d.Object,
+		PackName:   packName,
+		Channel:    "k8s",
+		IP:         ip,
+		BreakGlass: row.BreakGlass,
+		Snapshot:   row.PolicySnapshot,
+	})
+	payload := map[string]any{
+		"method": method, "path": path, "reason": hr.Reason, "pack": packName,
+		"object": d.Object, "action": d.Action, "code": hr.Code,
+	}
+	if hr.Rec.ID != uuid.Nil {
+		payload["approval_id"] = hr.Rec.ID.String()
+	}
+	if hr.Allow {
+		if hr.Rec.ID != uuid.Nil {
+			payload["code"] = "approved"
+			payload["reason"] = "app object approved: " + d.Object
+			_ = g.sessions.AddEvent(ctx, row.ID, "app_approved", payload)
+		}
+		return "", false
+	}
+	evt := "app_denied"
+	if hr.Code == "approval_timeout" || hr.Code == "approval_required" {
+		evt = "app_approval"
+	}
+	if payload["reason"] == "" || payload["reason"] == nil {
+		payload["reason"] = d.Reason
+	}
+	_ = g.sessions.AddEvent(ctx, row.ID, evt, payload)
+	reason := hr.Reason
+	if reason == "" {
+		reason = d.Reason
+	}
+	return reason, true
+}
+
+func (g *Gateway) waitOpStepUp(ctx context.Context, row sessionsvc.Session, ev policy.AccessResult) bool {
+	if g.hasOpStepUp != nil && g.hasOpStepUp(ctx, row.ID, row.UserID) {
+		return true
+	}
+	if g.onNeedMFA != nil {
+		_ = g.onNeedMFA(ctx, row, ev)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	ticker := time.NewTicker(400 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if g.hasOpStepUp != nil && g.hasOpStepUp(ctx, row.ID, row.UserID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			if g.hasOpStepUp != nil {
+				return g.hasOpStepUp(context.Background(), row.ID, row.UserID)
+			}
+			return false
+		case <-ticker.C:
+		}
+	}
 }

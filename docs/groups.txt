@@ -6,13 +6,21 @@
 
 | Таблица | Смысл |
 |---------|--------|
-| `groups` | имя, описание |
-| `user_group_members` | пользователь ↔ группа |
+| `groups` | имя, описание, `parent_id` |
+| `user_group_members` | пользователь ↔ группа (прямое членство) |
 | `asset_access_bindings.group_id` | ACL на группу (ровно один из user/role/group) |
 
-Миграция `052`. Seed: `dba`, `linux-ops` (без участников).
+Миграция `052`, вложенность — `058`. Seed: `dba`, `linux-ops` (корни, без участников).
 
-`Evaluate`: совпадение, если пользователь состоит в группе binding. Остальное (время, CIDR, Policy overlay, риск, OPA) без изменений.
+`Evaluate`: совпадение, если пользователь состоит в группе binding **или в любом её потомке**. Член родителя не получает ACL потомка. Остальное (время, CIDR, Policy overlay, риск, OPA) без изменений.
+
+Карточка пользователя хранит только прямое членство (чекбоксы). Родительские группы в JSON `groups` / `group_ids` не появляются.
+
+## Иерархия
+
+До 8 уровней. Цикл и «группа — свой родитель» — отказ. Удаление родителя: `parent_id` детей `SET NULL` (становятся корнями), ACL на удалённую группу снимаются (`ON DELETE CASCADE`).
+
+OPA `user.groups` и k8s `Impersonate-Group` `keeppam:group:{имя}` включают имена предков.
 
 ## API
 
@@ -22,26 +30,26 @@
 |-------|------|
 | GET | `/api/v1/admin/groups` |
 | GET | `/api/v1/admin/groups/{id}` (+ `members`) |
-| POST | `/api/v1/admin/groups` `{ name, description, member_ids }` |
-| PUT | `/api/v1/admin/groups/{id}` |
-| DELETE | `/api/v1/admin/groups/{id}` — ACL на группу снимаются (`ON DELETE CASCADE`) |
+| POST | `/api/v1/admin/groups` `{ name, description, parent_id?, member_ids }` |
+| PUT | `/api/v1/admin/groups/{id}` — `parent_id: ""` снимает родителя |
+| DELETE | `/api/v1/admin/groups/{id}` — ACL на группу снимаются; дети становятся корнями |
 
-`PATCH /users/{id}`: `group_ids`. Пользователь в JSON: `groups` (имена) и `group_ids`.
+`PATCH /users/{id}`: `group_ids` — прямое членство. Пользователь в JSON: `groups` (имена) и `group_ids`.
 
 ACL: `POST .../acl` с `group_id` вместо `user_id`/`role_id`.
 
 ## SAML
 
-Если имя IdP-группы совпадает с PAM-группой (`dba`=`dba`), при логине участник **добавляется**. Ручные членства не снимаются. Map IdP→роль по-прежнему отдельно (`docs/saml.txt`).
+Если имя IdP-группы совпадает с PAM-группой (`dba`=`dba`), при логине участник **добавляется** в эту группу (не в предков). Ручные членства не снимаются. Снятие — inbound SCIM PATCH members (`docs/scim.txt`). Map IdP→роль по-прежнему отдельно (`docs/saml.txt`).
 
 ## K8s impersonate
 
-К `keeppam:role:{роль}` добавляется `keeppam:group:{имя}`.
+К `keeppam:role:{роль}` добавляется `keeppam:group:{имя}` для прямой группы и предков.
 
 ## UI
 
-Меню **Группы**. Карточка пользователя — чекбоксы. ACL актива — тип «Группа».
+Меню **Группы** — колонка «Родитель». Карточка пользователя — чекбоксы прямого членства. ACL актива — тип «Группа».
 
 ## Вне scope
 
-Вложенные группы. SCIM. Автоудаление членства, если IdP-группа пропала. Группа как роль платформы.
+Автоудаление членства без SCIM, если IdP-группа пропала при SAML-логине (это делает SCIM PATCH members). Группа как роль платформы. Более специфичный потомок не перебивает ACL родителя — оба могут совпасть, побеждает порядок Evaluate (как у пересекающихся tag ACL).

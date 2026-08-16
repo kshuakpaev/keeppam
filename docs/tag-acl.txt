@@ -1,12 +1,29 @@
 # KeepPAM: ACL на теги активов
 
-WHAT без строки на каждый хост: WHO (пользователь / роль / группа) + набор тегов. Актив подходит, если у него есть **все** теги селектора (`prod,linux` ≠ только `prod`).
+WHAT без строки на каждый хост: WHO (пользователь / роль / группа) + набор тегов.
+
+| `asset_match_mode` | Актив подходит, если |
+|--------------------|----------------------|
+| `all` (default) | есть **все** теги селектора (`prod,linux` ≠ только `prod`) |
+| `any` | есть **хотя бы один** тег (`prod,linux` = `prod` или `linux`) |
 
 Прямой ACL на карточке актива **специфичнее** и выбирается первым, если WHO совпал.
 
+## Иерархия
+
+Тег — путь через `/`: `prod/linux/web`. Потомок покрывает предка: актив с `prod/linux` совпадает с селектором `prod` и `prod/linux`, но не с `prod/linux/web`. Предок не покрывает потомка.
+
+`prod/linux` — **один** тег, не два корня `prod` и `linux`. Режим `all` с селектором `prod,linux` по-прежнему требует оба независимых тега (или их потомков).
+
+`required_tags` ABAC — та же семантика: пользователь с `prod/sre` покрывает требование `prod`.
+
+OPA `user.tags` / `asset.tags` получают развёрнутых предков (`prod/linux` → ещё `prod`).
+
+Нормализация: lowercase, схлопывание `//`, обрезка `/`, максимум 8 уровней. `..` отбрасывается.
+
 ## Модель
 
-`asset_access_bindings.asset_id` может быть NULL. Тогда `asset_match_tags` непустой (CHECK). Миграция `053`.
+`asset_access_bindings.asset_id` может быть NULL. Тогда `asset_match_tags` непустой (CHECK). Миграция `053`. Режим — `asset_match_mode` (`all`/`any`), миграция `056`.
 
 `required_tags` по-прежнему ABAC (теги должны быть и у пользователя, и у актива). Это не селектор WHAT.
 
@@ -17,17 +34,19 @@ WHAT без строки на каждый хост: WHO (пользовател
 | Метод | Путь |
 |-------|------|
 | GET | `/api/v1/admin/acl/tags` |
-| POST | `/api/v1/admin/acl/tags` `{ user_id\|role_id\|group_id, asset_match_tags, access_policy_id?, duration_minutes? }` |
+| POST | `/api/v1/admin/acl/tags` `{ user_id\|role_id\|group_id, asset_match_tags, asset_match_mode?, access_policy_id?, duration_minutes? }` |
+| GET | `/api/v1/admin/assets/{id}/acl/{bindingId}` — сырой binding без overlay Policy |
+| PUT | `/api/v1/admin/assets/{id}/acl/{bindingId}` — теги / mode / Policy / TTL / ограничения; WHO нельзя |
 | DELETE | `/api/v1/admin/assets/{id}/acl/{bindingId}` (id актива для tag-binding не проверяется) |
 
-`GET /assets/{id}/acl` возвращает и прямые, и подходящие tag ACL (`inherited: true`, `asset_match_tags`).
+`GET /assets/{id}/acl` возвращает и прямые, и подходящие tag ACL (`inherited: true`, `asset_match_tags`, `asset_match_mode`).
 
 Остальные поля ACL (время, JEA, max_risk) и overlay Policy — как у обычного binding.
 
 ## UI
 
-**JEA → Теги активов**. На карточке актива унаследованные строки без кнопки «Отозвать».
+**JEA → Теги активов**. «Изменить» заполняет форму из сырого GET (WHO disabled). На карточке актива унаследованные строки без кнопок — правка только здесь.
 
 ## Вне scope
 
-OR по тегам. Вложенные теги. Автосоздание ACL при появлении нового актива. Редактирование binding (revoke + create).
+Отдельный каталог узлов тегов (parent_id). Автосоздание прямого ACL при появлении нового актива (tag ACL и так покрывает новые хосты с подходящими тегами). Более специфичный путь не перебивает более широкий tag ACL — порядок как раньше (created_at). Вложенные группы — `docs/groups.txt`.

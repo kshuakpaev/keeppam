@@ -1,5 +1,6 @@
 import Guacamole from "guacamole-common-js";
 import { useEffect, useRef, useState } from "react";
+import { SessionStepUpHost } from "../components/SessionStepUpHost";
 
 type Props = {
   id: string;
@@ -179,6 +180,7 @@ export function DesktopSession({ id, title, visible, onClose }: Props) {
           borderTop: "1px solid var(--border, #2a3544)",
         }}
       />
+      <SessionStepUpHost sessionId={id} />
     </div>
   );
 }

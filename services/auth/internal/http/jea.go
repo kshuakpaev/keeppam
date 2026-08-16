@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/policy"
-	"github.com/keeppam/auth/internal/sshproxy"
 )
 
 func (s *Server) handleCommandPreview(w http.ResponseWriter, r *http.Request) {
@@ -410,49 +409,4 @@ func (s *Server) resolveSQLPack(ctx context.Context, userID, assetID uuid.UUID, 
 		return policy.SQLPack{}, false
 	}
 	return pack, true
-}
-
-func (s *Server) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, snap *policy.Snapshot, inject func([]byte)) sshproxy.SessionOpts {
-	opts := sshproxy.SessionOpts{LocalInject: inject}
-	var pack policy.CommandPack
-	hasPack := false
-	maxRisk := 0
-	check := policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, Snapshot: snap,
-	}
-	if snap != nil {
-		maxRisk = snap.MaxRisk
-		if snap.CommandPolicyPackID != nil {
-			if p, perr := s.policy.GetCommandPack(ctx, *snap.CommandPolicyPackID); perr == nil {
-				pack, hasPack = p, true
-			}
-		}
-	} else {
-		ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
-			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
-		})
-		if err == nil && ev.OK {
-			maxRisk = ev.MaxRisk
-			if ev.CommandPolicyPackID != nil {
-				if p, perr := s.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); perr == nil {
-					pack, hasPack = p, true
-				}
-			}
-		}
-	}
-	if !hasPack && maxRisk <= 0 {
-		return opts
-	}
-	opts.QuietEcho = true
-	opts.Guard = sshproxy.NewCommandGuard(func(line string) bool {
-		v := s.policy.EvaluateSSHLine(ctx, check, pack, hasPack, line)
-		return v.Allow
-	})
-	opts.OnDenied = func(line string) {
-		bg := context.Background()
-		v := s.policy.EvaluateSSHLine(bg, check, pack, hasPack, line)
-		_ = s.audit.Record(bg, &userID, v.AuditAction(), "session", sessionID.String(), "", "ssh", v.Payload(line))
-		_ = s.sessionsvc.AddEvent(bg, sessionID, v.EventType(), v.Payload(line))
-	}
-	return opts
 }

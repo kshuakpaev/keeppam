@@ -11,7 +11,7 @@ SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисклю
 5. `GET|POST /api/v1/auth/saml/slo` — SP-initiated SLO (local logout всегда; редирект на IdP если в metadata есть SingleLogoutService).
 6. Group→role: `saml_group_attr` + `saml_group_role_map` (не создаёт роли; `admin` не снимается).
    Имя IdP-группы = имя PAM-группы → членство добавляется (`docs/groups.txt`).
-7. Login: кнопка «Войти через SAML SSO»; «Выйти» у `auth_source=saml` идёт на `/saml/slo`.
+7. Login: кнопка на каждый готовый IdP (`docs/saml-idps.txt`).
 
 При первом сохранении `mode=saml` генерируется RSA SP key (можно rotate).
 
@@ -30,7 +30,7 @@ SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисклю
 ## Вне scope
 
 - Assertion encryption policy UI
-- Несколько IdP одновременно
+- Несколько IdP одновременно — сделано, `docs/saml-idps.txt`
 - IdP-initiated SLO (LogoutRequest от IdP)
 - Создание ролей из групп
-- Автоснятие PAM-группы, если IdP-группа пропала
+- Автоснятие PAM-группы, если IdP-группа пропала (без SCIM; inbound SCIM — `docs/scim.txt`)

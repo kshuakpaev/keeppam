@@ -74,7 +74,29 @@ func EventSnippet(eventType string, payload map[string]any) string {
 		if line != "" {
 			return line
 		}
-	case "command_denied", "dlp", "risk", "http_denied", "app_denied", "app_approval":
+	case "app_approved":
+		if m := payloadString(payload, "method"); m != "" {
+			path := payloadString(payload, "path")
+			line := strings.TrimSpace(m + " " + path)
+			if o := payloadString(payload, "object"); o != "" {
+				return "APPROVED " + line + " (" + o + ")"
+			}
+			if line != "" {
+				return "APPROVED " + line
+			}
+		}
+	case "command", "command_approved":
+		if s := payloadString(payload, "command"); s != "" {
+			if eventType == "command_approved" {
+				return "APPROVED " + s
+			}
+			return s
+		}
+	case "command_approval":
+		if s := payloadString(payload, "command"); s != "" {
+			return "WAITING " + s
+		}
+	case "command_denied", "dlp", "risk", "http_denied", "app_denied", "app_approval", "egress_denied":
 		if s := payloadString(payload, "command"); s != "" {
 			return "DENIED " + s
 		}
@@ -91,9 +113,28 @@ func EventSnippet(eventType string, payload map[string]any) string {
 				return "DENIED " + line
 			}
 		}
+		if h := payloadString(payload, "host"); h != "" {
+			line := h
+			if p := payloadString(payload, "port"); p != "" {
+				line += ":" + p
+			}
+			if r := payloadString(payload, "reason"); r != "" {
+				return "DENIED " + line + " (" + r + ")"
+			}
+			return "DENIED " + line
+		}
 		if r := payloadString(payload, "reason"); r != "" {
 			return "DENIED " + r
 		}
+	case "egress":
+		h := payloadString(payload, "host")
+		if h == "" {
+			break
+		}
+		if p := payloadString(payload, "port"); p != "" {
+			return h + ":" + p
+		}
+		return h
 	}
 	if s := payloadString(payload, "error"); s != "" {
 		return eventType + ": " + s
@@ -163,7 +204,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk','http_denied','app_denied','app_approval')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))

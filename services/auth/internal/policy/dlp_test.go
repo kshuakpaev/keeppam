@@ -27,8 +27,11 @@ func TestSSHChannelDLP(t *testing.T) {
 	if _, deny := SSHChannelDLP("session"); deny {
 		t.Fatal("session")
 	}
-	if _, deny := SSHChannelDLP("direct-tcpip"); !deny {
-		t.Fatal("direct-tcpip")
+	if _, deny := SSHChannelDLP("direct-tcpip"); deny {
+		t.Fatal("direct-tcpip is gated by allowed_egress, not DLP")
+	}
+	if _, deny := SSHChannelDLP("forwarded-tcpip"); !deny {
+		t.Fatal("forwarded-tcpip")
 	}
 	if _, deny := SSHChannelDLP("x11"); !deny {
 		t.Fatal("x11")

@@ -12,7 +12,7 @@ export function GroupsPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", member_ids: [] as string[] });
+  const [form, setForm] = useState({ name: "", description: "", parent_id: "", member_ids: [] as string[] });
 
   async function load() {
     setError("");
@@ -32,7 +32,7 @@ export function GroupsPage() {
 
   function startCreate() {
     setEditId(null);
-    setForm({ name: "", description: "", member_ids: [] });
+    setForm({ name: "", description: "", parent_id: "", member_ids: [] });
   }
 
   async function startEdit(id: string) {
@@ -43,6 +43,7 @@ export function GroupsPage() {
       setForm({
         name: g.name,
         description: g.description,
+        parent_id: g.parent_id || "",
         member_ids: (g.members || []).map((m) => m.id),
       });
     } catch (err) {
@@ -81,7 +82,7 @@ export function GroupsPage() {
   }
 
   async function onDelete(id: string) {
-    if (!canWrite || !confirm("Удалить группу? ACL на эту группу снимутся.")) return;
+    if (!canWrite || !confirm("Удалить группу? ACL на эту группу снимутся. Дочерние станут корневыми.")) return;
     setBusy(true);
     setError("");
     try {
@@ -104,7 +105,7 @@ export function GroupsPage() {
       <div className="toolbar">
         <div>
           <h1>Группы</h1>
-          <p className="muted">WHO на ACL: не путать с ролями (права платформы)</p>
+          <p className="muted">WHO на ACL. Дочерняя группа наследует ACL родителя (как тег prod/linux).</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -115,6 +116,7 @@ export function GroupsPage() {
             <thead>
               <tr>
                 <th>Имя</th>
+                <th>Родитель</th>
                 <th>Описание</th>
                 <th>Участники</th>
                 <th />
@@ -124,6 +126,7 @@ export function GroupsPage() {
               {groups.map((g) => (
                 <tr key={g.id}>
                   <td className="mono">{g.name}</td>
+                  <td className="mono">{g.parent_name || "—"}</td>
                   <td>{g.description || "—"}</td>
                   <td>{g.member_count}</td>
                   <td>
@@ -158,6 +161,20 @@ export function GroupsPage() {
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
+            <label>Родитель (опц.)</label>
+            <select
+              value={form.parent_id}
+              onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
+            >
+              <option value="">— корень</option>
+              {groups
+                .filter((g) => g.id !== editId)
+                .map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.parent_name ? `${g.parent_name} / ${g.name}` : g.name}
+                  </option>
+                ))}
+            </select>
             <label>Участники</label>
             <div style={{ maxHeight: 240, overflow: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
               {users.map((u) => (

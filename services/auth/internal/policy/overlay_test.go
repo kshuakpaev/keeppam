@@ -21,6 +21,7 @@ func TestOverlayEmptyBindingTakesPolicy(t *testing.T) {
 		AllowedCountries:    []string{"LAN"},
 		AllowedDevices:      []string{"WEBAUTHN"},
 		AllowedNamespaces:   []string{"prod"},
+		AllowedEgress:       []string{"10.1.2.0/24:5432"},
 		CommandPolicyPackID: &pack,
 		MaxRisk:             40,
 		RiskAction:          "require_approval",

@@ -45,6 +45,7 @@ type AccessResult struct {
 	AppObjectPackID     *uuid.UUID
 	AccessPolicyID      *uuid.UUID
 	AllowedNamespaces   []string
+	AllowedEgress       []string
 	RiskScore           int
 	MaxRisk             int
 	RiskAction          string
@@ -52,6 +53,7 @@ type AccessResult struct {
 	Operation           string
 	TagACL              bool
 	MatchTags           []string
+	MatchMode           string
 }
 
 func (s *Service) ListCommandPacks(ctx context.Context) ([]CommandPack, error) {
@@ -259,7 +261,8 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	if err != nil {
 		return AccessResult{}, err
 	}
-	userTagSet := toSet(userTags)
+	userTagSet := toSet(expandTagAncestors(userTags))
+	assetTags = expandTagAncestors(assetTags)
 	assetTagSet := toSet(assetTags)
 	ticket := strings.TrimSpace(in.TicketID)
 
@@ -268,22 +271,22 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		SELECT b.id, b.user_id, b.role_id, b.group_id, b.time_start, b.time_end, b.days_of_week, b.expires_at,
 			b.required_tags, b.require_ticket, COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
 			COALESCE(b.allowed_countries,'{}'), COALESCE(b.allowed_devices,'{}'),
-			COALESCE(b.allowed_namespaces,'{}'),
+			COALESCE(b.allowed_namespaces,'{}'), COALESCE(b.allowed_egress,'{}'),
 			b.command_policy_pack_id, b.sql_policy_pack_id, b.http_policy_pack_id, b.app_object_pack_id, r.name,
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'),
 			b.access_policy_id,
 			p.time_start, p.time_end, COALESCE(p.days_of_week, 127),
 			COALESCE(p.required_tags,'{}'), COALESCE(p.require_ticket,false), COALESCE(p.require_reason,false),
 			COALESCE(p.allowed_cidrs,'{}'), COALESCE(p.allowed_countries,'{}'), COALESCE(p.allowed_devices,'{}'),
-			COALESCE(p.allowed_namespaces,'{}'),
+			COALESCE(p.allowed_namespaces,'{}'), COALESCE(p.allowed_egress,'{}'),
 			p.command_policy_pack_id, p.sql_policy_pack_id, p.http_policy_pack_id, p.app_object_pack_id,
 			COALESCE(p.max_risk,0), COALESCE(p.risk_action,'deny'),
-			b.asset_id, COALESCE(b.asset_match_tags,'{}')
+			b.asset_id, COALESCE(b.asset_match_tags,'{}'), COALESCE(b.asset_match_mode,'all')
 		FROM asset_access_bindings b
 		LEFT JOIN roles r ON r.id = b.role_id
 		LEFT JOIN access_policies p ON p.id = b.access_policy_id
 		WHERE (b.asset_id=$1
-		    OR (b.asset_id IS NULL AND cardinality(b.asset_match_tags)>0 AND $3::text[] @> b.asset_match_tags))
+		    OR `+tagACLSQL("$3")+`)
 		  AND (b.expires_at IS NULL OR b.expires_at > $2)
 		ORDER BY (b.asset_id IS NULL), b.expires_at NULLS LAST, b.created_at DESC`, in.AssetID, now.UTC(), assetTags)
 	if err != nil {
@@ -307,38 +310,39 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var expires *time.Time
 		var days int
 		var roleName *string
-		var reqTags, cidrs, countries, devices, namespaces []string
+		var reqTags, cidrs, countries, devices, namespaces, egress []string
 		var requireTicket, requireReason bool
 		var maxRisk int
 		var riskAction string
 		var pStart, pEnd *time.Time
 		var pDays, pMax int
-		var pTags, pCidrs, pCountries, pDevices, pNS []string
+		var pTags, pCidrs, pCountries, pDevices, pNS, pEgress []string
 		var pTicket, pReason bool
 		var pCmd, pSQL, pHTTP, pApp *uuid.UUID
 		var pAction string
 		var bindAsset *uuid.UUID
 		var matchTags []string
-		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &polID,
-			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &bindAsset, &matchTags); err != nil {
+		var matchMode string
+		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &egress, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &polID,
+			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pEgress, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &bindAsset, &matchTags, &matchMode); err != nil {
 			return AccessResult{}, err
 		}
 		c := overlayConstraints(aclConstraints{
 			TimeStart: tStart, TimeEnd: tEnd, DaysOfWeek: days,
 			RequiredTags: reqTags, RequireTicket: requireTicket, RequireReason: requireReason,
-			AllowedCIDRs: cidrs, AllowedCountries: countries, AllowedDevices: devices, AllowedNamespaces: namespaces,
+			AllowedCIDRs: cidrs, AllowedCountries: countries, AllowedDevices: devices, AllowedNamespaces: namespaces, AllowedEgress: egress,
 			CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, AppObjectPackID: appPackID,
 			MaxRisk: maxRisk, RiskAction: riskAction,
 		}, aclConstraints{
 			TimeStart: pStart, TimeEnd: pEnd, DaysOfWeek: pDays,
 			RequiredTags: pTags, RequireTicket: pTicket, RequireReason: pReason,
-			AllowedCIDRs: pCidrs, AllowedCountries: pCountries, AllowedDevices: pDevices, AllowedNamespaces: pNS,
+			AllowedCIDRs: pCidrs, AllowedCountries: pCountries, AllowedDevices: pDevices, AllowedNamespaces: pNS, AllowedEgress: pEgress,
 			CommandPolicyPackID: pCmd, SQLPolicyPackID: pSQL, HTTPPolicyPackID: pHTTP, AppObjectPackID: pApp,
 			MaxRisk: pMax, RiskAction: pAction,
 		}, polID != nil)
 		tStart, tEnd, days = c.TimeStart, c.TimeEnd, c.DaysOfWeek
 		reqTags, requireTicket, requireReason = c.RequiredTags, c.RequireTicket, c.RequireReason
-		cidrs, countries, devices, namespaces = c.AllowedCIDRs, c.AllowedCountries, c.AllowedDevices, c.AllowedNamespaces
+		cidrs, countries, devices, namespaces, egress = c.AllowedCIDRs, c.AllowedCountries, c.AllowedDevices, c.AllowedNamespaces, c.AllowedEgress
 		packID, sqlPackID, httpPackID, appPackID = c.CommandPolicyPackID, c.SQLPolicyPackID, c.HTTPPolicyPackID, c.AppObjectPackID
 		maxRisk, riskAction = c.MaxRisk, c.RiskAction
 		match := matchWHO(in.UserID, uid, rid, gid, roleName, roleSet, groupSet)
@@ -381,8 +385,9 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			OK: true, BindingID: &idCopy, GroupID: gid, CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, AppObjectPackID: appPackID,
 			AccessPolicyID:    polID,
 			AllowedNamespaces: normalizeNamespaces(namespaces),
+			AllowedEgress:     egress,
 			MaxRisk:           maxRisk, RiskAction: riskAction,
-			TagACL: bindAsset == nil, MatchTags: normalizeTags(matchTags),
+			TagACL: bindAsset == nil, MatchTags: normalizeTags(matchTags), MatchMode: matchMode,
 		}
 		s.applyRisk(ctx, in, &res, expires)
 		if res.OK {

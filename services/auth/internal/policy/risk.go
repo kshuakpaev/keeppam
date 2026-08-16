@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/keeppam/auth/internal/ueba"
 )
 
 var ErrStepUpRequired = errors.New("mfa_required")
@@ -32,6 +34,9 @@ type RiskInputs struct {
 	ConcurrentActive int
 	AnomBrute        bool
 	AnomMulti        bool
+	UnusualAsset     bool
+	SpreadBurst      bool
+	UEBABaseline     int
 }
 
 func computeRisk(in RiskInputs) (score int, factors []string) {
@@ -71,6 +76,14 @@ func computeRisk(in RiskInputs) (score int, factors []string) {
 		score += 15
 		factors = append(factors, "anom_multi")
 	}
+	if in.UnusualAsset {
+		score += ueba.NewAssetPoints
+		factors = append(factors, ueba.FactorNewAsset)
+	}
+	if in.SpreadBurst {
+		score += ueba.SpreadPoints
+		factors = append(factors, ueba.FactorSpread)
+	}
 	if score > 100 {
 		score = 100
 	}
@@ -91,15 +104,22 @@ func NormalizeRiskAction(s string) (string, error) {
 	return s, nil
 }
 
+func IsSSHOperation(op string) bool {
+	return strings.HasPrefix(strings.TrimSpace(op), "ssh.")
+}
+
 func (r AccessResult) NeedsStepUp() bool {
-	return r.DeniedByRisk && r.RiskAction == "require_mfa" && r.Operation == ""
+	if !r.DeniedByRisk || r.RiskAction != "require_mfa" {
+		return false
+	}
+	return !IsSSHOperation(r.Operation)
 }
 
 func decideRisk(res *AccessResult, stepUpVerified bool, operation string) {
 	if res.MaxRisk <= 0 || res.RiskScore <= res.MaxRisk {
 		return
 	}
-	if res.RiskAction == "require_mfa" && stepUpVerified && operation == "" {
+	if res.RiskAction == "require_mfa" && stepUpVerified && !IsSSHOperation(operation) {
 		return
 	}
 	res.OK = false
@@ -107,7 +127,7 @@ func decideRisk(res *AccessResult, stepUpVerified bool, operation string) {
 	if res.RiskAction == "" {
 		res.RiskAction = "deny"
 	}
-	if operation != "" && res.RiskAction == "require_mfa" {
+	if IsSSHOperation(operation) && res.RiskAction == "require_mfa" {
 		res.RiskAction = "deny"
 	}
 }
@@ -124,7 +144,7 @@ func (r AccessResult) RiskDenyMessage() string {
 	if r.RiskAction == "require_approval" && r.Operation != "" {
 		msg += "; command requires JIT approval"
 	}
-	if r.RiskAction == "require_mfa" && r.Operation == "" {
+	if r.RiskAction == "require_mfa" {
 		msg += "; complete step-up MFA"
 	}
 	return msg
@@ -164,6 +184,9 @@ func (r AccessResult) FillDenyPayload(payload map[string]any) {
 }
 
 func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID, now time.Time) (RiskInputs, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
 	in := RiskInputs{Now: now}
 	if bg, err := s.HasActiveBreakGlass(ctx, userID, assetID); err == nil {
 		in.BreakGlass = bg
@@ -179,12 +202,29 @@ func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID,
 	_ = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM sessions
 		WHERE user_id=$1 AND status IN ('pending','active')`, userID).Scan(&in.ConcurrentActive)
-	var nAssets int
+	baselineFrom := ueba.BaselineFrom(now)
+	var n24 int
+	var seen24, seen30 bool
 	_ = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT asset_id) FROM sessions
-		WHERE user_id=$1 AND created_at >= $2`, userID, from).Scan(&nAssets)
-	in.AnomMulti = nAssets >= 4
+		SELECT
+			COUNT(DISTINCT asset_id) FILTER (WHERE created_at >= $2),
+			COUNT(DISTINCT asset_id),
+			COALESCE(BOOL_OR(asset_id = $3 AND created_at >= $2), false),
+			COALESCE(BOOL_OR(asset_id = $3), false)
+		FROM sessions
+		WHERE user_id=$1 AND created_at >= $4 AND `+ueba.SessionSQL,
+		userID, from, assetID, baselineFrom).Scan(&n24, &in.UEBABaseline, &seen24, &seen30)
+	if assetID == uuid.Nil {
+		seen24, seen30 = false, false
+	}
+	recent := n24
+	if assetID != uuid.Nil && !seen24 {
+		recent++
+	}
+	in.AnomMulti = recent >= 4
 	in.AnomBrute = in.FailedLogins24h >= 8
+	in.UnusualAsset = ueba.NewAsset(in.UEBABaseline, seen30)
+	in.SpreadBurst = ueba.Spread(in.UEBABaseline, recent)
 	return in, nil
 }
 
@@ -208,6 +248,11 @@ func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResu
 	payload := map[string]any{
 		"score": res.RiskScore, "max_risk": res.MaxRisk, "action": res.RiskAction,
 		"factors": res.RiskFactors, "decision": decision, "denied_by_risk": res.DeniedByRisk,
+	}
+	if inputs.UnusualAsset || inputs.SpreadBurst {
+		payload["ueba_baseline"] = inputs.UEBABaseline
+		payload["ueba_new_asset"] = inputs.UnusualAsset
+		payload["ueba_spread"] = inputs.SpreadBurst
 	}
 	if res.BindingID != nil {
 		payload["binding_id"] = res.BindingID.String()

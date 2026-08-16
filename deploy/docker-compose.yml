@@ -95,6 +95,7 @@ services:
       KEEPPAM_ISO_IMAGE: "keeppam-iso-browser:local"
       KEEPPAM_ISO_NETWORK: "deploy_default"
       KEEPPAM_ISO_DOCKER_SOCK: "/var/run/docker.sock"
+      KEEPPAM_ISO_PROXY_BASE: "http://api:8080"
       # GeoIP ABAC (docs/geoip.txt): demo MMDB; prod — GeoLite2-Country.mmdb
       KEEPPAM_GEOIP_DB: "/var/lib/keeppam/geoip/country-demo.mmdb"
       KEEPPAM_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32"

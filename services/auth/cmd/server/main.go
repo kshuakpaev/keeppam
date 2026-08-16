@@ -18,6 +18,7 @@ import (
 	"github.com/keeppam/auth/internal/attacksim"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/castindex"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/crypto"
@@ -33,8 +34,10 @@ import (
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
+	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
@@ -146,6 +149,7 @@ func main() {
 	notifySvc := notify.New(db, auditSvc, env)
 	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
 	usersSvc := users.New(db, auditSvc)
+	scimSvc := scim.New(db, usersSvc, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
 	sshCASvc := sshca.New(db, env, auditSvc)
 	assetsSvc.SetSSHCA(sshCASvc)
@@ -167,6 +171,7 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	castIdx := castindex.New(sessSvc, recStore)
 	live := sessionsvc.NewLiveHub(sessions.Redis())
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
@@ -174,10 +179,16 @@ func main() {
 	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
+	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
+	opsSvc.OnCreated = func(ctx context.Context, rec opapprove.Approval) {
+		notifySvc.OnOpApproval(ctx, rec)
+	}
 	var k8sGw *k8sproxy.Gateway
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
+		opsSvc.ExpireSession(ctx, id)
+		authSvc.ClearOpStepUp(ctx, id)
 		if protocol == "postgres" || protocol == "mysql" {
 			dbEphSvc.Drop(ctx, id)
 		}
@@ -194,6 +205,9 @@ func main() {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
 			}
+		}
+		if protocol == "ssh" {
+			castIdx.IndexAsync(id)
 		}
 	})
 	ensureEph := func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (assets.TargetCreds, string, error) {
@@ -222,8 +236,12 @@ func main() {
 				ev, err := policySvc.CheckOpRisk(ctx, policy.AccessCheck{
 					UserID: row.UserID, AssetID: row.AssetID, TicketID: row.TicketID,
 					ClientIP: row.ClientIP, Operation: policy.SQLOperation(stmt), Snapshot: row.PolicySnapshot,
+					StepUpVerified: authSvc.HasOpStepUp(ctx, sessionID, row.UserID),
 				})
 				if err == nil && !ev.OK {
+					if ev.NeedsStepUp() {
+						return false, ev.RiskDenyMessage() + "; confirm MFA in web SQL console"
+					}
 					return false, ev.DenyMessage()
 				}
 				return true, ""
@@ -266,6 +284,24 @@ func main() {
 			} else {
 				k8sGw = k8sproxy.New(cfg.K8sAPIAddr, pub, cert, sessions.Redis(), assetsSvc, sessSvc, auditSvc, live)
 				k8sGw.SetPolicy(policySvc)
+				k8sGw.SetOps(opsSvc)
+				k8sGw.SetOpStepUp(authSvc.HasOpStepUp, func(ctx context.Context, row sessionsvc.Session, ev policy.AccessResult) error {
+					if p, ok := authSvc.GetOpStepUpPending(ctx, row.ID); ok && p.ChallengeToken != "" {
+						return nil
+					}
+					tok, methods, err := authSvc.BeginStepUp(ctx, row.UserID, row.Username, row.AssetID, row.ID)
+					if err != nil {
+						return err
+					}
+					factors := ev.RiskFactors
+					if factors == nil {
+						factors = []string{}
+					}
+					return authSvc.PutOpStepUpPending(ctx, row.ID, session.OpStepUpPending{
+						ChallengeToken: tok, TOTP: methods.TOTP, WebAuthn: methods.WebAuthn,
+						RiskScore: ev.RiskScore, MaxRisk: ev.MaxRisk, RiskFactors: factors, Operation: ev.Operation,
+					})
+				})
 				k8sGw.SetTrustedProxies(cfg.TrustedProxies)
 				k8sGw.SetRoles(func(ctx context.Context, userID uuid.UUID) []string {
 					u, err := db.GetUserByID(ctx, userID)
@@ -275,11 +311,11 @@ func main() {
 					return u.Roles
 				})
 				k8sGw.SetGroups(func(ctx context.Context, userID uuid.UUID) []string {
-					u, err := db.GetUserByID(ctx, userID)
+					names, err := policySvc.EffectiveGroupNames(ctx, userID)
 					if err != nil {
 						return nil
 					}
-					return u.Groups
+					return names
 				})
 				go func() {
 					if err := k8sGw.ListenAndServe(runCtx); err != nil && err != http.ErrServerClosed {
@@ -288,7 +324,7 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -376,7 +412,7 @@ func main() {
 	}
 
 	if runSSH {
-		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc)
+		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := gw.ListenAndServe(); err != nil {

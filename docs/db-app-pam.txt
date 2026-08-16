@@ -51,8 +51,8 @@ Parse failure: allow + raw audit (strict_sql_parse не требуется в MV
 - App-A: app_integrations + credential lease / OIDC broker — реализовано
 - App-B: HTTPS reverse-proxy + metadata recording — реализовано (`recording_mode=full`)
 - App-C: isolated Chromium via Guacamole VNC — реализовано (`recording_mode=isolated`)
-- App-D: HTTP/URL ACL (method+path packs) — реализовано (`docs/http-acl.txt`; reverse-proxy + kubectl, не isolated)
-- App-E: Object ACL (Function/Object/Operation) — реализовано (`docs/app-object-acl.txt`)
+- App-D: HTTP/URL ACL (method+path packs) — реализовано (`docs/http-acl.txt`; reverse-proxy + kubectl + isolated)
+- App-E: Object ACL (Function/Object/Operation) — реализовано (`docs/app-object-acl.txt`; full + isolated + kubectl)
 
 Wire/SQL: клиентский `database=` должен совпадать с `database_name` сессии (иначе отказ).
 

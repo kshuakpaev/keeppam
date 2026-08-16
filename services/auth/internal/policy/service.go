@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,12 +14,14 @@ import (
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/tagpath"
 )
 
 type Binding struct {
 	ID                    uuid.UUID  `json:"id"`
 	AssetID               *uuid.UUID `json:"asset_id,omitempty"`
 	AssetMatchTags        []string   `json:"asset_match_tags"`
+	AssetMatchMode        string     `json:"asset_match_mode,omitempty"`
 	Inherited             bool       `json:"inherited"`
 	UserID                *uuid.UUID `json:"user_id,omitempty"`
 	RoleID                *uuid.UUID `json:"role_id,omitempty"`
@@ -39,6 +40,7 @@ type Binding struct {
 	AllowedCountries      []string   `json:"allowed_countries"`
 	AllowedDevices        []string   `json:"allowed_devices"`
 	AllowedNamespaces     []string   `json:"allowed_namespaces"`
+	AllowedEgress         []string   `json:"allowed_egress"`
 	CommandPolicyPackID   *uuid.UUID `json:"command_policy_pack_id,omitempty"`
 	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
 	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
@@ -96,6 +98,7 @@ type CreateBindingInput struct {
 	AllowedCountries    []string   `json:"allowed_countries"`
 	AllowedDevices      []string   `json:"allowed_devices"`
 	AllowedNamespaces   []string   `json:"allowed_namespaces"`
+	AllowedEgress       []string   `json:"allowed_egress"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
 	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
 	HTTPPolicyPackID    *uuid.UUID `json:"http_policy_pack_id"`
@@ -104,6 +107,8 @@ type CreateBindingInput struct {
 	MaxRisk             int        `json:"max_risk"`
 	RiskAction          string     `json:"risk_action"`
 	AssetMatchTags      []string   `json:"asset_match_tags"`
+	AssetMatchMode      string     `json:"asset_match_mode"`
+	Permanent           bool       `json:"permanent"`
 }
 
 type AccessCheck struct {
@@ -119,7 +124,7 @@ type AccessCheck struct {
 	ClientDevices  []string
 	IgnoreTicket   bool
 	SkipRisk       bool
-	StepUpVerified bool   // connect-only: require_mfa already satisfied
+	StepUpVerified bool   // require_mfa already satisfied (connect or in-session grant)
 	Operation      string // empty = connect; sql.ddl / k8s.delete / ssh.destructive / http.write / …
 	Snapshot       *Snapshot
 }
@@ -129,20 +134,28 @@ func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding
 	if err != nil {
 		return nil, err
 	}
-	return s.listBindings(ctx, `
+	return s.listBindings(ctx, true, `
 		WHERE b.asset_id=$1
-		   OR (b.asset_id IS NULL AND cardinality(b.asset_match_tags)>0 AND $2::text[] @> b.asset_match_tags)
-		ORDER BY (b.asset_id IS NULL), b.expires_at NULLS FIRST, COALESCE(u.username, r.name, g.name)`, assetID, tags)
+		   OR `+tagACLSQL("$2")+`
+		ORDER BY (b.asset_id IS NULL), b.expires_at NULLS FIRST, COALESCE(u.username, r.name, g.name)`, assetID, expandTagAncestors(tags))
 }
 
 func (s *Service) ListTagBindings(ctx context.Context) ([]Binding, error) {
-	return s.listBindings(ctx, `
+	return s.listBindings(ctx, true, `
 		WHERE b.asset_id IS NULL
 		ORDER BY b.created_at DESC`)
 }
 
 func (s *Service) getBinding(ctx context.Context, id uuid.UUID) (Binding, error) {
-	list, err := s.listBindings(ctx, `WHERE b.id=$1`, id)
+	return s.lookupBinding(ctx, true, id)
+}
+
+func (s *Service) GetRaw(ctx context.Context, id uuid.UUID) (Binding, error) {
+	return s.lookupBinding(ctx, false, id)
+}
+
+func (s *Service) lookupBinding(ctx context.Context, overlay bool, id uuid.UUID) (Binding, error) {
+	list, err := s.listBindings(ctx, overlay, `WHERE b.id=$1`, id)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -152,15 +165,15 @@ func (s *Service) getBinding(ctx context.Context, id uuid.UUID) (Binding, error)
 	return list[0], nil
 }
 
-func (s *Service) listBindings(ctx context.Context, where string, args ...any) ([]Binding, error) {
+func (s *Service) listBindings(ctx context.Context, overlay bool, where string, args ...any) ([]Binding, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT b.id, b.asset_id, COALESCE(b.asset_match_tags,'{}'), b.user_id, b.role_id, b.group_id,
+		SELECT b.id, b.asset_id, COALESCE(b.asset_match_tags,'{}'), COALESCE(b.asset_match_mode,'all'), b.user_id, b.role_id, b.group_id,
 			COALESCE(u.username,''), COALESCE(r.name,''), COALESCE(g.name,''),
 			to_char(b.time_start, 'HH24:MI'), to_char(b.time_end, 'HH24:MI'),
 			b.days_of_week, b.expires_at, b.required_tags, b.require_ticket,
 			COALESCE(b.require_reason,false), COALESCE(b.allowed_cidrs,'{}'),
 			COALESCE(b.allowed_countries,'{}'), COALESCE(b.allowed_devices,'{}'),
-			COALESCE(b.allowed_namespaces,'{}'),
+			COALESCE(b.allowed_namespaces,'{}'), COALESCE(b.allowed_egress,'{}'),
 			b.command_policy_pack_id, COALESCE(p.name,''),
 			b.sql_policy_pack_id, COALESCE(sp.name,''),
 			b.http_policy_pack_id, COALESCE(hp.name,''),
@@ -172,6 +185,7 @@ func (s *Service) listBindings(ctx context.Context, where string, args ...any) (
 			COALESCE(ap.require_ticket,false), COALESCE(ap.require_reason,false),
 			COALESCE(ap.allowed_cidrs,'{}'), COALESCE(ap.allowed_countries,'{}'),
 			COALESCE(ap.allowed_devices,'{}'), COALESCE(ap.allowed_namespaces,'{}'),
+			COALESCE(ap.allowed_egress,'{}'),
 			ap.command_policy_pack_id, COALESCE(p2.name,''),
 			ap.sql_policy_pack_id, COALESCE(sp2.name,''),
 			ap.http_policy_pack_id, COALESCE(hp2.name,''),
@@ -199,23 +213,23 @@ func (s *Service) listBindings(ctx context.Context, where string, args ...any) (
 	for rows.Next() {
 		var b Binding
 		var ts, te *string
-		var tags, cidrs, countries, devices, namespaces []string
+		var tags, cidrs, countries, devices, namespaces, egress []string
 		var packName, sqlPackName, httpPackName, appPackName string
 		var pts, pte *string
 		var pDays, pMax int
-		var pTags, pCidrs, pCountries, pDevices, pNS []string
+		var pTags, pCidrs, pCountries, pDevices, pNS, pEgress []string
 		var pTicket, pReason bool
 		var pCmd, pSQL, pHTTP, pApp *uuid.UUID
 		var pCmdName, pSQLName, pHTTPName, pAppName, pAction string
-		if err := rows.Scan(&b.ID, &b.AssetID, &b.AssetMatchTags, &b.UserID, &b.RoleID, &b.GroupID, &b.Username, &b.RoleName, &b.GroupName,
+		if err := rows.Scan(&b.ID, &b.AssetID, &b.AssetMatchTags, &b.AssetMatchMode, &b.UserID, &b.RoleID, &b.GroupID, &b.Username, &b.RoleName, &b.GroupName,
 			&ts, &te, &b.DaysOfWeek, &b.ExpiresAt, &tags, &b.RequireTicket,
-			&b.RequireReason, &cidrs, &countries, &devices, &namespaces,
+			&b.RequireReason, &cidrs, &countries, &devices, &namespaces, &egress,
 			&b.CommandPolicyPackID, &packName, &b.SQLPolicyPackID, &sqlPackName,
 			&b.HTTPPolicyPackID, &httpPackName, &b.AppObjectPackID, &appPackName,
 			&b.MaxRisk, &b.RiskAction, &b.CreatedAt,
 			&b.AccessPolicyID, &b.AccessPolicyName,
 			&pts, &pte, &pDays, &pTags, &pTicket, &pReason,
-			&pCidrs, &pCountries, &pDevices, &pNS,
+			&pCidrs, &pCountries, &pDevices, &pNS, &pEgress,
 			&pCmd, &pCmdName, &pSQL, &pSQLName, &pHTTP, &pHTTPName, &pApp, &pAppName,
 			&pMax, &pAction); err != nil {
 			return nil, err
@@ -223,17 +237,24 @@ func (s *Service) listBindings(ctx context.Context, where string, args ...any) (
 		b.TimeStart = emptyToNil(ts)
 		b.TimeEnd = emptyToNil(te)
 		b.AssetMatchTags = normalizeTags(b.AssetMatchTags)
+		if b.AssetMatchMode == "" {
+			b.AssetMatchMode = "all"
+		}
 		b.Inherited = b.AssetID == nil
 		b.RequiredTags = normalizeTags(tags)
 		b.AllowedCIDRs = normalizeCIDRs(cidrs)
 		b.AllowedCountries = geoip.NormalizeCountries(countries)
 		b.AllowedDevices = device.Normalize(devices)
 		b.AllowedNamespaces = normalizeNamespaces(namespaces)
+		b.AllowedEgress = egress
+		if b.AllowedEgress == nil {
+			b.AllowedEgress = []string{}
+		}
 		b.CommandPolicyPackName = packName
 		b.SQLPolicyPackName = sqlPackName
 		b.HTTPPolicyPackName = httpPackName
 		b.AppObjectPackName = appPackName
-		if b.AccessPolicyID != nil {
+		if overlay && b.AccessPolicyID != nil {
 			origCmd, origSQL, origHTTP, origApp := b.CommandPolicyPackID, b.SQLPolicyPackID, b.HTTPPolicyPackID, b.AppObjectPackID
 			b.TimeStart = inheritStr(b.TimeStart, emptyToNil(pts))
 			b.TimeEnd = inheritStr(b.TimeEnd, emptyToNil(pte))
@@ -256,6 +277,12 @@ func (s *Service) listBindings(ctx context.Context, where string, args ...any) (
 			}
 			if len(b.AllowedNamespaces) == 0 {
 				b.AllowedNamespaces = normalizeNamespaces(pNS)
+			}
+			if len(b.AllowedEgress) == 0 {
+				b.AllowedEgress = pEgress
+				if b.AllowedEgress == nil {
+					b.AllowedEgress = []string{}
+				}
 			}
 			if b.CommandPolicyPackID == nil {
 				b.CommandPolicyPackID = pCmd
@@ -304,24 +331,7 @@ func emptyToNil(s *string) *string {
 }
 
 func normalizeTags(in []string) []string {
-	seen := map[string]struct{}{}
-	var out []string
-	for _, t := range in {
-		t = strings.ToLower(strings.TrimSpace(t))
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	if out == nil {
-		return []string{}
-	}
-	return out
+	return tagpath.Normalize(in)
 }
 
 func normalizeNamespaces(in []string) []string {
@@ -398,6 +408,10 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	if err != nil {
 		return Binding{}, err
 	}
+	egress, err := ValidateEgress(in.AllowedEgress)
+	if err != nil {
+		return Binding{}, err
+	}
 	if in.MaxRisk < 0 || in.MaxRisk > 100 {
 		return Binding{}, fmt.Errorf("max_risk must be 0..100")
 	}
@@ -417,9 +431,9 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 	matchTags := []string{}
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, asset_match_tags, user_id, role_id, group_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, max_risk, risk_action, access_policy_id, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8::time,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NOW(),$25)`,
-		id, assetID, matchTags, in.UserID, in.RoleID, in.GroupID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, in.MaxRisk, riskAction, in.AccessPolicyID, actorID)
+			(id, asset_id, asset_match_tags, user_id, role_id, group_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress, command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, max_risk, risk_action, access_policy_id, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::time,$8::time,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NOW(),$26)`,
+		id, assetID, matchTags, in.UserID, in.RoleID, in.GroupID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, egress, in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, in.MaxRisk, riskAction, in.AccessPolicyID, actorID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -428,6 +442,7 @@ func (s *Service) Create(ctx context.Context, actorID, assetID uuid.UUID, in Cre
 		"expires_at": expires, "required_tags": tags, "require_ticket": in.RequireTicket,
 		"require_reason": in.RequireReason, "allowed_cidrs": cidrs, "allowed_countries": countries, "allowed_devices": devices,
 		"allowed_namespaces":     namespaces,
+		"allowed_egress":         egress,
 		"command_policy_pack_id": in.CommandPolicyPackID, "sql_policy_pack_id": in.SQLPolicyPackID,
 		"http_policy_pack_id": in.HTTPPolicyPackID,
 		"app_object_pack_id":  in.AppObjectPackID,
@@ -496,6 +511,10 @@ func (s *Service) CreateTag(ctx context.Context, actorID uuid.UUID, in CreateBin
 	if err != nil {
 		return Binding{}, err
 	}
+	egress, err := ValidateEgress(in.AllowedEgress)
+	if err != nil {
+		return Binding{}, err
+	}
 	if in.MaxRisk < 0 || in.MaxRisk > 100 {
 		return Binding{}, fmt.Errorf("max_risk must be 0..100")
 	}
@@ -512,11 +531,15 @@ func (s *Service) CreateTag(ctx context.Context, actorID uuid.UUID, in CreateBin
 		}
 	}
 	id := store.NewID()
+	matchMode, err := normalizeMatchMode(in.AssetMatchMode)
+	if err != nil {
+		return Binding{}, err
+	}
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_access_bindings
-			(id, asset_id, asset_match_tags, user_id, role_id, group_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, max_risk, risk_action, access_policy_id, created_at, created_by)
-		VALUES ($1,NULL,$2,$3,$4,$5,$6::time,$7::time,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NOW(),$24)`,
-		id, matchTags, in.UserID, in.RoleID, in.GroupID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, in.MaxRisk, riskAction, in.AccessPolicyID, actorID)
+			(id, asset_id, asset_match_tags, asset_match_mode, user_id, role_id, group_id, time_start, time_end, days_of_week, expires_at, required_tags, require_ticket, require_reason, allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress, command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, max_risk, risk_action, access_policy_id, created_at, created_by)
+		VALUES ($1,NULL,$2,$3,$4,$5,$6,$7::time,$8::time,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NOW(),$26)`,
+		id, matchTags, matchMode, in.UserID, in.RoleID, in.GroupID, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires, tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, egress, in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, in.MaxRisk, riskAction, in.AccessPolicyID, actorID)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			return Binding{}, fmt.Errorf("tag ACL already exists for this subject")
@@ -525,10 +548,142 @@ func (s *Service) CreateTag(ctx context.Context, actorID uuid.UUID, in CreateBin
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.acl.granted", "asset_tags", strings.Join(matchTags, ","), ip, ua, map[string]any{
 		"binding_id": id.String(), "user_id": in.UserID, "role_id": in.RoleID, "group_id": in.GroupID,
-		"asset_match_tags": matchTags, "access_policy_id": in.AccessPolicyID,
+		"asset_match_tags": matchTags, "asset_match_mode": matchMode, "access_policy_id": in.AccessPolicyID,
 		"max_risk": in.MaxRisk, "risk_action": riskAction,
 	})
 	return s.getBinding(ctx, id)
+}
+
+func (s *Service) Update(ctx context.Context, actorID, bindingID uuid.UUID, in CreateBindingInput, ip, ua string) (Binding, error) {
+	cur, err := s.GetRaw(ctx, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if in.Permanent && in.DurationMinutes != nil {
+		return Binding{}, fmt.Errorf("cannot set both permanent and duration_minutes")
+	}
+	days := cur.DaysOfWeek
+	if in.DaysOfWeek != nil {
+		days = *in.DaysOfWeek
+		if days < 0 || days > 127 {
+			return Binding{}, fmt.Errorf("invalid days_of_week")
+		}
+	}
+	var expires any
+	if cur.ExpiresAt != nil {
+		expires = cur.ExpiresAt.UTC()
+	}
+	if in.Permanent {
+		expires = nil
+	} else if in.DurationMinutes != nil {
+		m := *in.DurationMinutes
+		if m <= 0 || m > 1440 {
+			return Binding{}, fmt.Errorf("duration_minutes must be 1..1440")
+		}
+		expires = time.Now().UTC().Add(time.Duration(m) * time.Minute)
+	}
+	tags := normalizeTags(in.RequiredTags)
+	cidrs, err := validateCIDRs(in.AllowedCIDRs)
+	if err != nil {
+		return Binding{}, err
+	}
+	countries, err := geoip.ValidateCountries(in.AllowedCountries)
+	if err != nil {
+		return Binding{}, err
+	}
+	devices, err := device.Validate(in.AllowedDevices)
+	if err != nil {
+		return Binding{}, err
+	}
+	namespaces, err := validateNamespaces(in.AllowedNamespaces)
+	if err != nil {
+		return Binding{}, err
+	}
+	egress, err := ValidateEgress(in.AllowedEgress)
+	if err != nil {
+		return Binding{}, err
+	}
+	if in.MaxRisk < 0 || in.MaxRisk > 100 {
+		return Binding{}, fmt.Errorf("max_risk must be 0..100")
+	}
+	riskAction, err := NormalizeRiskAction(in.RiskAction)
+	if err != nil {
+		return Binding{}, err
+	}
+	if in.AccessPolicyID != nil {
+		if _, err := s.GetAccessPolicy(ctx, *in.AccessPolicyID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Binding{}, fmt.Errorf("unknown access_policy_id")
+			}
+			return Binding{}, err
+		}
+	}
+	matchTags := []string{}
+	matchMode := "all"
+	if cur.AssetID == nil {
+		matchTags = normalizeTags(cur.AssetMatchTags)
+		if in.AssetMatchTags != nil {
+			matchTags = normalizeTags(in.AssetMatchTags)
+		}
+		if len(matchTags) == 0 {
+			return Binding{}, fmt.Errorf("asset_match_tags required")
+		}
+		src := in.AssetMatchMode
+		if strings.TrimSpace(src) == "" {
+			src = cur.AssetMatchMode
+		}
+		matchMode, err = normalizeMatchMode(src)
+		if err != nil {
+			return Binding{}, err
+		}
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE asset_access_bindings SET
+			asset_match_tags=$2, asset_match_mode=$3,
+			time_start=$4::time, time_end=$5::time, days_of_week=$6, expires_at=$7,
+			required_tags=$8, require_ticket=$9, require_reason=$10,
+			allowed_cidrs=$11, allowed_countries=$12, allowed_devices=$13, allowed_namespaces=$14, allowed_egress=$15,
+			command_policy_pack_id=$16, sql_policy_pack_id=$17, http_policy_pack_id=$18, app_object_pack_id=$19,
+			max_risk=$20, risk_action=$21, access_policy_id=$22
+		WHERE id=$1`,
+		bindingID, matchTags, matchMode, nullStr(in.TimeStart), nullStr(in.TimeEnd), days, expires,
+		tags, in.RequireTicket, in.RequireReason, cidrs, countries, devices, namespaces, egress,
+		in.CommandPolicyPackID, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID,
+		in.MaxRisk, riskAction, in.AccessPolicyID)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+			return Binding{}, fmt.Errorf("tag ACL already exists for this subject")
+		}
+		return Binding{}, err
+	}
+	resType, resID := "asset", ""
+	if cur.AssetID != nil {
+		resID = cur.AssetID.String()
+	} else {
+		resType, resID = "asset_tags", strings.Join(matchTags, ",")
+	}
+	_ = s.aud.Record(ctx, &actorID, "asset.acl.updated", resType, resID, ip, ua, map[string]any{
+		"binding_id":             bindingID.String(),
+		"expires_at":             expires,
+		"required_tags":          tags,
+		"require_ticket":         in.RequireTicket,
+		"require_reason":         in.RequireReason,
+		"allowed_cidrs":          cidrs,
+		"allowed_countries":      countries,
+		"allowed_devices":        devices,
+		"allowed_namespaces":     namespaces,
+		"allowed_egress":         egress,
+		"command_policy_pack_id": in.CommandPolicyPackID,
+		"sql_policy_pack_id":     in.SQLPolicyPackID,
+		"http_policy_pack_id":    in.HTTPPolicyPackID,
+		"app_object_pack_id":     in.AppObjectPackID,
+		"access_policy_id":       in.AccessPolicyID,
+		"asset_match_tags":       matchTags,
+		"asset_match_mode":       matchMode,
+		"max_risk":               in.MaxRisk,
+		"risk_action":            riskAction,
+	})
+	return s.getBinding(ctx, bindingID)
 }
 
 func nullStr(s *string) any {
@@ -572,10 +727,7 @@ func (s *Service) UserTags(ctx context.Context, userID uuid.UUID) ([]string, err
 		}
 		out = append(out, t)
 	}
-	if out == nil {
-		out = []string{}
-	}
-	return out, rows.Err()
+	return normalizeTags(out), rows.Err()
 }
 
 func (s *Service) SetUserTags(ctx context.Context, actorID, userID uuid.UUID, tags []string, ip, ua string) ([]string, error) {
@@ -616,12 +768,9 @@ func (s *Service) assetTags(ctx context.Context, assetID uuid.UUID) ([]string, e
 		if err := rows.Scan(&t); err != nil {
 			return nil, err
 		}
-		out = append(out, strings.ToLower(t))
+		out = append(out, t)
 	}
-	if out == nil {
-		out = []string{}
-	}
-	return out, rows.Err()
+	return normalizeTags(out), rows.Err()
 }
 
 func toSet(tags []string) map[string]struct{} {

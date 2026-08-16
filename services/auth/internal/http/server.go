@@ -20,6 +20,7 @@ import (
 	"github.com/keeppam/auth/internal/attacksim"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/castindex"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/dbephemeral"
@@ -31,8 +32,10 @@ import (
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
@@ -71,10 +74,16 @@ type Server struct {
 	itsm       *itsm.Service
 	notify     *notify.Service
 	k8s        *k8sproxy.Gateway
+	ops        *opapprove.Service
+	scim       *scim.Service
+	castidx    *castindex.Service
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc}
+	if sessSvc != nil {
+		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore())
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -87,6 +96,13 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	r.Get("/metrics", s.handleMetrics)
+
+	// Isolated Chromium → API reverse-proxy (HTTP/object ACL). No cookie; token in path.
+	// Outside Timeout: object approval / step-up hold up to 60s.
+	r.Handle("/iso/{id}/{token}", http.HandlerFunc(s.handleIsoApp))
+	r.Handle("/iso/{id}/{token}/*", http.HandlerFunc(s.handleIsoApp))
+
+	s.mountSCIM(r)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// WebSocket without request timeout (long-lived).
@@ -124,6 +140,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Post("/saml/acs", s.handleSAMLACS)
 				r.Get("/saml/slo", s.handleSAMLSLO)
 				r.Post("/saml/slo", s.handleSAMLSLO)
+				r.Get("/saml/idp/{slug}/metadata", s.handleSAMLMetadata)
+				r.Get("/saml/idp/{slug}/start", s.handleSAMLStart)
+				r.Post("/saml/idp/{slug}/acs", s.handleSAMLACS)
+				r.Get("/saml/idp/{slug}/slo", s.handleSAMLSLO)
+				r.Post("/saml/idp/{slug}/slo", s.handleSAMLSLO)
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireSession)
 					r.Use(s.requireCSRF)
@@ -156,6 +177,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Use(s.requireCSRF)
 				r.With(s.requirePerm("settings.write")).Get("/settings/auth", s.handleGetAuthSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/auth", s.handlePutAuthSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/saml/idps", s.handleListSAMLIdPs)
+				r.With(s.requirePerm("settings.write")).Post("/settings/saml/idps", s.handleCreateSAMLIdP)
+				r.With(s.requirePerm("settings.write")).Put("/settings/saml/idps/{id}", s.handleUpdateSAMLIdP)
+				r.With(s.requirePerm("settings.write")).Delete("/settings/saml/idps/{id}", s.handleDeleteSAMLIdP)
 				r.With(s.requirePerm("settings.write")).Get("/settings/siem", s.handleGetSIEMSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/siem", s.handlePutSIEMSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/itsm", s.handleGetITSMSettings)
@@ -239,6 +264,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.write")).Post("/secret-checkouts/{id}/deny", s.handleDenyCheckoutRequest)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/acl", s.handleListACL)
 				r.With(s.requirePerm("assets.acl")).Post("/assets/{id}/acl", s.handleCreateACL)
+				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/acl/{bindingId}", s.handleGetACL)
+				r.With(s.requirePerm("assets.acl")).Put("/assets/{id}/acl/{bindingId}", s.handleUpdateACL)
 				r.With(s.requirePerm("assets.acl")).Delete("/assets/{id}/acl/{bindingId}", s.handleDeleteACL)
 				r.With(s.requirePerm("assets.read")).Get("/acl/tags", s.handleListTagACL)
 				r.With(s.requirePerm("assets.acl")).Post("/acl/tags", s.handleCreateTagACL)
@@ -281,12 +308,16 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requireAnyPerm("access.request", "access.approve", "access.approve.security")).Get("/access-requests/summary", s.handleAccessRequestsSummary)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/approve", s.handleApproveAccessRequest)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/deny", s.handleDenyAccessRequest)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Get("/op-approvals", s.handleListOpApprovals)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/op-approvals/{id}/approve", s.handleApproveOp)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/op-approvals/{id}/deny", s.handleDenyOp)
 				r.With(s.requirePerm("access.request")).Post("/access-requests/{id}/cancel", s.handleCancelAccessRequest)
 				r.With(s.requirePerm("access.breakglass")).Post("/assets/{id}/break-glass", s.handleOpenBreakGlass)
 				r.With(s.requirePerm("access.breakglass")).Get("/break-glass", s.handleListBreakGlass)
 
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions", s.handleCreateSession)
 				r.Post("/sessions/{id}/end", s.handleEndSession)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/op-stepup", s.handleGetOpStepUp)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/timeline", s.handleSessionTimeline)
@@ -303,6 +334,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/portforward", s.handleK8sPortForwardHTTP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/transcript", s.handleGetTranscript)
+				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/transcript", s.handleIndexTranscript)
 			})
 		})
 	})
@@ -320,8 +353,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		if origin == s.cfg.CORSOrigin || s.cfg.CORSOrigin == "*" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, Authorization")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Expose-Headers", "X-CSRF-Token")
 		}
 		if r.Method == http.MethodOptions {
@@ -1053,6 +1086,24 @@ func (s *Server) handleCreateTagACL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, b)
 }
 
+func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
+	bindingID, err := uuid.Parse(chi.URLParam(r, "bindingId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid binding id")
+		return
+	}
+	b, err := s.policy.GetRaw(r.Context(), bindingID)
+	if err != nil {
+		if policy.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
 func (s *Server) handleCreateACL(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	assetID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -1071,6 +1122,30 @@ func (s *Server) handleCreateACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, b)
+}
+
+func (s *Server) handleUpdateACL(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	bindingID, err := uuid.Parse(chi.URLParam(r, "bindingId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid binding id")
+		return
+	}
+	var in policy.CreateBindingInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	b, err := s.policy.Update(r.Context(), sess.UserID, bindingID, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		if policy.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
 }
 
 func (s *Server) handleDeleteACL(w http.ResponseWriter, r *http.Request) {

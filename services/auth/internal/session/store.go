@@ -18,19 +18,32 @@ type Session struct {
 	Roles       []string  `json:"roles"`
 	Permissions []string  `json:"permissions"`
 	SAMLNameID  string    `json:"saml_name_id,omitempty"`
+	SAMLIdP     string    `json:"saml_idp,omitempty"`
 	Devices     []string  `json:"devices,omitempty"`
 }
 
 type Challenge struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Username string    `json:"username"`
-	Purpose  string    `json:"purpose,omitempty"` // "" = login, "stepup"
-	AssetID  string    `json:"asset_id,omitempty"`
+	UserID    uuid.UUID `json:"user_id"`
+	Username  string    `json:"username"`
+	Purpose   string    `json:"purpose,omitempty"` // "" = login, "stepup"
+	AssetID   string    `json:"asset_id,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
 }
 
 type StepUpGrant struct {
-	UserID  uuid.UUID `json:"user_id"`
-	AssetID uuid.UUID `json:"asset_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	AssetID   uuid.UUID `json:"asset_id"`
+	SessionID uuid.UUID `json:"session_id,omitempty"`
+}
+
+type OpStepUpPending struct {
+	ChallengeToken string   `json:"challenge_token"`
+	TOTP           bool     `json:"totp"`
+	WebAuthn       bool     `json:"webauthn"`
+	RiskScore      int      `json:"risk_score"`
+	MaxRisk        int      `json:"max_risk"`
+	RiskFactors    []string `json:"risk_factors"`
+	Operation      string   `json:"operation,omitempty"`
 }
 
 type Store struct {
@@ -186,4 +199,61 @@ func (s *Store) ConsumeJSON(ctx context.Context, key string, dest any) error {
 
 func RateKey(ip, username string) string {
 	return fmt.Sprintf("%s:%s", ip, username)
+}
+
+const OpStepUpTTL = 30 * time.Minute
+const OpStepUpPendingTTL = 70 * time.Second
+
+func opStepUpKey(id uuid.UUID) string        { return "stepup-op:" + id.String() }
+func opStepUpPendingKey(id uuid.UUID) string { return "stepup-pending:" + id.String() }
+
+func (s *Store) PutOpStepUp(ctx context.Context, sessionID, userID uuid.UUID) error {
+	if s == nil || sessionID == uuid.Nil {
+		return fmt.Errorf("invalid session")
+	}
+	return s.PutJSON(ctx, opStepUpKey(sessionID), StepUpGrant{UserID: userID, SessionID: sessionID}, OpStepUpTTL)
+}
+
+func (s *Store) HasOpStepUp(ctx context.Context, sessionID, userID uuid.UUID) bool {
+	if s == nil || sessionID == uuid.Nil {
+		return false
+	}
+	var g StepUpGrant
+	if err := s.GetJSON(ctx, opStepUpKey(sessionID), &g); err != nil {
+		return false
+	}
+	return g.UserID == userID
+}
+
+func (s *Store) ClearOpStepUp(ctx context.Context, sessionID uuid.UUID) {
+	if s == nil || sessionID == uuid.Nil {
+		return
+	}
+	_ = s.DeleteKey(ctx, opStepUpKey(sessionID))
+	_ = s.DeleteKey(ctx, opStepUpPendingKey(sessionID))
+}
+
+func (s *Store) PutOpStepUpPending(ctx context.Context, sessionID uuid.UUID, p OpStepUpPending) error {
+	if s == nil || sessionID == uuid.Nil {
+		return fmt.Errorf("invalid session")
+	}
+	return s.PutJSON(ctx, opStepUpPendingKey(sessionID), p, OpStepUpPendingTTL)
+}
+
+func (s *Store) GetOpStepUpPending(ctx context.Context, sessionID uuid.UUID) (OpStepUpPending, bool) {
+	var p OpStepUpPending
+	if s == nil || sessionID == uuid.Nil {
+		return p, false
+	}
+	if err := s.GetJSON(ctx, opStepUpPendingKey(sessionID), &p); err != nil {
+		return p, false
+	}
+	return p, p.ChallengeToken != ""
+}
+
+func (s *Store) ClearOpStepUpPending(ctx context.Context, sessionID uuid.UUID) {
+	if s == nil || sessionID == uuid.Nil {
+		return
+	}
+	_ = s.DeleteKey(ctx, opStepUpPendingKey(sessionID))
 }

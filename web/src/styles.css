@@ -63,12 +63,16 @@ h3 {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
   border-right: 1px solid var(--border);
-  background: rgba(15, 20, 25, 0.85);
+  background: rgba(15, 20, 25, 0.92);
   padding: 1.5rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .brand {
@@ -137,6 +141,84 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.profile-menu {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+.profile-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.profile-trigger:hover,
+.profile-trigger[aria-expanded="true"] {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+.profile-trigger-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-trigger-caret {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.profile-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.4rem);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  z-index: 40;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+.profile-dropdown button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.profile-dropdown button:hover {
+  background: var(--bg);
+}
+
+.profile-dropdown button.danger {
+  color: var(--danger);
 }
 
 .nav a {

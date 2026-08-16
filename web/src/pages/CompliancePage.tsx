@@ -282,8 +282,8 @@ export function CompliancePage() {
       <section className="card" style={{ marginBottom: "1.25rem" }}>
         <h2>Отчёт за период</h2>
         <p className="muted">
-          Кто имел доступ, согласовал, подключался, какие SQL/команды (deny), скачивания, изменения и отзывы. Не
-          полнотекст asciicast.
+          Кто имел доступ, согласовал, подключался, SQL и команды SSH (stdin), скачивания, изменения и отзывы. Не OCR
+          RDP.
         </p>
         <form
           className="row"

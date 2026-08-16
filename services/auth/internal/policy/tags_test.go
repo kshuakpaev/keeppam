@@ -23,4 +23,8 @@ func TestNormalizeTagsSorted(t *testing.T) {
 	if len(got) != 3 || got[0] != "linux" || got[1] != "pci" || got[2] != "prod" {
 		t.Fatalf("%v", got)
 	}
+	path := normalizeTags([]string{" Prod//Linux/web ", "prod/linux"})
+	if len(path) != 2 || path[0] != "prod/linux" || path[1] != "prod/linux/web" {
+		t.Fatalf("path %v", path)
+	}
 }

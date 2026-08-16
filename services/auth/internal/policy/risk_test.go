@@ -55,6 +55,22 @@ func TestComputeRiskFailedLoginBuckets(t *testing.T) {
 	}
 }
 
+func TestComputeRiskUEBA(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	score, factors := computeRisk(RiskInputs{Now: now, UnusualAsset: true})
+	if score != 25 || len(factors) != 1 || factors[0] != "ueba_new_asset" {
+		t.Fatalf("new asset score=%d factors=%v", score, factors)
+	}
+	score, factors = computeRisk(RiskInputs{Now: now, UnusualAsset: true, SpreadBurst: true, AnomMulti: true})
+	if score != 60 {
+		t.Fatalf("stacked ueba score=%d want 60", score)
+	}
+	want := "anom_multi,ueba_new_asset,ueba_spread"
+	if strings.Join(factors, ",") != want {
+		t.Fatalf("factors=%v want %s", factors, want)
+	}
+}
+
 func TestRiskDenyMessage(t *testing.T) {
 	r := AccessResult{DeniedByRisk: true, RiskScore: 72, MaxRisk: 40, RiskAction: "require_approval", RiskFactors: []string{"off_hours", "failed_logins"}}
 	msg := r.DenyMessage()
@@ -85,8 +101,18 @@ func TestDecideRiskRequireMFA(t *testing.T) {
 		t.Fatal("step-up should allow connect")
 	}
 	res = AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
+	decideRisk(&res, false, "sql.ddl")
+	if res.OK || !res.NeedsStepUp() || res.RiskAction != "require_mfa" {
+		t.Fatalf("sql should step-up: ok=%v action=%s needs=%v", res.OK, res.RiskAction, res.NeedsStepUp())
+	}
+	res = AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
 	decideRisk(&res, true, "sql.ddl")
-	if res.OK || res.RiskAction != "deny" {
-		t.Fatalf("operations cannot MFA: ok=%v action=%s", res.OK, res.RiskAction)
+	if !res.OK || res.DeniedByRisk {
+		t.Fatal("verified op step-up should allow SQL")
+	}
+	res = AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
+	decideRisk(&res, true, "ssh.destructive")
+	if res.OK || res.RiskAction != "deny" || res.NeedsStepUp() {
+		t.Fatalf("SSH PTY stays deny: ok=%v action=%s needs=%v", res.OK, res.RiskAction, res.NeedsStepUp())
 	}
 }

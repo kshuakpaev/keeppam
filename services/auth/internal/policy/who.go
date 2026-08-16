@@ -28,7 +28,19 @@ func (s *Service) userGroupIDs(ctx context.Context, userID uuid.UUID) (map[uuid.
 	if userID == uuid.Nil {
 		return out, nil
 	}
-	rows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM user_group_members WHERE user_id=$1`, userID)
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT g.id, g.parent_id, 1 AS depth
+			FROM groups g
+			JOIN user_group_members m ON m.group_id = g.id
+			WHERE m.user_id=$1
+			UNION ALL
+			SELECT p.id, p.parent_id, t.depth+1
+			FROM groups p
+			JOIN tree t ON t.parent_id = p.id
+			WHERE t.depth < 8
+		)
+		SELECT DISTINCT id FROM tree`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -45,9 +57,18 @@ func (s *Service) userGroupIDs(ctx context.Context, userID uuid.UUID) (map[uuid.
 
 func (s *Service) userGroupNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT g.name FROM groups g
-		JOIN user_group_members m ON m.group_id = g.id
-		WHERE m.user_id=$1 ORDER BY g.name`, userID)
+		WITH RECURSIVE tree AS (
+			SELECT g.id, g.parent_id, g.name, 1 AS depth
+			FROM groups g
+			JOIN user_group_members m ON m.group_id = g.id
+			WHERE m.user_id=$1
+			UNION ALL
+			SELECT p.id, p.parent_id, p.name, t.depth+1
+			FROM groups p
+			JOIN tree t ON t.parent_id = p.id
+			WHERE t.depth < 8
+		)
+		SELECT DISTINCT name FROM tree ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -64,4 +85,9 @@ func (s *Service) userGroupNames(ctx context.Context, userID uuid.UUID) ([]strin
 		out = []string{}
 	}
 	return out, rows.Err()
+}
+
+// EffectiveGroupNames is direct membership plus ancestor groups (child implies parent).
+func (s *Service) EffectiveGroupNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	return s.userGroupNames(ctx, userID)
 }

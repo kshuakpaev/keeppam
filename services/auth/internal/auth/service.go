@@ -184,7 +184,7 @@ func (s *Service) LoginOIDC(ctx context.Context, claims settings.OIDCClaims, ip,
 	return s.finishLogin(ctx, u, ip, ua, authCfg.OIDCSkipMFA, "oidc")
 }
 
-func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip, ua string) (LoginResult, error) {
+func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, idp settings.SAMLIdP, ip, ua string) (LoginResult, error) {
 	authCfg, _, _, err := s.settings.Get(ctx)
 	if err != nil {
 		return LoginResult{}, err
@@ -192,21 +192,24 @@ func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip,
 	if authCfg.Mode != "saml" {
 		return LoginResult{}, fmt.Errorf("saml is not enabled")
 	}
-	u, err := s.findOrProvisionExternal(ctx, claims.Username, claims.Email, claims.Name, "saml", authCfg.SAMLAutoProvision, authCfg.SAMLDefaultRole)
+	if !idp.Enabled {
+		return LoginResult{}, fmt.Errorf("saml idp disabled")
+	}
+	u, err := s.findOrProvisionExternal(ctx, claims.Username, claims.Email, claims.Name, "saml", idp.AutoProvision, idp.DefaultRole)
 	if err != nil {
 		return LoginResult{}, err
 	}
 	if u.Status == "disabled" {
 		return LoginResult{}, fmt.Errorf("account disabled")
 	}
-	if len(authCfg.SAMLGroupRoleMap) > 0 {
+	if len(idp.GroupRoleMap) > 0 {
 		roles, rerr := s.db.ListRoles(ctx)
 		if rerr == nil {
 			known := map[string]struct{}{}
 			for _, r := range roles {
 				known[r.Name] = struct{}{}
 			}
-			mapped := settings.MapSAMLRoles(claims.Groups, authCfg.SAMLGroupRoleMap, u.Roles, authCfg.SAMLDefaultRole, known)
+			mapped := settings.MapSAMLRoles(claims.Groups, idp.GroupRoleMap, u.Roles, idp.DefaultRole, known)
 			if !settings.RolesEqual(mapped, u.Roles) {
 				if upd, uerr := s.db.UpdateUser(ctx, u, &mapped); uerr == nil {
 					u = upd
@@ -219,7 +222,10 @@ func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip,
 	if claims.IDPInitiated {
 		via = "saml_idp"
 	}
-	return s.finishLoginSess(ctx, u, ip, ua, authCfg.SAMLSkipMFA, via, claims.Subject)
+	if idp.Slug != "" && idp.Slug != "default" {
+		via = via + ":" + idp.Slug
+	}
+	return s.finishLoginSess(ctx, u, ip, ua, idp.SkipMFA, via, claims.Subject, idp.Slug)
 }
 
 func (s *Service) findOrProvisionExternal(ctx context.Context, username, email, displayName, source string, autoProvision bool, defaultRole string) (store.User, error) {
@@ -267,10 +273,10 @@ func (s *Service) findOrProvisionExternal(ctx context.Context, username, email, 
 }
 
 func (s *Service) finishLogin(ctx context.Context, u store.User, ip, ua string, skipMFA bool, via string) (LoginResult, error) {
-	return s.finishLoginSess(ctx, u, ip, ua, skipMFA, via, "")
+	return s.finishLoginSess(ctx, u, ip, ua, skipMFA, via, "", "")
 }
 
-func (s *Service) finishLoginSess(ctx context.Context, u store.User, ip, ua string, skipMFA bool, via, samlNameID string) (LoginResult, error) {
+func (s *Service) finishLoginSess(ctx context.Context, u store.User, ip, ua string, skipMFA bool, via, samlNameID, samlIdP string) (LoginResult, error) {
 	if u.MFAEnabled && !skipMFA {
 		tok, err := s.sessions.CreateChallenge(ctx, session.Challenge{UserID: u.ID, Username: u.Username}, s.cfg.ChallengeTTL)
 		if err != nil {
@@ -281,7 +287,7 @@ func (s *Service) finishLoginSess(ctx context.Context, u store.User, ip, ua stri
 
 	sessTok, err := s.sessions.Create(ctx, session.Session{
 		UserID: u.ID, Username: u.Username, Roles: u.Roles, Permissions: u.Permissions,
-		SAMLNameID: samlNameID,
+		SAMLNameID: samlNameID, SAMLIdP: samlIdP,
 	}, s.cfg.SessionTTL)
 	if err != nil {
 		return LoginResult{}, err

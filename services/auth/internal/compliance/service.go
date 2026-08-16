@@ -399,12 +399,13 @@ func (s *Service) checkABAC(ctx context.Context) ControlResult {
 		   OR COALESCE(require_reason,false) OR COALESCE(cardinality(allowed_cidrs),0) > 0
 		   OR COALESCE(cardinality(allowed_countries),0) > 0
 		   OR COALESCE(cardinality(allowed_devices),0) > 0
-		   OR COALESCE(cardinality(allowed_namespaces),0) > 0`).Scan(&n)
+		   OR COALESCE(cardinality(allowed_namespaces),0) > 0
+		   OR COALESCE(cardinality(allowed_egress),0) > 0`).Scan(&n)
 	st := "warn"
 	if n > 0 {
 		st = "pass"
 	}
-	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR/geo/device/ns", Status: st,
+	return ControlResult{ID: "abac_tags", Title: "ABAC tags/ticket/CIDR/geo/device/ns/egress", Status: st,
 		Detail: fmt.Sprintf("bindings с ABAC-условиями: %d", n)}
 }
 

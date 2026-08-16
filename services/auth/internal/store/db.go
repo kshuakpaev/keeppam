@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/keeppam/auth/internal/tagpath"
 )
 
 type User struct {
@@ -93,6 +95,16 @@ const userCols = `id, username, email, display_name, password_hash, mfa_secret_e
 func (db *DB) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
+func (db *DB) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users u
+		JOIN user_role_bindings urb ON urb.user_id = u.id
+		JOIN roles r ON r.id = urb.role_id
+		WHERE r.name='admin' AND u.status='active'`).Scan(&n)
 	return n, err
 }
 
@@ -210,26 +222,11 @@ func (db *DB) UserTags(ctx context.Context, userID uuid.UUID) ([]string, error) 
 		}
 		out = append(out, t)
 	}
-	if out == nil {
-		out = []string{}
-	}
-	return out, rows.Err()
+	return tagpath.Normalize(out), rows.Err()
 }
 
 func (db *DB) SetUserTags(ctx context.Context, userID uuid.UUID, tags []string) error {
-	seen := map[string]struct{}{}
-	var norm []string
-	for _, t := range tags {
-		t = strings.ToLower(strings.TrimSpace(t))
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		norm = append(norm, t)
-	}
+	norm := tagpath.Normalize(tags)
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
 		return err

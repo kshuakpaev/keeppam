@@ -1,0 +1,43 @@
+# KeepPAM: несколько SAML IdP
+
+Один SP (ключ, Entity ID). Несколько IdP: Entra + Okta + свой ADFS.
+
+## Модель
+
+Миграция `060`, таблица `saml_idps`.
+
+| IdP | Где живёт | ACS / metadata / SLO |
+|-----|-----------|----------------------|
+| Основной (`slug=default`) | поля SAML в `auth_settings` (как раньше) + зеркало в `saml_idps` | `/api/v1/auth/saml/{acs,metadata,slo}` |
+| Дополнительный | `saml_idps` (не `default`) | `/api/v1/auth/saml/idp/{slug}/{acs,metadata,slo}` |
+
+Максимум 8 дополнительных. Slug: `[a-z0-9][a-z0-9-]{0,62}`, не `default`.
+
+У каждого IdP свои metadata URL / cert, attr username/email/groups, group→role, auto-provision, skip MFA, роль по умолчанию.
+
+IdP-initiated ACS — на **свой** ACS (подписать assertion может только тот IdP). SP-initiated: `/start` или `/idp/{slug}/start`.
+
+Logout: в сессии `saml_idp`; «Выйти» идёт на `/saml/slo` и редиректит на SLO того IdP.
+
+## API
+
+Публично: `GET /api/v1/auth/methods` → `saml_idps: [{slug,name}]` (только enabled и настроенные).
+
+Admin (`settings.write`):
+
+| Метод | Путь |
+|-------|------|
+| GET | `/api/v1/admin/settings/saml/idps` |
+| POST | `/api/v1/admin/settings/saml/idps` |
+| PUT | `/api/v1/admin/settings/saml/idps/{id}` |
+| DELETE | `/api/v1/admin/settings/saml/idps/{id}` |
+
+Основной IdP по-прежнему сохраняется формой «Авторизация».
+
+## UI
+
+Config → SAML → блок «Дополнительные SAML IdP». Login: кнопка на каждый готовый IdP.
+
+## Вне scope
+
+Разный SP Entity ID / ключ на каждый IdP. Assertion encryption. IdP-initiated SLO. Выбор IdP по email-домену без кнопки.

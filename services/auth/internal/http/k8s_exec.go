@@ -79,11 +79,7 @@ func (s *Server) handleK8sExecWS(w http.ResponseWriter, r *http.Request) {
 
 	upConn, err := s.k8s.DialExec(r.Context(), row, ns, pod, container, cmd, true)
 	if err != nil {
-		code := k8sproxy.HTTPStatus(err)
-		if code < 400 {
-			code = http.StatusBadGateway
-		}
-		writeErr(w, code, err.Error())
+		s.writeK8sOpErr(w, r, row, err)
 		return
 	}
 	defer upConn.Close()
@@ -161,11 +157,7 @@ func (s *Server) handleK8sAttachWS(w http.ResponseWriter, r *http.Request) {
 
 	upConn, err := s.k8s.DialAttach(r.Context(), row, ns, pod, container, true)
 	if err != nil {
-		code := k8sproxy.HTTPStatus(err)
-		if code < 400 {
-			code = http.StatusBadGateway
-		}
-		writeErr(w, code, err.Error())
+		s.writeK8sOpErr(w, r, row, err)
 		return
 	}
 	defer upConn.Close()

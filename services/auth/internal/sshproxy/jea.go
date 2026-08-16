@@ -8,11 +8,21 @@ import (
 // CommandGuard buffers a line of input and decides allow/deny via AllowFn.
 type CommandGuard struct {
 	AllowFn func(line string) bool
-	buf     []byte
+	// Notify is called immediately (e.g. newline before a blocking AllowFn).
+	Notify func([]byte)
+	buf    []byte
 }
 
 func NewCommandGuard(allow func(line string) bool) *CommandGuard {
 	return &CommandGuard{AllowFn: allow}
+}
+
+func (g *CommandGuard) echoNow(echo *[]byte, p ...byte) {
+	if g.Notify != nil {
+		g.Notify(p)
+		return
+	}
+	*echo = append(*echo, p...)
 }
 
 // Feed processes raw PTY input. Returns (forward, echo, deniedLine).
@@ -26,7 +36,7 @@ func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 		case '\r', '\n':
 			line := string(g.buf)
 			g.buf = g.buf[:0]
-			echo = append(echo, '\r', '\n')
+			g.echoNow(&echo, '\r', '\n')
 			if strings.TrimSpace(line) == "" {
 				forward = append(forward, '\n')
 				continue
@@ -40,12 +50,12 @@ func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 		case 0x7f, 0x08: // DEL / BS
 			if len(g.buf) > 0 {
 				g.buf = g.buf[:len(g.buf)-1]
-				echo = append(echo, 0x08, ' ', 0x08)
+				g.echoNow(&echo, 0x08, ' ', 0x08)
 			}
 		case 0x03: // Ctrl-C
 			g.buf = g.buf[:0]
 			forward = append(forward, 0x03)
-			echo = append(echo, '^', 'C', '\r', '\n')
+			g.echoNow(&echo, '^', 'C', '\r', '\n')
 		case 0x04: // Ctrl-D
 			forward = append(forward, 0x04)
 		default:
@@ -55,7 +65,7 @@ func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 			}
 			if unicode.IsPrint(rune(b)) || b == '\t' {
 				g.buf = append(g.buf, b)
-				echo = append(echo, b)
+				g.echoNow(&echo, b)
 			}
 		}
 	}

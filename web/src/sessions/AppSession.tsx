@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { SessionStepUpHost } from "../components/SessionStepUpHost";
 import { DesktopSession } from "./DesktopSession";
 
 type Props = {
@@ -57,6 +58,7 @@ export function AppSession({ id, title, visible, onClose }: Props) {
         src={src}
         sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
       />
+      <SessionStepUpHost sessionId={id} />
     </div>
   );
 }

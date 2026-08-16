@@ -27,6 +27,8 @@ export type PamGroup = {
   id: string;
   name: string;
   description: string;
+  parent_id?: string;
+  parent_name?: string;
   member_count: number;
   created_at: string;
   updated_at: string;
@@ -157,6 +159,7 @@ export type AccessBinding = {
   id: string;
   asset_id?: string;
   asset_match_tags?: string[];
+  asset_match_mode?: string;
   inherited?: boolean;
   user_id?: string;
   role_id?: string;
@@ -175,6 +178,7 @@ export type AccessBinding = {
   allowed_countries?: string[];
   allowed_devices?: string[];
   allowed_namespaces?: string[];
+  allowed_egress?: string[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -203,6 +207,26 @@ export type BreakGlassEvent = {
   asset_name?: string;
   username?: string;
   active: boolean;
+};
+
+export type OpApproval = {
+  id: string;
+  session_id: string;
+  user_id: string;
+  asset_id: string;
+  method: string;
+  path: string;
+  object: string;
+  pack_name: string;
+  channel: string;
+  status: string;
+  approver_id?: string;
+  created_at: string;
+  decided_at?: string;
+  expires_at: string;
+  username?: string;
+  asset_name?: string;
+  approver_username?: string;
 };
 
 export type AccessRequest = {
@@ -271,7 +295,35 @@ export type AuthSettings = {
   saml_acs_url?: string;
   saml_metadata_url?: string;
   saml_slo_url?: string;
+  scim_enabled: boolean;
+  scim_token?: string;
+  has_scim_token: boolean;
+  scim_default_role: string;
+  scim_base_url?: string;
   updated_at?: string;
+};
+
+export type SAMLIdP = {
+  id: string;
+  slug: string;
+  name: string;
+  enabled: boolean;
+  sort_order?: number;
+  metadata_url: string;
+  entity_id: string;
+  sso_url: string;
+  cert_pem: string;
+  attr_username: string;
+  attr_email: string;
+  attr_display_name: string;
+  auto_provision: boolean;
+  skip_mfa: boolean;
+  default_role: string;
+  group_attr: string;
+  group_role_map?: Record<string, string>;
+  acs_url?: string;
+  sp_metadata_url?: string;
+  slo_url?: string;
 };
 
 export type SSHSettings = {
@@ -504,6 +556,14 @@ export type AnalyticsOverview = {
     steps: string[];
     count: number;
   }[];
+  ueba?: {
+    actor: string;
+    baseline: number;
+    recent_distinct: number;
+    new_assets: number;
+    new_names?: string[];
+    spread: boolean;
+  }[];
 };
 
 export type AnalyticsSLO = {
@@ -564,6 +624,7 @@ export class ApiError extends Error {
   max_risk?: number;
   risk_factors?: string[];
   risk_action?: string;
+  operation?: string;
 
   constructor(message: string, status: number, extra?: Partial<ApiError>) {
     super(message);
@@ -583,6 +644,7 @@ export class ApiError extends Error {
       max_risk?: number;
       risk_factors?: string[];
       risk_action?: string;
+      operation?: string;
     };
     return new ApiError(d.error || "request failed", status, {
       code: d.code,
@@ -593,6 +655,7 @@ export class ApiError extends Error {
       max_risk: d.max_risk,
       risk_factors: d.risk_factors,
       risk_action: d.risk_action,
+      operation: d.operation,
     });
   }
 
@@ -654,6 +717,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ challenge_token, credential }),
     }),
+  getOpStepUp: (sessionId: string) =>
+    request<{
+      pending: boolean;
+      granted?: boolean;
+      code?: string;
+      challenge_token?: string;
+      totp?: boolean;
+      webauthn?: boolean;
+      risk_score?: number;
+      max_risk?: number;
+      risk_factors?: string[];
+      operation?: string;
+    }>(`/api/v1/admin/sessions/${sessionId}/op-stepup`),
   listUserWebAuthn: (userId: string) =>
     request<{ credentials: { id: string; name: string; created_at: string }[] }>(
       `/api/v1/admin/users/${userId}/webauthn`,
@@ -661,9 +737,20 @@ export const api = {
   logout: () => request<{ status: string }>("/api/v1/auth/logout", { method: "POST" }),
   me: () => request<User>("/api/v1/auth/me"),
   authMethods: () =>
-    request<{ mode: string; oidc_ready: boolean; ldap_ready: boolean; saml_ready: boolean }>(
-      "/api/v1/auth/methods",
-    ),
+    request<{
+      mode: string;
+      oidc_ready: boolean;
+      ldap_ready: boolean;
+      saml_ready: boolean;
+      saml_idps?: { slug: string; name: string }[];
+    }>("/api/v1/auth/methods"),
+  listSAMLIdPs: () => request<{ idps: SAMLIdP[] }>("/api/v1/admin/settings/saml/idps"),
+  createSAMLIdP: (body: Partial<SAMLIdP>) =>
+    request<SAMLIdP>("/api/v1/admin/settings/saml/idps", { method: "POST", body: JSON.stringify(body) }),
+  putSAMLIdP: (id: string, body: Partial<SAMLIdP>) =>
+    request<SAMLIdP>(`/api/v1/admin/settings/saml/idps/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteSAMLIdP: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/settings/saml/idps/${id}`, { method: "DELETE" }),
   getAuthSettings: () => request<AuthSettings>("/api/v1/admin/settings/auth"),
   putAuthSettings: (body: Partial<AuthSettings>) =>
     request<AuthSettings>("/api/v1/admin/settings/auth", {
@@ -802,9 +889,9 @@ export const api = {
   listRoles: () => request<{ roles: Role[] }>("/api/v1/admin/roles"),
   listGroups: () => request<{ groups: PamGroup[] }>("/api/v1/admin/groups"),
   getGroup: (id: string) => request<PamGroup>(`/api/v1/admin/groups/${id}`),
-  createGroup: (body: { name: string; description?: string; member_ids?: string[] }) =>
+  createGroup: (body: { name: string; description?: string; parent_id?: string; member_ids?: string[] }) =>
     request<PamGroup>("/api/v1/admin/groups", { method: "POST", body: JSON.stringify(body) }),
-  updateGroup: (id: string, body: { name?: string; description?: string; member_ids?: string[] }) =>
+  updateGroup: (id: string, body: { name?: string; description?: string; parent_id?: string; member_ids?: string[] }) =>
     request<PamGroup>(`/api/v1/admin/groups/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteGroup: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/groups/${id}`, { method: "DELETE" }),
@@ -992,6 +1079,8 @@ export const api = {
     }),
   listACL: (assetId: string) =>
     request<{ bindings: AccessBinding[] }>(`/api/v1/admin/assets/${assetId}/acl`),
+  getACL: (assetId: string, bindingId: string) =>
+    request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl/${bindingId}`),
   listTagACL: () => request<{ bindings: AccessBinding[] }>("/api/v1/admin/acl/tags"),
   createTagACL: (
     body: {
@@ -999,6 +1088,7 @@ export const api = {
       role_id?: string;
       group_id?: string;
       asset_match_tags: string[];
+      asset_match_mode?: string;
       duration_minutes?: number;
       access_policy_id?: string;
       max_risk?: number;
@@ -1026,17 +1116,50 @@ export const api = {
       allowed_countries?: string[];
       allowed_devices?: string[];
       allowed_namespaces?: string[];
-      command_policy_pack_id?: string;
-      sql_policy_pack_id?: string;
-      http_policy_pack_id?: string;
-      app_object_pack_id?: string;
-      access_policy_id?: string;
+  allowed_egress?: string[];
+      command_policy_pack_id?: string | null;
+      sql_policy_pack_id?: string | null;
+      http_policy_pack_id?: string | null;
+      app_object_pack_id?: string | null;
+      access_policy_id?: string | null;
       max_risk?: number;
       risk_action?: string;
     },
   ) =>
     request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl`, {
       method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateACL: (
+    assetId: string,
+    bindingId: string,
+    body: {
+      time_start?: string;
+      time_end?: string;
+      days_of_week?: number;
+      duration_minutes?: number;
+      permanent?: boolean;
+      required_tags?: string[];
+      require_ticket?: boolean;
+      require_reason?: boolean;
+      allowed_cidrs?: string[];
+      allowed_countries?: string[];
+      allowed_devices?: string[];
+      allowed_namespaces?: string[];
+  allowed_egress?: string[];
+      command_policy_pack_id?: string | null;
+      sql_policy_pack_id?: string | null;
+      http_policy_pack_id?: string | null;
+      app_object_pack_id?: string | null;
+      access_policy_id?: string | null;
+      max_risk?: number;
+      risk_action?: string;
+      asset_match_tags?: string[];
+      asset_match_mode?: string;
+    },
+  ) =>
+    request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl/${bindingId}`, {
+      method: "PUT",
       body: JSON.stringify(body),
     }),
   deleteACL: (assetId: string, bindingId: string) =>
@@ -1064,9 +1187,16 @@ export const api = {
   accessRequestsSummary: () =>
     request<{
       pending_approve: number;
+      pending_ops: number;
       my_pending: number;
       my_recent_decisions: AccessRequest[];
     }>("/api/v1/admin/access-requests/summary"),
+  listOpApprovals: () =>
+    request<{ approvals: OpApproval[] }>("/api/v1/admin/op-approvals"),
+  approveOpApproval: (id: string) =>
+    request<OpApproval>(`/api/v1/admin/op-approvals/${id}/approve`, { method: "POST" }),
+  denyOpApproval: (id: string) =>
+    request<OpApproval>(`/api/v1/admin/op-approvals/${id}/deny`, { method: "POST" }),
   approveAccessRequest: (id: string) =>
     request<AccessRequest>(`/api/v1/admin/access-requests/${id}/approve`, { method: "POST" }),
   denyAccessRequest: (id: string) =>
@@ -1140,6 +1270,15 @@ export const api = {
       `/api/v1/admin/sessions/events${q ? `?${q}` : ""}`,
     );
   },
+  getSessionTranscript: (id: string) =>
+    request<{ indexed: boolean; protocol: string; lines: TranscriptLine[] }>(
+      `/api/v1/admin/sessions/${id}/transcript`,
+    ),
+  indexSessionTranscript: (id: string, force?: boolean) =>
+    request<{ result: { indexed: boolean; source: string; lines: number; skipped?: string }; lines: TranscriptLine[] }>(
+      `/api/v1/admin/sessions/${id}/transcript`,
+      { method: "POST", body: JSON.stringify({ force: !!force }) },
+    ),
   searchTimeline: (params: {
     user_id?: string;
     username?: string;
@@ -1425,7 +1564,7 @@ export const api = {
     }),
   deleteAppObjectPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/app-object-packs/${id}`, { method: "DELETE" }),
-  previewAppObject: (body: { method: string; path: string; pack_id?: string }) =>
+  previewAppObject: (body: { method: string; path: string; pack_id?: string; query?: string }) =>
     request<AppObjectPreview>("/api/v1/admin/jea/app-object-preview", {
       method: "POST",
       body: JSON.stringify(body),
@@ -1592,6 +1731,7 @@ export type AppObjectPreview = {
   reason?: string;
   code?: string;
   pack_name?: string;
+  graphql_fields?: string[];
 };
 
 export type AccessPolicy = {
@@ -1608,6 +1748,7 @@ export type AccessPolicy = {
   allowed_countries: string[];
   allowed_devices: string[];
   allowed_namespaces: string[];
+  allowed_egress: string[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -1635,12 +1776,21 @@ export type AccessPolicyInput = {
   allowed_countries?: string[];
   allowed_devices?: string[];
   allowed_namespaces?: string[];
+  allowed_egress?: string[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
   http_policy_pack_id?: string;
   app_object_pack_id?: string;
   max_risk?: number;
   risk_action?: string;
+};
+
+export type TranscriptLine = {
+  ts: string;
+  type: string;
+  command: string;
+  source?: string;
+  offset?: number;
 };
 
 export type SessionEventHit = {
@@ -1713,8 +1863,10 @@ export type PolicySnapshot = {
   app_object_pack_id?: string;
   app_object_pack_name?: string;
   allowed_namespaces?: string[];
+  allowed_egress?: string[];
   tag_acl?: boolean;
   match_tags?: string[];
+  match_mode?: string;
   break_glass?: boolean;
   admin_bypass?: boolean;
 };

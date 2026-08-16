@@ -1,6 +1,6 @@
 # KeepPAM: compliance-отчёт за период
 
-Готовый срез «кто / что / когда» из аудита и событий сессий. Не полнотекст asciicast/RDP (`docs/session-search.txt`) и не UEBA «обычно 3 сервера».
+Готовый срез «кто / что / когда» из аудита и событий сессий. Не OCR RDP (`docs/session-search.txt`) и не UEBA «обычно 3 сервера».
 
 ## API
 
@@ -28,10 +28,10 @@ JSON: `summary` + `snapshot` (live ACL / активные сессии / JIT pen
 | privileged | break-glass, admin bypass; в summary также JIT approved |
 | approvals | JIT approve/deny/stage, checkout approve/deny |
 | connections | session created/started/ended/denied, app/k8s access |
-| commands | session_events: JEA deny, k8s, HTTP ACL — не полный shell |
+| commands | session_events: команды SSH (PTY/индекс записи), JEA deny, k8s, HTTP ACL |
 | sql | session_events `sql` / `sql_denied` |
 | downloads | reveal секрета, MP4 export, DLP deny |
-| changes | user/group/role/asset/Policy/JEA packs |
+| changes | user/group/role/asset/Policy/JEA packs, `asset.acl.updated` |
 | revoked | ACL revoke, user.disabled, JIT cancel |
 
 ## UI

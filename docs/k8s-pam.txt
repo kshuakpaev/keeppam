@@ -75,7 +75,7 @@ Lease/checkout (прямой токен в кластер) namespace ACL **не*
 | Header | Значение |
 |--------|----------|
 | `Impersonate-User` | `{prefix}{pam_username}` (default prefix `keeppam:`; `-`/`none` = без префикса) |
-| `Impersonate-Group` | `system:authenticated`, `keeppam:users`, `keeppam:role:{роль}`, `keeppam:group:{группа}` |
+| `Impersonate-Group` | `system:authenticated`, `keeppam:users`, `keeppam:role:{роль}`, `keeppam:group:{группа}` (прямые + предки вложенных групп) |
 | `Impersonate-Extra-keeppam-uid` | UUID пользователя PAM |
 
 Vault SA должен иметь RBAC `impersonate` на users/groups. ClusterRoleBinding в кластере — на `User: keeppam:alice` (или без префикса).

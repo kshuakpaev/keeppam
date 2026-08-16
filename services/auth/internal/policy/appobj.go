@@ -36,19 +36,21 @@ type AppObjectDecision struct {
 	Object   string `json:"object,omitempty"`
 	Action   string `json:"action"` // allow|deny|approval
 	Reason   string `json:"reason,omitempty"`
-	Code     string `json:"code,omitempty"` // approval_required | app_denied
-	PackName string `json:"pack_name,omitempty"`
+	Code     string   `json:"code,omitempty"` // approval_required | app_denied
+	PackName string   `json:"pack_name,omitempty"`
+	GraphQL  []string `json:"graphql_fields,omitempty"`
 }
 
 type AppObjectPreviewInput struct {
 	PackID    *uuid.UUID `json:"pack_id"`
 	Method    string     `json:"method"`
 	Path      string     `json:"path"`
+	Query     string     `json:"query"`
 	Rules     []string   `json:"rules"`
 	Unmatched string     `json:"unmatched"`
 }
 
-var appObjectNameRe = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+var appObjectNameRe = regexp.MustCompile(`^(\*|[a-z_*][a-z0-9_.*-]{0,63})$`)
 
 func (s *Service) ListAppObjectPacks(ctx context.Context) ([]AppObjectPack, error) {
 	rows, err := s.db.Pool.Query(ctx, `
@@ -176,9 +178,31 @@ func (s *Service) PreviewAppObject(ctx context.Context, in AppObjectPreviewInput
 		}
 		pack.Rules = rules
 	}
-	d := MatchAppObject(pack, in.Method, in.Path)
+	d := MatchAppObjectFields(pack, in.Method, in.Path, previewGraphQLFields(in.Query))
 	d.PackName = pack.Name
 	return d, nil
+}
+
+func previewGraphQLFields(query string) []string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+	ct := "application/graphql"
+	if strings.HasPrefix(query, "{") || strings.HasPrefix(query, "[") {
+		ct = "application/json"
+	}
+	f, ok := ExtractGraphQLFields(ct, []byte(query))
+	if !ok {
+		f, ok = ExtractGraphQLFields("application/graphql", []byte(query))
+	}
+	if !ok {
+		return nil
+	}
+	if f == nil {
+		return []string{}
+	}
+	return f
 }
 
 func scanAppObjectPack(row scannable) (AppObjectPack, error) {
@@ -261,6 +285,21 @@ func parseAppObjectRule(raw string) (appObjectRule, bool) {
 // MatchAppObject maps method+path to a named application object.
 // First matching rule wins. Without a pack the caller should skip this check.
 func MatchAppObject(pack AppObjectPack, method, rawPath string) AppObjectDecision {
+	return MatchAppObjectFields(pack, method, rawPath, nil)
+}
+
+// MatchAppObjectFields is MatchAppObject plus GraphQL top-level fields.
+// gqlFields == nil means not a GraphQL request (REST: OBJECT is a label).
+// Non-nil (even empty) means GraphQL: each field is matched; deny/approval
+// on any field wins so a denied field cannot ride along with an allowed one.
+func MatchAppObjectFields(pack AppObjectPack, method, rawPath string, gqlFields []string) AppObjectDecision {
+	if gqlFields == nil {
+		return matchAppObjectREST(pack, method, rawPath)
+	}
+	return matchAppObjectGraphQL(pack, method, rawPath, gqlFields)
+}
+
+func matchAppObjectREST(pack AppObjectPack, method, rawPath string) AppObjectDecision {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	if method == "" {
 		method = "GET"
@@ -278,20 +317,7 @@ func MatchAppObject(pack AppObjectPack, method, rawPath string) AppObjectDecisio
 		if !httpRuleMatches(method, p, r.Method, r.Path) {
 			continue
 		}
-		d := AppObjectDecision{Matched: true, Object: r.Object, Action: r.Action, PackName: pack.Name}
-		switch r.Action {
-		case "allow":
-			d.Allowed = true
-		case "approval":
-			d.Allowed = false
-			d.Code = "approval_required"
-			d.Reason = "app object requires approval: " + r.Object
-		default:
-			d.Allowed = false
-			d.Code = "app_denied"
-			d.Reason = "app object denied: " + r.Object
-		}
-		return d
+		return decisionFromRule(r, pack.Name)
 	}
 	if unmatched == "deny" {
 		return AppObjectDecision{
@@ -300,4 +326,99 @@ func MatchAppObject(pack AppObjectPack, method, rawPath string) AppObjectDecisio
 		}
 	}
 	return AppObjectDecision{Allowed: true, Matched: false, Action: "allow", PackName: pack.Name}
+}
+
+func matchAppObjectGraphQL(pack AppObjectPack, method, rawPath string, fields []string) AppObjectDecision {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = "POST"
+	}
+	p := normalizeRequestPath(rawPath)
+	unmatched := pack.Unmatched
+	if unmatched != "deny" {
+		unmatched = "allow"
+	}
+	check := fields
+	if len(check) == 0 {
+		check = []string{""}
+	}
+	worst := AppObjectDecision{Allowed: true, Action: "allow", PackName: pack.Name, GraphQL: fields}
+	worstRank := 0
+	for _, f := range check {
+		d := firstGraphQLObjectRule(pack, method, p, f)
+		rank := 0
+		if !d.Matched {
+			if unmatched == "deny" {
+				d = AppObjectDecision{
+					Allowed: false, Matched: false, Action: "deny", Code: "app_denied",
+					Reason: "app object unmatched graphql field: " + f, PackName: pack.Name,
+					Object: f,
+				}
+				rank = 2
+			}
+		} else {
+			switch d.Action {
+			case "deny":
+				rank = 2
+			case "approval":
+				rank = 1
+			}
+		}
+		if rank > worstRank {
+			worstRank = rank
+			worst = d
+			worst.GraphQL = fields
+			worst.PackName = pack.Name
+		}
+	}
+	return worst
+}
+
+func firstGraphQLObjectRule(pack AppObjectPack, method, path, field string) AppObjectDecision {
+	for _, raw := range pack.Rules {
+		r, ok := parseAppObjectRule(raw)
+		if !ok {
+			continue
+		}
+		if !httpRuleMatches(method, path, r.Method, r.Path) {
+			continue
+		}
+		if !graphQLObjectMatches(r.Object, field) {
+			continue
+		}
+		d := decisionFromRule(r, pack.Name)
+		if field != "" {
+			d.Object = field
+		}
+		return d
+	}
+	return AppObjectDecision{Allowed: true, Matched: false, Action: "allow", PackName: pack.Name}
+}
+
+func graphQLObjectMatches(object, field string) bool {
+	if object == "*" {
+		return true
+	}
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" {
+		return false
+	}
+	return matchHTTPPath(object, field)
+}
+
+func decisionFromRule(r appObjectRule, packName string) AppObjectDecision {
+	d := AppObjectDecision{Matched: true, Object: r.Object, Action: r.Action, PackName: packName}
+	switch r.Action {
+	case "allow":
+		d.Allowed = true
+	case "approval":
+		d.Allowed = false
+		d.Code = "approval_required"
+		d.Reason = "app object requires approval: " + r.Object
+	default:
+		d.Allowed = false
+		d.Code = "app_denied"
+		d.Reason = "app object denied: " + r.Object
+	}
+	return d
 }

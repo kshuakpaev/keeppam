@@ -23,7 +23,7 @@
 |------|---------|
 | time_start / time_end | NULL на ACL → из политики |
 | days_of_week | `127` (все дни, дефолт INSERT) → маска политики |
-| массивы (CIDR, geo, device, ns, tags) | пустой на ACL → из политики |
+| массивы (CIDR, geo, device, ns, egress, tags) | пустой на ACL → из политики |
 | require_ticket / require_reason | OR (политика только ужесточает) |
 | JEA pack IDs | NULL на ACL → из политики |
 | max_risk | `0` на ACL → из политики (вместе с risk_action) |
@@ -32,7 +32,7 @@
 
 ## Снимок на сессию
 
-На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, tag ACL, break-glass / admin bypass.
+На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, egress, tag ACL, break-glass / admin bypass.
 
 Операции внутри сессии (SQL / HTTP / kubectl / SSH-команда) берут порог риска и pack IDs из снимка, не из live Policy. Правка политики или revoke ACL **не** меняет уже открытую сессию — чтобы оборвать, нужен force-kill.
 
@@ -42,9 +42,19 @@
 
 OPA extra-deny на операции видит `binding.*` из снимка.
 
-Список ACL в UI показывает **эффективные** поля после слияния и имя политики.
+Список ACL в UI показывает **эффективные** поля после слияния и имя политики. Форма «Изменить» грузит сырой GET без overlay — иначе нельзя отличить своё поле от унаследованного.
 
 OPA extra-deny видит `binding.access_policy_id`.
+
+## Редактирование binding
+
+WHO (`user_id` / `role_id` / `group_id`) и прямой `asset_id` не меняются. Для tag ACL можно обновить `asset_match_tags` и `asset_match_mode`.
+
+`GET` / `PUT` `/api/v1/admin/assets/{id}/acl/{bindingId}` (`assets.read` / `assets.acl`). PUT заменяет ограничения: время, дни, ABAC, packs, Policy, max_risk. Пустые packs/время = NULL (снова наследуются из Policy).
+
+TTL: `duration_minutes` — новый срок от now (1..1440); `permanent: true` — снять `expires_at`; иначе оставить как есть.
+
+Аудит: `asset.acl.updated`. Уже открытая сессия со снимком не меняется.
 
 ## Seed
 
@@ -59,8 +69,8 @@ OPA extra-deny видит `binding.access_policy_id`.
 
 ## Аудит
 
-`access.policy.created` / `updated` / `deleted`. Выдача ACL с политикой — в `asset.acl.granted` (`access_policy_id`).
+`access.policy.created` / `updated` / `deleted`. Выдача ACL с политикой — в `asset.acl.granted` (`access_policy_id`). Правка — `asset.acl.updated`.
 
 ## Вне scope
 
-Policy на группу активов по тегу — `docs/tag-acl.txt`. Редактирование существующего binding (по-прежнему revoke + create). Отдельный движок правил на протокол. Step-up MFA на каждую опасную команду внутри сессии (`docs/adaptive-mfa.txt` — только connect). Снимок не копирует CIDR/время: они проверяются только на connect.
+Policy на группу активов по тегу — `docs/tag-acl.txt`. Отдельный движок правил на протокол. Step-up MFA на каждую опасную команду внутри сессии (`docs/adaptive-mfa.txt` — только connect). Снимок не копирует CIDR/время: они проверяются только на connect.

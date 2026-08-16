@@ -1,6 +1,6 @@
 # KeepPAM: forensic timeline
 
-Одна лента «что делал пользователь за интервал»: control-plane аудит + data-plane события сессий. Не полнотекст asciicast/RDP (`docs/session-search.txt`).
+Одна лента «что делал пользователь за интервал»: control-plane аудит + data-plane события сессий. Команды SSH — `docs/session-search.txt` (stdin / PTY, не OCR видео).
 
 ## Метаданные сессии
 
@@ -8,7 +8,7 @@
 
 | Поле | Смысл |
 |------|--------|
-| `risk_score` / `risk_factors` | балл Evaluate на connect |
+| `risk_score` / `risk_factors` | балл Evaluate на connect, в т.ч. `ueba_new_asset` / `ueba_spread` (`docs/ueba.txt`) |
 | `labels` | теги пользователя ∪ теги актива |
 | `access_policy_id` | именованная Policy, если была |
 | `client_country` | GeoIP на момент входа |
@@ -32,7 +32,7 @@
 
 Источники:
 
-- `session_events` сессий этого пользователя (SQL, k8s, JEA deny, DLP, HTTP ACL, created/ended…)
+- `session_events` сессий этого пользователя (SQL, k8s, команды SSH, JEA, DLP, HTTP ACL, created/ended…)
 - `audit_events` с `actor_id` (login, ACL, JIT, OPA, session.denied…)
 
 ## UI
@@ -41,4 +41,4 @@
 
 ## Вне scope
 
-Полнотекст записей SSH/RDP, профиль «обычно 3 сервера». Готовый отчёт за период — `docs/compliance-report.txt`.
+Полнотекст **вывода** SSH и RDP/видео. Готовый отчёт за период — `docs/compliance-report.txt`. Профиль «обычно 3 сервера» — `docs/ueba.txt`.

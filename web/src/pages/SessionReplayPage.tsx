@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
-import { api, type PamSession } from "../api";
+import { api, type PamSession, type TranscriptLine } from "../api";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
 import "xterm/css/xterm.css";
@@ -35,6 +35,8 @@ export function SessionReplayPage() {
   const [exporting, setExporting] = useState(false);
   const [exportingMp4, setExportingMp4] = useState(false);
   const [ready, setReady] = useState(false);
+  const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
+  const [indexBusy, setIndexBusy] = useState(false);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -63,6 +65,14 @@ export function SessionReplayPage() {
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
         setIsolated(!!sess.isolated);
+        if (sess.protocol === "ssh") {
+          try {
+            const t = await api.getSessionTranscript(id);
+            if (!cancelled) setTranscript(t.lines || []);
+          } catch {
+            /* replay still works */
+          }
+        }
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
         if (!res.ok) throw new Error("запись недоступна");
@@ -287,6 +297,20 @@ export function SessionReplayPage() {
     }
   }
 
+  async function indexTranscript() {
+    if (!id) return;
+    setIndexBusy(true);
+    setError("");
+    try {
+      const res = await api.indexSessionTranscript(id, true);
+      setTranscript(res.lines || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка индекса");
+    } finally {
+      setIndexBusy(false);
+    }
+  }
+
   const isGuac = protocol === "rdp" || protocol === "vnc" || isolated;
 
   return (
@@ -329,6 +353,11 @@ export function SessionReplayPage() {
               {exportingMp4 ? "MP4…" : "Экспорт MP4"}
             </button>
           )}
+          {id && protocol === "ssh" && (
+            <button className="btn secondary" type="button" disabled={indexBusy} onClick={() => void indexTranscript()}>
+              {indexBusy ? "Индекс…" : "Индексировать команды"}
+            </button>
+          )}
           {id && (
             <a className="btn secondary" href={api.getRecordingUrl(id)}>
               Скачать
@@ -355,6 +384,7 @@ export function SessionReplayPage() {
           <span className="mono muted">{formatMs(duration)}</span>
         </div>
       )}
+      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" ? "0.75rem" : 0 }}>
       <div
         ref={hostRef}
         className={isGuac ? undefined : "terminal-host card"}
@@ -367,9 +397,30 @@ export function SessionReplayPage() {
                 background: "#0b0b0b",
                 position: "relative",
               }
-            : undefined
+            : { flex: 1, minHeight: 0 }
         }
       />
+      {protocol === "ssh" && (
+        <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
+          <h2 style={{ marginTop: 0 }}>Команды</h2>
+          <p className="muted">
+            {transcript.length === 0
+              ? "Пусто. Для сессий без JEA нажмите «Индексировать команды»."
+              : `${transcript.length} строк`}
+          </p>
+          <ul className="plain-list">
+            {transcript.map((ln, i) => (
+              <li key={`${ln.ts}-${i}`}>
+                <span className="mono" title={ln.type}>
+                  {ln.command || ln.type}
+                </span>
+                <span className="muted">{ln.source || ln.type}</span>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      )}
+      </div>
     </div>
   );
 }

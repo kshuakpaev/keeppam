@@ -53,7 +53,7 @@ export function AnalyticsPage() {
       <div className="page-head">
         <div>
           <h1>Аналитика</h1>
-          <p className="muted">SLO, аномалии, SIEM-корреляция и цепочки сигналов</p>
+          <p className="muted">SLO, аномалии, UEBA (обычный набор активов), SIEM-корреляция и цепочки сигналов</p>
         </div>
         <div className="row gap">
           {WINDOWS.map((h) => (
@@ -195,6 +195,34 @@ export function AnalyticsPage() {
                       {a.detail}
                       {a.actor && <> · actor={a.actor}</>}
                     </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="card" style={{ marginTop: "1.25rem" }}>
+            <h2>UEBA — обычный набор активов</h2>
+            <p className="muted">
+              Baseline: ≥3 разных актива за 30 дней до окна. Сигнал, если за окно появился хост вне этого набора
+              (или за сутки целей ≥2× от обычного набора).
+            </p>
+            {(data.ueba || []).length === 0 ? (
+              <p className="muted">За окно {data.window_hours} ч выходов за обычный набор нет</p>
+            ) : (
+              <ul className="plain-list">
+                {(data.ueba || []).map((u) => (
+                  <li key={u.actor}>
+                    <span>
+                      {u.actor}
+                      {u.spread ? <span className="badge sev-high">spread</span> : <span className="badge sev-medium">new</span>}
+                      <span className="muted">
+                        {" "}
+                        обычных {u.baseline} · за окно {u.recent_distinct} · новых {u.new_assets}
+                        {u.new_names && u.new_names.length > 0 ? ` (${u.new_names.join(", ")})` : ""}
+                      </span>
+                    </span>
+                    <strong>{u.new_assets}</strong>
                   </li>
                 ))}
               </ul>

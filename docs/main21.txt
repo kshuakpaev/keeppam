@@ -1,0 +1,25 @@
+Ядро PAM уже собрано: identity, ACL/Policy, сессии, JEA, риск, запись, vault, JIT, k8s/app. Дальше — не дыры в MVP, а усиление enforcement и аналитики.
+
+Следующие цельные срезы (того же масштаба, что edit ACL / OR по тегам) — очередь закрыта:
+
+~~Живой JIT-approve в HTTP~~
+~~Step-up MFA на операцию~~
+~~Isolated browser URL/object ACL~~
+~~Вложенные теги — иерархия `prod/linux`.~~
+~~Вложенные группы — иерархия WHO, член потомка видит ACL родителя.~~
+~~SCIM — inbound провижининг Users/Groups из IdP.~~
+~~Несколько SAML IdP~~
+~~GraphQL field ACL — верхнеуровневые поля в object pack.~~
+~~UEBA («обычно 3 сервера») — baseline 30д + факторы на connect.~~
+~~Пауза SSH PTY до approve — Command Risk require_approval ждёт 60с.~~
+~~Полнотекст SSH stdin — PTY-журнал + индекс asciicast (не OCR/RDP).~~
+~~Network PAM — SSH egress allowlist (`direct-tcpip` / `-L`), не firewall.~~
+Сознательно большие / не PAM-MVP:
+
+Полнотекст вывода asciicast и RDP/видео
+Network PAM как firewall / NAC
+Контентный DLP / PII в потоке
+Отдельный движок правил на каждый протокол (единый Policy уже есть)
+Полный shell AST
+OTEL Collector, OpenSearch, PDF для аудитора
+Если скажете «дальше» — логичный следующий из крупного списка: контентный DLP (узкий: PII-паттерны в SQL/HTTP, не полный классификатор). Остальное — ещё больше.

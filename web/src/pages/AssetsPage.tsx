@@ -191,7 +191,7 @@ export function AssetsPage() {
           <input
             value={form.tags}
             onChange={(e) => setForm({ ...form, tags: e.target.value })}
-            placeholder="prod, db, linux"
+          placeholder="prod/linux, db"
           />
           <label>Описание</label>
           <input

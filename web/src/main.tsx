@@ -27,6 +27,7 @@ import { K8sSessionPage } from "./pages/K8sSessionPage";
 import { ForensicPage } from "./pages/ForensicPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { UserEditPage } from "./pages/UserEditPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { UsersPage } from "./pages/UsersPage";
 import "./styles.css";
 
@@ -57,6 +58,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/sessions/:id/desktop" element={<DesktopPage />} />
               <Route path="/sessions/:id/replay" element={<SessionReplayPage />} />
               <Route path="/sessions/:id/watch" element={<WatchPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
               <Route path="/users" element={<UsersPage />} />
               <Route path="/users/:id" element={<UserEditPage />} />
               <Route path="/groups" element={<GroupsPage />} />

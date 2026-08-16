@@ -221,6 +221,9 @@ export function UserEditPage() {
         </select>
 
         <label>Группы PAM</label>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Прямое членство. ACL на родителя тоже срабатывает, если отмечена дочерняя.
+        </p>
         <div style={{ marginBottom: "0.75rem" }}>
           {pamGroups.map((g) => (
             <label key={g.id} className="row" style={{ gap: 8, alignItems: "center", marginBottom: 4 }}>
@@ -232,7 +235,7 @@ export function UserEditPage() {
                   setGroupIds((ids) => (ids.includes(g.id) ? ids.filter((x) => x !== g.id) : [...ids, g.id]))
                 }
               />
-              <span className="mono">{g.name}</span>
+              <span className="mono">{g.parent_name ? `${g.parent_name} / ${g.name}` : g.name}</span>
               <span className="muted">{g.description}</span>
             </label>
           ))}
@@ -245,7 +248,7 @@ export function UserEditPage() {
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           disabled={!canWrite}
-          placeholder="pci, prod, contractor"
+          placeholder="prod/sre, pci"
         />
 
         <div className="meta-grid">

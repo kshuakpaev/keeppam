@@ -3,11 +3,15 @@ package appaccess
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,6 +27,7 @@ type IsolateConfig struct {
 	DockerSock string
 	Image      string
 	Network    string
+	ProxyBase  string
 }
 
 func IsolateConfigFromEnv() IsolateConfig {
@@ -38,29 +43,41 @@ func IsolateConfigFromEnv() IsolateConfig {
 	if netw == "" {
 		netw = "deploy_default"
 	}
-	return IsolateConfig{DockerSock: sock, Image: img, Network: netw}
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("KEEPPAM_ISO_PROXY_BASE")), "/")
+	if base == "" {
+		base = "http://api:8080"
+	}
+	return IsolateConfig{DockerSock: sock, Image: img, Network: netw, ProxyBase: base}
 }
 
 type IsolateEndpoint struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
-	Name string `json:"name"`
+	Host  string `json:"host"`
+	Port  int    `json:"port"`
+	Name  string `json:"name"`
+	Token string `json:"token,omitempty"`
 }
 
-func (s *Service) IsolateStart(ctx context.Context, sessionID uuid.UUID, creds assets.TargetCreds, loginURL string) (IsolateEndpoint, error) {
+func (s *Service) IsolateStart(ctx context.Context, sessionID uuid.UUID, _ assets.TargetCreds, loginURL string) (IsolateEndpoint, error) {
 	if cached, ok := s.isoGet(ctx, sessionID); ok {
-		if tcpReady(cached.Host, cached.Port, 800*time.Millisecond) {
+		if cached.Host != "" && tcpReady(cached.Host, cached.Port, 800*time.Millisecond) {
 			return cached, nil
 		}
 		s.IsolateStop(ctx, sessionID)
 	}
 	cfg := IsolateConfigFromEnv()
-	url := startURL(creds, loginURL)
 	name := containerName(sessionID)
-	if err := dockerCreateStart(ctx, cfg, name, url); err != nil {
+	token := newIsoToken()
+	s.isoPut(ctx, sessionID, IsolateEndpoint{Token: token, Name: name})
+	start := IsoProxyURL(cfg.ProxyBase, sessionID, token, loginURL)
+	if start == "" {
+		s.IsolateStop(ctx, sessionID)
+		return IsolateEndpoint{}, fmt.Errorf("isolated proxy URL: missing base or token")
+	}
+	if err := dockerCreateStart(ctx, cfg, name, start); err != nil {
+		s.IsolateStop(ctx, sessionID)
 		return IsolateEndpoint{}, err
 	}
-	ep := IsolateEndpoint{Host: name, Port: 5900, Name: name}
+	ep := IsolateEndpoint{Host: name, Port: 5900, Name: name, Token: token}
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		if tcpReady(ep.Host, ep.Port, time.Second) {
@@ -69,8 +86,55 @@ func (s *Service) IsolateStart(ctx context.Context, sessionID uuid.UUID, creds a
 		}
 		time.Sleep(400 * time.Millisecond)
 	}
-	_ = dockerStop(ctx, cfg, name)
+	s.IsolateStop(ctx, sessionID)
 	return IsolateEndpoint{}, fmt.Errorf("isolated browser VNC not ready on %s:5900", name)
+}
+
+func (s *Service) IsolateTokenOK(ctx context.Context, sessionID uuid.UUID, token string) bool {
+	if token == "" {
+		return false
+	}
+	ep, ok := s.isoGet(ctx, sessionID)
+	if !ok || ep.Token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(ep.Token), []byte(token)) == 1
+}
+
+func newIsoToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(fmt.Sprintf("%016x", time.Now().UnixNano())))[:32]
+	}
+	return hex.EncodeToString(b)
+}
+
+func IsoProxyURL(base string, id uuid.UUID, token, loginURL string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	token = strings.TrimSpace(token)
+	if base == "" || token == "" || id == uuid.Nil {
+		return ""
+	}
+	return base + "/iso/" + id.String() + "/" + token + isoStartPath(loginURL)
+}
+
+func isoStartPath(loginURL string) string {
+	u := strings.TrimSpace(loginURL)
+	if u == "" {
+		return "/"
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "/"
+	}
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if parsed.RawQuery != "" {
+		path += "?" + parsed.RawQuery
+	}
+	return path
 }
 
 func (s *Service) IsolateStop(ctx context.Context, sessionID uuid.UUID) {
@@ -94,7 +158,7 @@ func (s *Service) isoGet(ctx context.Context, id uuid.UUID) (IsolateEndpoint, bo
 		return IsolateEndpoint{}, false
 	}
 	var ep IsolateEndpoint
-	if json.Unmarshal([]byte(raw), &ep) != nil || ep.Host == "" {
+	if json.Unmarshal([]byte(raw), &ep) != nil || (ep.Host == "" && ep.Token == "") {
 		return IsolateEndpoint{}, false
 	}
 	if ep.Port == 0 {
@@ -117,18 +181,6 @@ func containerName(id uuid.UUID) string {
 		h = h[:12]
 	}
 	return "kp-iso-" + h
-}
-
-func startURL(creds assets.TargetCreds, loginURL string) string {
-	u := strings.TrimSpace(loginURL)
-	if u != "" {
-		return u
-	}
-	port := creds.Asset.Port
-	if port <= 0 {
-		port = 443
-	}
-	return fmt.Sprintf("https://%s:%d/", creds.Asset.Address, port)
 }
 
 func tcpReady(host string, port int, timeout time.Duration) bool {

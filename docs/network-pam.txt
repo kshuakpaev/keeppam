@@ -1,0 +1,48 @@
+# KeepPAM: Network PAM (SSH egress)
+
+Контролируемый локальный порт-форвард через SSH-шлюз. Не firewall и не NAC: PAM по-прежнему проксирует один актив, плюс **только** `direct-tcpip` на allowlist назначений.
+
+## Модель
+
+Поле `allowed_egress` на ACL (`asset_access_bindings`) и именованной Policy (`access_policies`). Overlay как у `allowed_namespaces`: пустое на ACL берётся из Policy. Снимок на connect (`sessions.policy_snapshot`) — live-правка списка не меняет уже открытый forward.
+
+Формат правила (до 32 штук):
+
+| Правило | Смысл |
+|---------|--------|
+| `10.1.2.9:5432` | один IP и порт |
+| `10.1.2.0/24:5432` | CIDR, фиксированный порт |
+| `10.1.2.0/24` | CIDR, любой порт |
+| `db.prod.local:5432` | hostname как в SSH-запросе (без DNS для hostname-правила); CIDR-правило может резолвить имя |
+
+Пустой список = **все туннели запрещены** (как раньше DLP). Это не `allowed_cidrs`: пустой CIDR клиента = любой IP, пустой egress = deny.
+
+`0.0.0.0/0` в списке разрешён; loopback / link-local / `localhost` в правилах и на Dial — отказ (SSRF на worker).
+
+## Enforcement
+
+SSH worker (`:2222`):
+
+1. Нужна уже открытая PAM-сессия на том же SSH-коннекте (shell / выбор актива). `ssh -N -L` без сессии — отказ.
+2. `direct-tcpip` сверяется со снимком; совпало — Dial с worker + splice, аудит.
+3. `forwarded-tcpip`, `tcpip-forward` (remote listen), X11, `tun` — по-прежнему DLP deny.
+4. До 8 одновременных forward на коннект. Dial timeout 10 с.
+
+Break-glass / admin bypass (`users.write`) пропускают список, но не loopback.
+
+Пример: `ssh -L 5432:10.1.2.9:5432 user@keeppam` после выбора SSH-актива.
+
+Миграция `064`. UI: карточка актива (ACL) и JEA → Policy.
+
+## Аудит / forensic
+
+| Событие | Где |
+|---------|-----|
+| `session.egress.opened` / `session.egress.denied` | audit |
+| `egress` / `egress_denied` | `session_events` (host, port, reason) |
+
+Forensic-поиск по умолчанию включает эти типы. UI: Сессии → События.
+
+## Вне scope
+
+Полноценный firewall / «запретить прямой доступ в обход PAM». Ephemeral assets из CIDR без регистрации. Remote listen (`-R`). HTTP/k8s port-forward. MITM TLS. Контентный DLP в потоке.

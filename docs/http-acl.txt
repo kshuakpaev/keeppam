@@ -31,9 +31,8 @@ Seed: `http-readonly` (GET/HEAD/OPTIONS *), `http-block-admin` (`* /admin*`, `DE
 | Канал | Поведение |
 |-------|-----------|
 | HTTPS reverse-proxy `recording_mode=full` (`/sessions/{id}/app`) | 403 до upstream, запись в HAR-like jsonl |
+| Isolated Chromium (`recording_mode=isolated`) | тот же reverse-proxy: `START_URL` = `/iso/{session}/{token}/…` на API, не LoginURL напрямую |
 | kubectl `:16443` и cookie API (apply/exec/object) | 403, k8s Status |
-
-Isolated Chromium (VNC) **не** видит HTTP ACL: браузер ходит на приложение напрямую.
 
 ## Риск операции
 
@@ -55,6 +54,6 @@ OPA extra-deny видит `request.operation`.
 
 ## Вне scope
 
-GraphQL field ACL, тело запроса/ответа, isolated browser URL, отдельный API gateway вне PAM-сессии.
+GraphQL field ACL — `docs/graphql-acl.txt`. Тело запроса/ответа кроме GraphQL, HTML `<base>` rewrite, редирект на чужой IdP-хост (SSO), отдельный API gateway вне PAM-сессии.
 
 Object/Function ACL поверх URL — `docs/app-object-acl.txt`.

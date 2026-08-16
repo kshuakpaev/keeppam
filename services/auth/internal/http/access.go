@@ -3,10 +3,12 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 )
@@ -163,7 +165,60 @@ func (s *Server) handleAccessRequestsSummary(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.ops != nil && (canManager || canSecurity) {
+		if n, err := s.ops.CountPending(r.Context(), sess.UserID); err == nil {
+			sum.PendingOps = n
+		}
+	}
 	writeJSON(w, http.StatusOK, sum)
+}
+
+func (s *Server) handleListOpApprovals(w http.ResponseWriter, r *http.Request) {
+	if s.ops == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"approvals": []any{}})
+		return
+	}
+	list, err := s.ops.ListPending(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approvals": list})
+}
+
+func (s *Server) handleApproveOp(w http.ResponseWriter, r *http.Request) {
+	s.decideOp(w, r, true)
+}
+
+func (s *Server) handleDenyOp(w http.ResponseWriter, r *http.Request) {
+	s.decideOp(w, r, false)
+}
+
+func (s *Server) decideOp(w http.ResponseWriter, r *http.Request, approve bool) {
+	if s.ops == nil {
+		writeErr(w, http.StatusServiceUnavailable, "approval service unavailable")
+		return
+	}
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	rec, err := s.ops.Decide(r.Context(), sess.UserID, id, approve, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		if opapprove.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		if strings.Contains(err.Error(), "cannot approve own") {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
 }
 
 func (s *Server) handleOpenBreakGlass(w http.ResponseWriter, r *http.Request) {

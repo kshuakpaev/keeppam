@@ -15,6 +15,7 @@ import (
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/tagpath"
 )
 
 type Service struct {
@@ -792,20 +793,14 @@ func (s *Service) tagsFor(ctx context.Context, assetID uuid.UUID) ([]string, err
 		}
 		tags = append(tags, t)
 	}
-	if tags == nil {
-		tags = []string{}
-	}
-	return tags, rows.Err()
+	return tagpath.Normalize(tags), rows.Err()
 }
 
 func setTagsTx(ctx context.Context, tx pgx.Tx, assetID uuid.UUID, tags []string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM asset_tags WHERE asset_id=$1`, assetID); err != nil {
 		return err
 	}
-	for _, tag := range tags {
-		if tag == "" {
-			continue
-		}
+	for _, tag := range tagpath.Normalize(tags) {
 		if _, err := tx.Exec(ctx, `INSERT INTO asset_tags (asset_id, tag) VALUES ($1,$2) ON CONFLICT DO NOTHING`, assetID, tag); err != nil {
 			return err
 		}

@@ -1,0 +1,47 @@
+# KeepPAM: inbound SCIM 2.0
+
+KeepPAM — SCIM 2.0 **service provider**. Entra ID / Okta шлют Users и Groups; PAM создаёт учётки и членство в группах.
+
+Не полный RFC 7643/7644: нет Bulk, ETag, `/Me`, Enterprise User, сложных filter, outbound-клиента, нескольких токенов.
+
+## Что закрывает
+
+Пользователи больше не появляются только при первом SSO. Offboarding: IdP шлёт `active=false` или DELETE — учётка **disabled** (не hard-delete). PATCH members снимает членство, если группа в IdP пропала (SAML при логине только добавляет).
+
+## Настройка
+
+1. Config → Авторизация → **SCIM 2.0** (секция всегда видна, не зависит от `mode`).
+2. Включить, роль по умолчанию (не `admin` — clamp в `operator`).
+3. Сгенерировать Bearer-токен, сохранить. Токен write-only (как OIDC secret).
+4. В IdP: Tenant URL = `{public_base_url}/scim/v2`, auth = Bearer.
+
+Стенд: UI `:5173` проксирует `/scim/` на API. Прямой API `:8080/scim/v2` тоже работает.
+
+## Протокол
+
+| Метод | Путь |
+|-------|------|
+| GET | `/scim/v2/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes` |
+| GET/POST | `/scim/v2/Users`, `/scim/v2/Groups` |
+| GET/PUT/PATCH/DELETE | `/scim/v2/Users/{id}`, `/scim/v2/Groups/{id}` |
+
+- Content-Type: `application/scim+json`
+- Auth: `Authorization: Bearer …` (constant-time). Без cookie/CSRF.
+- Filter: только `userName eq`, `displayName eq`, `externalId eq`
+- Pagination: `startIndex` с 1, `count` default 100, max 200
+- DELETE user = disable. Нельзя выключить последнего active admin.
+- DELETE group = как UI (`ON DELETE CASCADE` на ACL группы)
+
+Users: `userName` → username, primary email, `displayName`, `active` → status.
+Новый пользователь: `auth_source=scim`, случайный неиспользуемый пароль, роль из настроек.
+PUT существующего SAML/local: профиль и status, **не** `auth_source` / роли / пароль.
+
+Groups: `displayName` → имя (lowercase). PUT/PATCH members меняет **только эту группу**, не все группы пользователя.
+
+`externalId` хранится в `scim_aliases`, не колонка `users`.
+
+Миграция `059`.
+
+## Вне scope
+
+Outbound SCIM (PAM → IdP). Несколько токенов / несколько IdP. Bulk. Автоснятие SAML-групп при логине без SCIM.

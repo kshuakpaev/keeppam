@@ -319,6 +319,7 @@ func (s *Service) ExpirePending(ctx context.Context, olderThan time.Duration) (i
 
 type RequestsSummary struct {
 	PendingApprove    int             `json:"pending_approve"`
+	PendingOps        int             `json:"pending_ops"`
 	MyPending         int             `json:"my_pending"`
 	MyRecentDecisions []AccessRequest `json:"my_recent_decisions"`
 }

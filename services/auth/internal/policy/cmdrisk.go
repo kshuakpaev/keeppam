@@ -47,6 +47,8 @@ func (v SSHLineVerdict) EventType() string {
 		return "dlp"
 	case SSHKindRisk:
 		return "risk"
+	case SSHKindApproval:
+		return "command_approval"
 	default:
 		return "command_denied"
 	}

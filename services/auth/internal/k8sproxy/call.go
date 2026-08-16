@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -113,8 +114,14 @@ func (g *Gateway) prepareBrowser(ctx context.Context, row sessionsvc.Session, op
 	if msg, deny := g.denyHTTPACL(ctx, row, method, path, ""); deny {
 		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", msg))
 	}
-	if msg, deny := g.denyOpRisk(ctx, row, call, ""); deny {
-		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", msg))
+	if ev, deny := g.denyOpRisk(ctx, row, call, ""); deny {
+		if ev.NeedsStepUp() {
+			if g.onNeedMFA != nil {
+				_ = g.onNeedMFA(ctx, row, ev)
+			}
+			return nil, call, errStatus(http.StatusForbidden, &policy.StepUpError{Result: ev})
+		}
+		return nil, call, errStatus(http.StatusForbidden, fmt.Errorf("%s", ev.DenyMessage()))
 	}
 	if allow == "" && NeedsNamespaceListFilter(row.K8sNamespaces, call) {
 		body := SyntheticNamespaceList(row.K8sNamespaces, false)

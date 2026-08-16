@@ -28,6 +28,7 @@ type AccessPolicy struct {
 	AllowedCountries      []string   `json:"allowed_countries"`
 	AllowedDevices        []string   `json:"allowed_devices"`
 	AllowedNamespaces     []string   `json:"allowed_namespaces"`
+	AllowedEgress         []string   `json:"allowed_egress"`
 	CommandPolicyPackID   *uuid.UUID `json:"command_policy_pack_id,omitempty"`
 	CommandPolicyPackName string     `json:"command_policy_pack_name,omitempty"`
 	SQLPolicyPackID       *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
@@ -55,6 +56,7 @@ type AccessPolicyInput struct {
 	AllowedCountries    []string   `json:"allowed_countries"`
 	AllowedDevices      []string   `json:"allowed_devices"`
 	AllowedNamespaces   []string   `json:"allowed_namespaces"`
+	AllowedEgress       []string   `json:"allowed_egress"`
 	CommandPolicyPackID *uuid.UUID `json:"command_policy_pack_id"`
 	SQLPolicyPackID     *uuid.UUID `json:"sql_policy_pack_id"`
 	HTTPPolicyPackID    *uuid.UUID `json:"http_policy_pack_id"`
@@ -98,13 +100,13 @@ func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in 
 		INSERT INTO access_policies (
 			id, name, description, time_start, time_end, days_of_week,
 			required_tags, require_ticket, require_reason,
-			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces,
+			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress,
 			command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id,
 			max_risk, risk_action, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW(),NOW(),$20)`,
+		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW(),NOW(),$21)`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
-		norm.cidrs, norm.countries, norm.devices, norm.namespaces,
+		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
 		norm.maxRisk, norm.riskAction, actorID)
 	if err != nil {
@@ -145,13 +147,13 @@ func (s *Service) UpdateAccessPolicy(ctx context.Context, actorID, id uuid.UUID,
 		UPDATE access_policies SET
 			name=$2, description=$3, time_start=$4::time, time_end=$5::time, days_of_week=$6,
 			required_tags=$7, require_ticket=$8, require_reason=$9,
-			allowed_cidrs=$10, allowed_countries=$11, allowed_devices=$12, allowed_namespaces=$13,
-			command_policy_pack_id=$14, sql_policy_pack_id=$15, http_policy_pack_id=$16, app_object_pack_id=$17,
-			max_risk=$18, risk_action=$19, updated_at=NOW()
+			allowed_cidrs=$10, allowed_countries=$11, allowed_devices=$12, allowed_namespaces=$13, allowed_egress=$14,
+			command_policy_pack_id=$15, sql_policy_pack_id=$16, http_policy_pack_id=$17, app_object_pack_id=$18,
+			max_risk=$19, risk_action=$20, updated_at=NOW()
 		WHERE id=$1`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
-		norm.cidrs, norm.countries, norm.devices, norm.namespaces,
+		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
 		norm.maxRisk, norm.riskAction)
 	if err != nil {
@@ -180,6 +182,7 @@ const accessPolicySelect = `
 			p.days_of_week, p.required_tags, p.require_ticket, p.require_reason,
 			COALESCE(p.allowed_cidrs,'{}'), COALESCE(p.allowed_countries,'{}'),
 			COALESCE(p.allowed_devices,'{}'), COALESCE(p.allowed_namespaces,'{}'),
+			COALESCE(p.allowed_egress,'{}'),
 			p.command_policy_pack_id, COALESCE(cp.name,''),
 			p.sql_policy_pack_id, COALESCE(sp.name,''),
 			p.http_policy_pack_id, COALESCE(hp.name,''),
@@ -194,10 +197,10 @@ const accessPolicySelect = `
 func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 	var p AccessPolicy
 	var ts, te *string
-	var tags, cidrs, countries, devices, namespaces []string
+	var tags, cidrs, countries, devices, namespaces, egress []string
 	var cmdName, sqlName, httpName, appName string
 	err := row.Scan(&p.ID, &p.Name, &p.Description, &ts, &te, &p.DaysOfWeek, &tags, &p.RequireTicket, &p.RequireReason,
-		&cidrs, &countries, &devices, &namespaces,
+		&cidrs, &countries, &devices, &namespaces, &egress,
 		&p.CommandPolicyPackID, &cmdName, &p.SQLPolicyPackID, &sqlName, &p.HTTPPolicyPackID, &httpName,
 		&p.AppObjectPackID, &appName,
 		&p.MaxRisk, &p.RiskAction, &p.CreatedAt, &p.UpdatedAt)
@@ -211,6 +214,10 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 	p.AllowedCountries = geoip.NormalizeCountries(countries)
 	p.AllowedDevices = device.Normalize(devices)
 	p.AllowedNamespaces = normalizeNamespaces(namespaces)
+	p.AllowedEgress = egress
+	if p.AllowedEgress == nil {
+		p.AllowedEgress = []string{}
+	}
 	p.CommandPolicyPackName = cmdName
 	p.SQLPolicyPackName = sqlName
 	p.HTTPPolicyPackName = httpName
@@ -219,12 +226,12 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 }
 
 type normalizedPolicy struct {
-	name, description, riskAction               string
-	timeStart, timeEnd                          *string
-	days, maxRisk                               int
-	tags, cidrs, countries, devices, namespaces []string
-	requireTicket, requireReason                bool
-	cmdPack, sqlPack, httpPack, appPack         *uuid.UUID
+	name, description, riskAction                       string
+	timeStart, timeEnd                                  *string
+	days, maxRisk                                       int
+	tags, cidrs, countries, devices, namespaces, egress []string
+	requireTicket, requireReason                        bool
+	cmdPack, sqlPack, httpPack, appPack                 *uuid.UUID
 }
 
 func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normalizedPolicy, error) {
@@ -264,11 +271,15 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 	if err != nil {
 		return normalizedPolicy{}, err
 	}
+	egress, err := ValidateEgress(in.AllowedEgress)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
 	return normalizedPolicy{
 		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction,
 		timeStart: in.TimeStart, timeEnd: in.TimeEnd, days: days, maxRisk: in.MaxRisk,
 		tags: normalizeTags(in.RequiredTags), cidrs: cidrs, countries: countries,
-		devices: devices, namespaces: namespaces,
+		devices: devices, namespaces: namespaces, egress: egress,
 		requireTicket: in.RequireTicket, requireReason: in.RequireReason,
 		cmdPack: in.CommandPolicyPackID, sqlPack: in.SQLPolicyPackID, httpPack: in.HTTPPolicyPackID, appPack: in.AppObjectPackID,
 	}, nil

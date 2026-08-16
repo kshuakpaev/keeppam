@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/ueba"
 )
 
 type Service struct {
@@ -30,6 +31,7 @@ type Overview struct {
 	TopAssets   []NamedCount `json:"top_assets"`
 	SIEM        SIEMCorr     `json:"siem"`
 	Chains      []Chain      `json:"chains"`
+	UEBA        []UEBAHit    `json:"ueba"`
 }
 
 type Stats struct {
@@ -94,9 +96,18 @@ type Chain struct {
 	Count    int      `json:"count"`
 }
 
+type UEBAHit struct {
+	Actor          string   `json:"actor"`
+	Baseline       int      `json:"baseline"`
+	RecentDistinct int      `json:"recent_distinct"`
+	NewAssets      int      `json:"new_assets"`
+	NewNames       []string `json:"new_names,omitempty"`
+	Spread         bool     `json:"spread"`
+}
+
 type OverviewFilter struct {
 	WindowHours int
-	Severity    string // high|medium|low|"" 
+	Severity    string // high|medium|low|""
 	Code        string
 }
 
@@ -118,6 +129,7 @@ func (s *Service) OverviewFiltered(ctx context.Context, f OverviewFilter) (Overv
 		TopActors:   []NamedCount{},
 		TopAssets:   []NamedCount{},
 		Chains:      []Chain{},
+		UEBA:        []UEBAHit{},
 		Series: Series{
 			LoginsByHour:       []HourBucket{},
 			SessionsByProtocol: []NamedCount{},
@@ -217,9 +229,11 @@ func (s *Service) OverviewFiltered(ctx context.Context, f OverviewFilter) (Overv
 
 	bruteforce, _ := topLoginFailures(ctx, pool, from)
 	multiAsset, _ := multiAssetActors(ctx, pool, from)
+	uebaHits, _ := uebaNewAssetActors(ctx, pool, from, now)
 
-	out.Anomalies = detect(out.Stats, out.Series.LoginsByHour, windowHours, out.SIEM, bruteforce, multiAsset)
-	out.Chains = buildChains(out.Anomalies, bruteforce, multiAsset, out.Stats)
+	out.UEBA = uebaHits
+	out.Anomalies = detect(out.Stats, out.Series.LoginsByHour, windowHours, out.SIEM, bruteforce, multiAsset, uebaHits)
+	out.Chains = buildChains(out.Anomalies, bruteforce, multiAsset, uebaHits, out.Stats)
 
 	if f.Severity != "" {
 		sev := strings.ToLower(f.Severity)
@@ -429,6 +443,56 @@ func multiAssetActors(ctx context.Context, pool *pgxpool.Pool, from time.Time) (
 	return out, rows.Err()
 }
 
+func uebaNewAssetActors(ctx context.Context, pool *pgxpool.Pool, windowFrom, now time.Time) ([]UEBAHit, error) {
+	baselineFrom := ueba.BaselineFrom(now)
+	rows, err := pool.Query(ctx, `
+		WITH base AS (
+			SELECT s.user_id, COUNT(DISTINCT s.asset_id) AS n,
+			       array_agg(DISTINCT s.asset_id) AS assets
+			FROM sessions s
+			WHERE s.created_at >= $1 AND s.created_at < $2 AND s.`+ueba.SessionSQL+`
+			GROUP BY s.user_id
+			HAVING COUNT(DISTINCT s.asset_id) >= $3
+		)
+		SELECT COALESCE(u.username, s.user_id::text),
+		       b.n,
+		       COUNT(DISTINCT s.asset_id),
+		       COUNT(DISTINCT s.asset_id) FILTER (WHERE NOT (s.asset_id = ANY(b.assets))),
+		       COALESCE(array_agg(DISTINCT ast.name) FILTER (WHERE NOT (s.asset_id = ANY(b.assets))), '{}')
+		FROM sessions s
+		JOIN base b ON b.user_id = s.user_id
+		JOIN users u ON u.id = s.user_id
+		JOIN assets ast ON ast.id = s.asset_id
+		WHERE s.created_at >= $2 AND s.`+ueba.SessionSQL+`
+		GROUP BY 1, b.n
+		HAVING COUNT(DISTINCT s.asset_id) FILTER (WHERE NOT (s.asset_id = ANY(b.assets))) >= 1
+		ORDER BY 4 DESC
+		LIMIT 8`, baselineFrom, windowFrom, ueba.MinBaseline)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UEBAHit
+	for rows.Next() {
+		var h UEBAHit
+		if err := rows.Scan(&h.Actor, &h.Baseline, &h.RecentDistinct, &h.NewAssets, &h.NewNames); err != nil {
+			return nil, err
+		}
+		if h.NewNames == nil {
+			h.NewNames = []string{}
+		}
+		if len(h.NewNames) > 6 {
+			h.NewNames = h.NewNames[:6]
+		}
+		h.Spread = ueba.Spread(h.Baseline, h.RecentDistinct)
+		out = append(out, h)
+	}
+	if out == nil {
+		out = []UEBAHit{}
+	}
+	return out, rows.Err()
+}
+
 func siemCorrelation(ctx context.Context, pool *pgxpool.Pool, now time.Time) (SIEMCorr, error) {
 	var c SIEMCorr
 	var lastExport *time.Time
@@ -475,7 +539,7 @@ func siemCorrelation(ctx context.Context, pool *pgxpool.Pool, now time.Time) (SI
 	return c, nil
 }
 
-func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bruteforce, multiAsset []NamedCount) []Anomaly {
+func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bruteforce, multiAsset []NamedCount, uebaHits []UEBAHit) []Anomaly {
 	var out []Anomaly
 	if stats.LoginsFail >= 20 || (windowHours <= 24 && stats.LoginsFail >= 10 && stats.LoginsFail > stats.LoginsOK) {
 		out = append(out, Anomaly{
@@ -507,6 +571,25 @@ func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bru
 			Severity: "medium", Code: "multi_asset_burst", Title: "Доступ ко многим активам",
 			Detail: fmt.Sprintf("%s — %d разных активов за окно", m.Name, m.Count),
 			Count:  m.Count, Actor: m.Name,
+		})
+	}
+	for _, h := range uebaHits {
+		sev := "medium"
+		code := "ueba_new_asset"
+		title := "Нетипичный актив (вне обычного набора)"
+		detail := fmt.Sprintf("%s — %d новых активов при baseline %d за %d дн", h.Actor, h.NewAssets, h.Baseline, ueba.BaselineDays)
+		if len(h.NewNames) > 0 {
+			detail += " (" + strings.Join(h.NewNames, ", ") + ")"
+		}
+		if h.Spread {
+			sev = "high"
+			code = "ueba_spread"
+			title = "Резкий рост числа целей"
+			detail = fmt.Sprintf("%s — %d активов за окно при обычных %d", h.Actor, h.RecentDistinct, h.Baseline)
+		}
+		out = append(out, Anomaly{
+			Severity: sev, Code: code, Title: title,
+			Detail: detail, Count: h.NewAssets, Actor: h.Actor,
 		})
 	}
 	if stats.OffHoursSessions >= 3 {
@@ -564,7 +647,7 @@ func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bru
 	return out
 }
 
-func buildChains(anoms []Anomaly, bruteforce, multiAsset []NamedCount, stats Stats) []Chain {
+func buildChains(anoms []Anomaly, bruteforce, multiAsset []NamedCount, uebaHits []UEBAHit, stats Stats) []Chain {
 	var out []Chain
 	// Correlate: brute-force actor who also has multi-asset or session denials
 	actorsBF := map[string]int{}
@@ -582,6 +665,18 @@ func buildChains(anoms []Anomaly, bruteforce, multiAsset []NamedCount, stats Sta
 				Actor:    m.Name,
 				Steps:    []string{"user.login.failure×N", "session.started на нескольких активах"},
 				Count:    n + m.Count,
+			})
+		}
+	}
+	for _, h := range uebaHits {
+		if n, ok := actorsBF[h.Actor]; ok {
+			out = append(out, Chain{
+				Severity: "high",
+				Title:    "Brute-force → нетипичный актив",
+				Detail:   fmt.Sprintf("%s: %d login fail, затем %d новых активов вне набора из %d", h.Actor, n, h.NewAssets, h.Baseline),
+				Actor:    h.Actor,
+				Steps:    []string{"user.login.failure×N", "session на актив вне 30-дневного набора"},
+				Count:    n + h.NewAssets,
 			})
 		}
 	}

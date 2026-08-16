@@ -10,6 +10,7 @@ import (
 
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -62,7 +63,7 @@ func (s *Server) handleK8sNamespaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, body, err := s.k8s.Call(r.Context(), row, http.MethodGet, "/api/v1/namespaces")
-	if writeK8sCallErr(w, code, body, err) {
+	if s.writeK8sCallErr(w, r, row, code, body, err) {
 		return
 	}
 	names := make([]string, 0)
@@ -90,7 +91,7 @@ func (s *Server) handleK8sList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, body, err := s.k8s.Call(r.Context(), row, http.MethodGet, path)
-	if writeK8sCallErr(w, code, body, err) {
+	if s.writeK8sCallErr(w, r, row, code, body, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -119,7 +120,7 @@ func (s *Server) handleK8sGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, body, err := s.k8s.Call(r.Context(), row, http.MethodGet, path)
-	if writeK8sCallErr(w, code, body, err) {
+	if s.writeK8sCallErr(w, r, row, code, body, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -143,7 +144,7 @@ func (s *Server) handleK8sApply(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := s.k8s.ApplyManifests(r.Context(), row, []byte(body.Manifest), body.Namespace)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		s.writeK8sOpErr(w, r, row, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
@@ -163,7 +164,7 @@ func (s *Server) handleK8sReplace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, raw, err := s.k8s.ReplaceObject(r.Context(), row, body.Object)
-	if writeK8sCallErr(w, code, raw, err) {
+	if s.writeK8sCallErr(w, r, row, code, raw, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": json.RawMessage(raw), "status": code})
@@ -185,7 +186,7 @@ func (s *Server) handleK8sDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, raw, err := s.k8s.DeleteObject(r.Context(), row, body.Resource, body.Group, body.Namespace, body.Name)
-	if writeK8sCallErr(w, code, raw, err) {
+	if s.writeK8sCallErr(w, r, row, code, raw, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": code, "object": json.RawMessage(raw)})
@@ -213,11 +214,7 @@ func (s *Server) handleK8sExecOnce(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.k8s.ExecOnce(r.Context(), row, body.Namespace, body.Pod, body.Container, cmd)
 	if err != nil {
-		code := k8sproxy.HTTPStatus(err)
-		if code < 400 {
-			code = http.StatusBadGateway
-		}
-		writeErr(w, code, err.Error())
+		s.writeK8sOpErr(w, r, row, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -242,11 +239,7 @@ func (s *Server) handleK8sPortForwardHTTP(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.k8s.PortForwardHTTP(r.Context(), row, body.Namespace, body.Pod, body.Port, body.Method, body.Path, []byte(body.Body))
 	if err != nil {
-		code := k8sproxy.HTTPStatus(err)
-		if code < 400 {
-			code = http.StatusBadGateway
-		}
-		writeErr(w, code, err.Error())
+		s.writeK8sOpErr(w, r, row, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -278,7 +271,11 @@ func commandFromJSON(v any) []string {
 	}
 }
 
-func writeK8sCallErr(w http.ResponseWriter, code int, body []byte, err error) bool {
+func (s *Server) writeK8sCallErr(w http.ResponseWriter, r *http.Request, row sessionsvc.Session, code int, body []byte, err error) bool {
+	if se, ok := isStepUpErr(err); ok {
+		s.writeStepUpChallenge(w, r, session.Session{UserID: row.UserID, Username: row.Username}, se.Result, row.AssetID, row.ID)
+		return true
+	}
 	if err != nil && len(body) == 0 {
 		if code < 400 {
 			code = http.StatusBadGateway
@@ -291,6 +288,18 @@ func writeK8sCallErr(w http.ResponseWriter, code int, body []byte, err error) bo
 		return true
 	}
 	return false
+}
+
+func (s *Server) writeK8sOpErr(w http.ResponseWriter, r *http.Request, row sessionsvc.Session, err error) {
+	if se, ok := isStepUpErr(err); ok {
+		s.writeStepUpChallenge(w, r, session.Session{UserID: row.UserID, Username: row.Username}, se.Result, row.AssetID, row.ID)
+		return
+	}
+	code := k8sproxy.HTTPStatus(err)
+	if code < 400 {
+		code = http.StatusBadGateway
+	}
+	writeErr(w, code, err.Error())
 }
 
 func writeK8sProxyErr(w http.ResponseWriter, code int, body []byte) {

@@ -4,9 +4,9 @@ package keeppam.authz
 # OPA never grants access. Admin bypass and break-glass skip this file.
 #
 # Input (JSON):
-#   user.{id,username,roles,tags}
+#   user.{id,username,roles,groups,tags}  groups/tags include ancestors
 #   asset.{id,name,type,protocol,tags}
-#   binding.{id,max_risk,risk_action,allowed_namespaces,group_id,tag_acl,asset_match_tags,http_policy_pack_id,app_object_pack_id}
+#   binding.{id,max_risk,risk_action,allowed_namespaces,group_id,tag_acl,asset_match_tags,asset_match_mode,http_policy_pack_id,app_object_pack_id}
 #   request.{ticket_id,reason,client_ip,client_country,client_devices,risk_score,risk_factors}
 #
 # Query: data.keeppam.authz.deny

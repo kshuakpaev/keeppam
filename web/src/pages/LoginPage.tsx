@@ -17,6 +17,7 @@ export function LoginPage() {
   const [mode, setMode] = useState("local");
   const [oidcReady, setOidcReady] = useState(false);
   const [samlReady, setSamlReady] = useState(false);
+  const [samlIdps, setSamlIdps] = useState<{ slug: string; name: string }[]>([]);
 
   useEffect(() => {
     void (async () => {
@@ -25,6 +26,7 @@ export function LoginPage() {
         setMode(m.mode);
         setOidcReady(m.oidc_ready);
         setSamlReady(!!m.saml_ready);
+        setSamlIdps(m.saml_idps || []);
       } catch {
         /* default local */
       }
@@ -125,10 +127,23 @@ export function LoginPage() {
         )}
         {!challenge && mode === "saml" && (
           <div style={{ marginBottom: "1rem" }}>
-            {samlReady ? (
-              <a className="btn" href="/api/v1/auth/saml/start" style={{ display: "inline-block" }}>
-                Войти через SAML SSO
-              </a>
+            {samlReady && samlIdps.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                {samlIdps.map((idp) => (
+                  <a
+                    key={idp.slug}
+                    className="btn"
+                    href={
+                      idp.slug === "default"
+                        ? "/api/v1/auth/saml/start"
+                        : `/api/v1/auth/saml/idp/${idp.slug}/start`
+                    }
+                    style={{ display: "inline-block", textAlign: "center" }}
+                  >
+                    Войти через {idp.name}
+                  </a>
+                ))}
+              </div>
             ) : (
               <p className="error">SAML включён, но не настроен (IdP metadata / cert + SP key)</p>
             )}
