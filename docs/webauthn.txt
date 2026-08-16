@@ -31,10 +31,11 @@ RP ID и Origin должны совпадать с URL UI (для стенда: 
 - Setup: выбрать TOTP или Passkey
 - Login MFA: TOTP и/или «Ключ безопасности»
 - User edit: список passkeys
+- Connect step-up: тот же Passkey, если `risk_action=require_mfa` (`docs/adaptive-mfa.txt`)
 
 ## Вне scope
 
 - Discoverable login без username
 - Attestation policy / MDS
-- WebAuthn для SSH gateway
+- WebAuthn для SSH gateway (логин и step-up)
 - Recovery codes

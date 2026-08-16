@@ -24,6 +24,12 @@ services:
   api:
     image: deploy-api:latest
     user: "0:0"
+    cap_add:
+      - IPC_LOCK
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     volumes:
       - ../deploy/auth-server:/app/auth-server:ro
       - ../services/auth/migrations:/app/migrations:ro
@@ -128,6 +134,12 @@ services:
   session-worker:
     image: deploy-api:latest
     user: "0:0"
+    cap_add:
+      - IPC_LOCK
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     volumes:
       - ../deploy/auth-server:/app/auth-server:ro
       - recordings:/tmp/recordings

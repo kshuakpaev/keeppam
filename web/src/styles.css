@@ -321,11 +321,14 @@ h3 {
   background: #fff;
 }
 
-.card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 16, 0.62);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 1rem;
 }
 
 .auth-page {

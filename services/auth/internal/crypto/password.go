@@ -24,11 +24,14 @@ func HashPassword(password string) (string, error) {
 		return "", err
 	}
 	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
-	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+	out := fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
 		argonMemory, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(hash),
-	), nil
+	)
+	Wipe(hash)
+	Wipe(salt)
+	return out, nil
 }
 
 func VerifyPassword(encoded, password string) (bool, error) {
@@ -51,7 +54,11 @@ func VerifyPassword(encoded, password string) (bool, error) {
 		return false, err
 	}
 	got := argon2.IDKey([]byte(password), salt, timeCost, memory, threads, uint32(len(want)))
-	return subtle.ConstantTimeCompare(got, want) == 1, nil
+	ok := subtle.ConstantTimeCompare(got, want) == 1
+	Wipe(got)
+	Wipe(want)
+	Wipe(salt)
+	return ok, nil
 }
 
 func RandomPassword(n int) (string, error) {

@@ -2,7 +2,6 @@ package policy
 
 import (
 	"context"
-	"path"
 	"strings"
 	"time"
 
@@ -22,6 +21,10 @@ func SQLOperation(statement string) string {
 	case "DELETE":
 		return "sql.delete"
 	case "DDL":
+		u := strings.ToUpper(statement)
+		if strings.Contains(u, "DROP DATABASE") || strings.Contains(u, "DROP SCHEMA") {
+			return "sql.drop"
+		}
 		return "sql.ddl"
 	case "EXPORT":
 		return "sql.export"
@@ -38,29 +41,50 @@ func SSHOperation(line string) string {
 	if _, ok := FileTransferCommand(line); ok {
 		return ""
 	}
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) == 0 {
+	p := ParseCommand(line)
+	if p.PrivShell {
+		return "ssh.priv"
+	}
+	return sshClass(p)
+}
+
+func sshClass(p ParsedCommand) string {
+	bin := p.Binary
+	args := strings.ToLower(strings.Join(p.Args, " "))
+	switch bin {
+	case "rm", "mkfs", "dd", "shred", "wipefs", "shutdown", "reboot", "halt", "poweroff":
+		return "ssh.destructive"
+	case "iptables", "nft", "ip6tables", "ebtables", "firewall-cmd":
+		return "ssh.firewall"
+	case "useradd", "userdel", "usermod", "passwd", "adduser", "deluser", "visudo", "chpasswd":
+		return "ssh.user"
+	case "chmod":
+		if strings.Contains(args, "777") || strings.Contains(args, "0777") || strings.Contains(args, "a+rwx") {
+			return "ssh.chmod777"
+		}
+		return "ssh.chmod"
+	case "chown", "chgrp":
+		return "ssh.chmod"
+	case "journalctl":
+		return "ssh.status"
+	case "systemctl", "service":
+		if len(p.Args) == 0 {
+			return "ssh.status"
+		}
+		sub := strings.ToLower(p.Args[0])
+		switch sub {
+		case "status", "show", "cat", "list-units", "list-unit-files", "is-active", "is-enabled", "is-failed":
+			return "ssh.status"
+		case "restart", "start", "stop", "reload", "enable", "disable", "mask", "unmask", "kill", "reset-failed":
+			return "ssh.restart"
+		default:
+			return "ssh.status"
+		}
+	case "kill", "killall", "pkill":
+		return "ssh.restart"
+	default:
 		return ""
 	}
-	i := 0
-	switch strings.ToLower(fields[0]) {
-	case "sudo", "doas", "pkexec":
-		i = skipSudoFlags(fields, 1)
-	}
-	if i >= len(fields) {
-		return "ssh.priv"
-	}
-	base := strings.ToLower(path.Base(fields[i]))
-	switch base {
-	case "rm", "mkfs", "dd", "shred", "wipefs",
-		"useradd", "userdel", "usermod", "passwd",
-		"iptables", "nft", "shutdown", "reboot", "halt", "poweroff",
-		"chmod", "chown", "visudo":
-		return "ssh.destructive"
-	case "sudo", "su", "doas", "pkexec":
-		return "ssh.priv"
-	}
-	return ""
 }
 
 // K8sOperation maps a Kubernetes API verb/subresource to extra risk.
@@ -106,6 +130,8 @@ func operationPoints(op string) (int, string) {
 		return 30, "op:sql.delete"
 	case "sql.ddl":
 		return 45, "op:sql.ddl"
+	case "sql.drop":
+		return 100, "op:sql.drop"
 	case "sql.export":
 		return 50, "op:sql.export"
 	case "sql.other":
@@ -116,10 +142,22 @@ func operationPoints(op string) (int, string) {
 		return 35, "op:k8s.delete"
 	case "k8s.exec":
 		return 45, "op:k8s.exec"
-	case "ssh.destructive":
-		return 40, "op:ssh.destructive"
+	case "ssh.status":
+		return 5, "op:ssh.status"
+	case "ssh.restart":
+		return 10, "op:ssh.restart"
 	case "ssh.priv":
-		return 25, "op:ssh.priv"
+		return 30, "op:ssh.priv"
+	case "ssh.chmod":
+		return 40, "op:ssh.chmod"
+	case "ssh.chmod777":
+		return 50, "op:ssh.chmod777"
+	case "ssh.user":
+		return 60, "op:ssh.user"
+	case "ssh.firewall":
+		return 70, "op:ssh.firewall"
+	case "ssh.destructive":
+		return 90, "op:ssh.destructive"
 	case "http.write":
 		return 20, "op:http.write"
 	case "http.delete":
@@ -130,8 +168,10 @@ func operationPoints(op string) (int, string) {
 }
 
 // CheckOpRisk overlays operation points on the connect-time user score.
-// Read operations (0 points) are not re-checked. JIT windows still apply (unlike connect).
-// max_risk=0 disables this check. Fail-open on lookup errors so an in-session query is not bricked.
+// Read operations (0 points) are not re-checked.
+// Snapshot (connect freeze) supplies max_risk/risk_action/binding; live Policy edits and ACL revoke do not change in-session ops.
+// Without Snapshot (old sessions) a live Evaluate is used. max_risk=0 disables the check.
+// Fail-open on lookup errors so an in-session query is not bricked.
 func (s *Service) CheckOpRisk(ctx context.Context, in AccessCheck) (AccessResult, error) {
 	if in.Bypass {
 		return AccessResult{OK: true}, nil
@@ -141,27 +181,37 @@ func (s *Service) CheckOpRisk(ctx context.Context, in AccessCheck) (AccessResult
 	if pts <= 0 {
 		return AccessResult{OK: true}, nil
 	}
-	if len(in.RoleNames) == 0 && in.UserID != uuid.Nil {
-		names, _ := s.userRoleNames(ctx, in.UserID)
-		in.RoleNames = names
-	}
-	lookup := in
-	lookup.SkipRisk = true
-	lookup.IgnoreTicket = true
-	lookup.Operation = ""
-	ev, err := s.Evaluate(ctx, lookup)
-	if err != nil {
-		return AccessResult{OK: true}, nil
-	}
-	if !ev.OK {
-		ev = AccessResult{OK: true}
+	var ev AccessResult
+	if in.Snapshot != nil {
+		ev = in.Snapshot.toResult()
+	} else {
+		if len(in.RoleNames) == 0 && in.UserID != uuid.Nil {
+			names, _ := s.userRoleNames(ctx, in.UserID)
+			in.RoleNames = names
+		}
+		lookup := in
+		lookup.SkipRisk = true
+		lookup.IgnoreTicket = true
+		lookup.Operation = ""
+		lookup.Snapshot = nil
+		got, err := s.Evaluate(ctx, lookup)
+		if err != nil {
+			return AccessResult{OK: true}, nil
+		}
+		ev = got
+		if !ev.OK {
+			ev = AccessResult{OK: true}
+		}
 	}
 	in.Operation = op
 	if ev.MaxRisk > 0 {
 		s.applyOpRisk(ctx, in, &ev)
 	}
 	if ev.OK {
-		tags, _ := s.UserTags(ctx, in.UserID)
+		var tags []string
+		if s.db != nil {
+			tags, _ = s.UserTags(ctx, in.UserID)
+		}
 		s.applyOPA(ctx, in, tags, &ev)
 	}
 	return ev, nil
@@ -192,13 +242,7 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 	res.RiskScore = score
 	res.RiskFactors = factors
 	res.Operation = in.Operation
-	if score > res.MaxRisk {
-		res.OK = false
-		res.DeniedByRisk = true
-		if res.RiskAction == "" {
-			res.RiskAction = "deny"
-		}
-	}
+	decideRisk(res, false, in.Operation)
 	decision := "allow"
 	if res.DeniedByRisk {
 		decision = res.RiskAction

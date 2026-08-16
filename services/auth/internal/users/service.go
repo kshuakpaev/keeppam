@@ -36,11 +36,12 @@ type UpdateInput struct {
 	Status      *string   `json:"status"`
 	Roles       *[]string `json:"roles"`
 	Tags        *[]string `json:"tags"`
+	GroupIDs    *[]string `json:"group_ids"`
 }
 
 type CreateResult struct {
-	User             store.User `json:"user"`
-	TemporaryPassword string    `json:"temporary_password,omitempty"`
+	User              store.User `json:"user"`
+	TemporaryPassword string     `json:"temporary_password,omitempty"`
 }
 
 func (s *Service) List(ctx context.Context) ([]store.User, error) {
@@ -135,6 +136,15 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 			return store.User{}, err
 		}
 		_ = s.audit.Record(ctx, &actorID, "user.tags.updated", "user", id.String(), ip, ua, map[string]any{"tags": *in.Tags})
+		updated, err = s.db.GetUserByID(ctx, id)
+		if err != nil {
+			return store.User{}, err
+		}
+	}
+	if in.GroupIDs != nil {
+		if err := s.SetUserGroups(ctx, actorID, id, *in.GroupIDs, ip, ua); err != nil {
+			return store.User{}, err
+		}
 		updated, err = s.db.GetUserByID(ctx, id)
 		if err != nil {
 			return store.User{}, err

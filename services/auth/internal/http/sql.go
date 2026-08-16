@@ -145,7 +145,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 			if ev, err := s.policy.CheckOpRisk(r.Context(), policy.AccessCheck{
 				UserID: authSess.UserID, AssetID: row.AssetID, RoleNames: authSess.Roles,
 				Bypass: bypass, TicketID: row.TicketID, ClientIP: s.clientIP(r),
-				Operation: policy.SQLOperation(msg.Statement),
+				Operation: policy.SQLOperation(msg.Statement), Snapshot: row.PolicySnapshot,
 			}); err == nil && !ev.OK {
 				reason := ev.DenyMessage()
 				s.denySQLClient(r, conn.WriteJSON, authSess.UserID, id, msg.Statement, reason, sqlPack.Name)

@@ -32,9 +32,9 @@ func New(db *store.DB, sessions *session.Store, auditSvc *audit.Service, env *cr
 }
 
 type LoginResult struct {
-	Status         string `json:"status"` // ok | mfa_required | must_setup
-	ChallengeToken string `json:"challenge_token,omitempty"`
-	SessionToken   string `json:"-"`
+	Status         string      `json:"status"` // ok | mfa_required | must_setup
+	ChallengeToken string      `json:"challenge_token,omitempty"`
+	SessionToken   string      `json:"-"`
 	User           *store.User `json:"user,omitempty"`
 }
 
@@ -214,6 +214,7 @@ func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, ip,
 			}
 		}
 	}
+	_ = s.db.AddUserToGroupsByName(ctx, u.ID, claims.Groups)
 	via := "saml"
 	if claims.IDPInitiated {
 		via = "saml_idp"
@@ -301,7 +302,7 @@ func (s *Service) finishLoginSess(ctx context.Context, u store.User, ip, ua stri
 
 func (s *Service) VerifyMFA(ctx context.Context, challengeToken, code, ip, ua string) (LoginResult, error) {
 	chal, err := s.sessions.GetChallenge(ctx, challengeToken)
-	if err != nil {
+	if err != nil || chal.Purpose == stepUpPurpose {
 		return LoginResult{}, fmt.Errorf("invalid challenge")
 	}
 	u, err := s.db.GetUserByID(ctx, chal.UserID)

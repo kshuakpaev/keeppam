@@ -59,6 +59,8 @@ func main() {
 		slog.Error("fips", "err", err)
 		os.Exit(1)
 	}
+	mem := crypto.Harden()
+	slog.Info("memory", "coredump", mem.CoreDump, "dumpable", mem.Dumpable)
 
 	kp, err := crypto.NewKeyProviderFromEnv()
 	if err != nil {
@@ -131,6 +133,10 @@ func main() {
 		slog.Error("envelope", "err", err)
 		os.Exit(1)
 	}
+	crypto.Wipe(cfg.DataKey)
+	cfg.DataKey = nil
+	mem = crypto.LastMemStatus()
+	slog.Info("memory", "data_key_mlock", mem.DataKeyMlock, "coredump", mem.CoreDump)
 
 	auditSvc := audit.New(db)
 	auditSvc.SetMAC(env)
@@ -215,7 +221,7 @@ func main() {
 				}
 				ev, err := policySvc.CheckOpRisk(ctx, policy.AccessCheck{
 					UserID: row.UserID, AssetID: row.AssetID, TicketID: row.TicketID,
-					ClientIP: row.ClientIP, Operation: policy.SQLOperation(stmt),
+					ClientIP: row.ClientIP, Operation: policy.SQLOperation(stmt), Snapshot: row.PolicySnapshot,
 				})
 				if err == nil && !ev.OK {
 					return false, ev.DenyMessage()
@@ -267,6 +273,13 @@ func main() {
 						return nil
 					}
 					return u.Roles
+				})
+				k8sGw.SetGroups(func(ctx context.Context, userID uuid.UUID) []string {
+					u, err := db.GetUserByID(ctx, userID)
+					if err != nil {
+						return nil
+					}
+					return u.Groups
 				})
 				go func() {
 					if err := k8sGw.ListenAndServe(runCtx); err != nil && err != http.ErrServerClosed {

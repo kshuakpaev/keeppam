@@ -2,12 +2,28 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var ErrStepUpRequired = errors.New("mfa_required")
+
+type StepUpError struct {
+	Result AccessResult
+}
+
+func (e *StepUpError) Error() string {
+	if e == nil {
+		return ErrStepUpRequired.Error()
+	}
+	return e.Result.RiskDenyMessage()
+}
+
+func (e *StepUpError) Unwrap() error { return ErrStepUpRequired }
 
 type RiskInputs struct {
 	Now              time.Time
@@ -64,6 +80,38 @@ func computeRisk(in RiskInputs) (score int, factors []string) {
 	return score, factors
 }
 
+func NormalizeRiskAction(s string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		s = "deny"
+	}
+	if s != "deny" && s != "require_approval" && s != "require_mfa" {
+		return "", fmt.Errorf("risk_action must be deny, require_approval or require_mfa")
+	}
+	return s, nil
+}
+
+func (r AccessResult) NeedsStepUp() bool {
+	return r.DeniedByRisk && r.RiskAction == "require_mfa" && r.Operation == ""
+}
+
+func decideRisk(res *AccessResult, stepUpVerified bool, operation string) {
+	if res.MaxRisk <= 0 || res.RiskScore <= res.MaxRisk {
+		return
+	}
+	if res.RiskAction == "require_mfa" && stepUpVerified && operation == "" {
+		return
+	}
+	res.OK = false
+	res.DeniedByRisk = true
+	if res.RiskAction == "" {
+		res.RiskAction = "deny"
+	}
+	if operation != "" && res.RiskAction == "require_mfa" {
+		res.RiskAction = "deny"
+	}
+}
+
 func (r AccessResult) RiskDenyMessage() string {
 	factors := strings.Join(r.RiskFactors, ",")
 	if factors == "" {
@@ -72,6 +120,12 @@ func (r AccessResult) RiskDenyMessage() string {
 	msg := fmt.Sprintf("access denied by risk (score %d > %d, factors=%s)", r.RiskScore, r.MaxRisk, factors)
 	if r.RiskAction == "require_approval" && r.Operation == "" {
 		msg += "; create a JIT request"
+	}
+	if r.RiskAction == "require_approval" && r.Operation != "" {
+		msg += "; command requires JIT approval"
+	}
+	if r.RiskAction == "require_mfa" && r.Operation == "" {
+		msg += "; complete step-up MFA"
 	}
 	return msg
 }
@@ -143,13 +197,7 @@ func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResu
 		return
 	}
 	res.RiskScore, res.RiskFactors = computeRisk(inputs)
-	if res.MaxRisk > 0 && res.RiskScore > res.MaxRisk {
-		res.OK = false
-		res.DeniedByRisk = true
-		if res.RiskAction == "" {
-			res.RiskAction = "deny"
-		}
-	}
+	decideRisk(res, in.StepUpVerified, in.Operation)
 	decision := "allow"
 	if res.DeniedByRisk {
 		decision = res.RiskAction

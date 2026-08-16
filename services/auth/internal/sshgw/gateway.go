@@ -24,6 +24,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/policy"
@@ -73,6 +74,7 @@ func (g *Gateway) ListenAndServe() error {
 		PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 			ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			u, err := g.auth.AuthenticatePassword(context.Background(), conn.User(), string(password), ip)
+			crypto.Wipe(password)
 			if err != nil {
 				return nil, fmt.Errorf("access denied")
 			}
@@ -338,6 +340,29 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		_ = g.audit.Record(ctx, &userID, "session.admin_bypass", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{"severity": "high", "ticket_id": ticketID})
 		okPolicy = true
 	}
+	if !okPolicy && evPolicy.NeedsStepUp() {
+		methods, _ := g.auth.MFAMethods(ctx, userID)
+		if !methods.TOTP {
+			_, _ = fmt.Fprintf(ch, "step-up MFA required (score %d > %d) but TOTP is not enrolled\r\n", evPolicy.RiskScore, evPolicy.MaxRisk)
+			payload := map[string]any{"reason": "risk", "ticket_id": ticketID, "code": "mfa_not_enrolled"}
+			evPolicy.FillDenyPayload(payload)
+			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
+			return
+		}
+		_, _ = fmt.Fprintf(ch, "Step-up MFA (risk %d > %d). TOTP: ", evPolicy.RiskScore, evPolicy.MaxRisk)
+		code, rerr := readLine(ch)
+		if rerr != nil {
+			return
+		}
+		if err := g.auth.VerifyUserTOTP(ctx, userID, strings.TrimSpace(code), ip, "ssh", "ssh", chosen.AssetID); err != nil {
+			_, _ = io.WriteString(ch, "invalid MFA code\r\n")
+			payload := map[string]any{"reason": "risk", "ticket_id": ticketID}
+			evPolicy.FillDenyPayload(payload)
+			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
+			return
+		}
+		okPolicy = true
+	}
 	if !okPolicy {
 		_, _ = fmt.Fprintf(ch, "%s\r\n", evPolicy.DenyMessage())
 		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
@@ -369,8 +394,20 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		return
 	}
 
+	labels := sessionsvc.MergeLabels()
+	if ut, err := g.policy.UserTags(ctx, userID); err == nil {
+		labels = sessionsvc.MergeLabels(labels, ut)
+	}
+	if at, err := g.policy.AssetTags(ctx, chosen.AssetID); err == nil {
+		labels = sessionsvc.MergeLabels(labels, at)
+	}
+	frozen := g.policy.Freeze(ctx, evPolicy, usedBreakGlass, bypassConnect)
+	snap := &frozen
 	pamSess, err := g.sessions.Create(ctx, userID, sessionsvc.CreateInput{
 		AssetID: chosen.AssetID, AccountID: chosen.AccountID, Protocol: "ssh", ClientIP: ip, TicketID: ticketID,
+		BreakGlass: usedBreakGlass, RiskScore: evPolicy.RiskScore, RiskFactors: evPolicy.RiskFactors,
+		Labels: labels, AccessPolicyID: evPolicy.AccessPolicyID, ClientCountry: g.policy.ClientCountry(ip),
+		PolicySnapshot: snap,
 	}, "ssh-gateway")
 	if err != nil {
 		_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
@@ -385,6 +422,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	}
 
 	client, err := g.assets.DialSSH(ctx, creds)
+	creds.WipeSecret()
 	if err != nil {
 		_ = rec.Close()
 		_ = g.sessions.MarkEnded(ctx, pamSess.ID, err.Error())
@@ -398,7 +436,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		agentUpstream = sc
 	}
 	var injectMu sync.Mutex
-	opts := g.buildSSHSessionOpts(ctx, userID, chosen.AssetID, pamSess.ID, roles, bypassConnect, ticketID, func(p []byte) {
+	opts := g.buildSSHSessionOpts(ctx, userID, chosen.AssetID, pamSess.ID, roles, bypassConnect, ticketID, snap, func(p []byte) {
 		injectMu.Lock()
 		defer injectMu.Unlock()
 		_, _ = ch.Write(p)
@@ -706,62 +744,47 @@ func be32(b []byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }
 
-func (g *Gateway) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, inject func([]byte)) sshproxy.SessionOpts {
+func (g *Gateway) buildSSHSessionOpts(ctx context.Context, userID, assetID, sessionID uuid.UUID, roles []string, bypass bool, ticketID string, snap *policy.Snapshot, inject func([]byte)) sshproxy.SessionOpts {
 	opts := sshproxy.SessionOpts{LocalInject: inject}
 	var pack policy.CommandPack
 	hasPack := false
-	ev, err := g.policy.Evaluate(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
-	})
-	if err == nil && ev.OK && ev.CommandPolicyPackID != nil {
-		if p, err := g.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); err == nil {
-			pack, hasPack = p, true
+	maxRisk := 0
+	check := policy.AccessCheck{
+		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, Snapshot: snap,
+	}
+	if snap != nil {
+		maxRisk = snap.MaxRisk
+		if snap.CommandPolicyPackID != nil {
+			if p, perr := g.policy.GetCommandPack(ctx, *snap.CommandPolicyPackID); perr == nil {
+				pack, hasPack = p, true
+			}
+		}
+	} else {
+		ev, err := g.policy.Evaluate(ctx, policy.AccessCheck{
+			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, TicketID: ticketID, SkipRisk: true,
+		})
+		if err == nil && ev.OK {
+			maxRisk = ev.MaxRisk
+			if ev.CommandPolicyPackID != nil {
+				if p, perr := g.policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); perr == nil {
+					pack, hasPack = p, true
+				}
+			}
 		}
 	}
-	if !hasPack {
+	if !hasPack && maxRisk <= 0 {
 		return opts
 	}
 	opts.QuietEcho = true
 	opts.Guard = sshproxy.NewCommandGuard(func(line string) bool {
-		if !policy.AllowSSHLine(pack, true, line) {
-			return false
-		}
-		op := policy.SSHOperation(line)
-		if op == "" {
-			return true
-		}
-		ev, err := g.policy.CheckOpRisk(ctx, policy.AccessCheck{
-			UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass,
-			TicketID: ticketID, Operation: op,
-		})
-		return err != nil || ev.OK
+		v := g.policy.EvaluateSSHLine(ctx, check, pack, hasPack, line)
+		return v.Allow
 	})
 	opts.OnDenied = func(line string) {
 		bg := context.Background()
-		if kind, ok := policy.FileTransferCommand(line); ok {
-			_ = g.audit.Record(bg, &userID, "session.dlp.denied", "session", sessionID.String(), "", "ssh", map[string]any{
-				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
-			})
-			_ = g.sessions.AddEvent(bg, sessionID, "dlp", map[string]any{
-				"command": line, "kind": kind, "reason": "ssh file transfer denied by DLP",
-			})
-			return
-		}
-		if policy.AllowSSHLine(pack, true, line) {
-			_ = g.audit.Record(bg, &userID, "session.risk.denied", "session", sessionID.String(), "", "ssh", map[string]any{
-				"command": line, "operation": policy.SSHOperation(line),
-			})
-			_ = g.sessions.AddEvent(bg, sessionID, "risk", map[string]any{
-				"command": line, "operation": policy.SSHOperation(line),
-			})
-			return
-		}
-		_ = g.audit.Record(bg, &userID, "session.command.denied", "session", sessionID.String(), "", "jea", map[string]any{
-			"command": line, "pack": pack.Name, "mode": pack.Mode,
-		})
-		_ = g.sessions.AddEvent(bg, sessionID, "command_denied", map[string]any{
-			"command": line, "pack": pack.Name,
-		})
+		v := g.policy.EvaluateSSHLine(bg, check, pack, hasPack, line)
+		_ = g.audit.Record(bg, &userID, v.AuditAction(), "session", sessionID.String(), "", "ssh", v.Payload(line))
+		_ = g.sessions.AddEvent(bg, sessionID, v.EventType(), v.Payload(line))
 	}
 	return opts
 }

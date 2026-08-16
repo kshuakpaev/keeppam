@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, hasPerm, type AccessBinding, type AppIntegration, type AppLease, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type Role, type SQLPolicyPack, type User } from "../api";
+import { api, ApiError, hasPerm, type AccessBinding, type AccessPolicy, type AppIntegration, type AppLease, type AppObjectPack, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type PamGroup, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
 import { kindForProtocol, useSessionTabs } from "../sessionTabs";
+import { StepUpDialog } from "./StepUpDialog";
 
 const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
 const TYPES = ["host", "db", "k8s", "api"];
@@ -17,14 +18,21 @@ export function AssetEditPage() {
   const [bindings, setBindings] = useState<AccessBinding[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [pamGroups, setPamGroups] = useState<PamGroup[]>([]);
   const [cmdPacks, setCmdPacks] = useState<CommandPolicyPack[]>([]);
   const [sqlPacks, setSqlPacks] = useState<SQLPolicyPack[]>([]);
   const [httpPacks, setHttpPacks] = useState<HTTPPolicyPack[]>([]);
+  const [appPacks, setAppPacks] = useState<AppObjectPack[]>([]);
+  const [accessPolicies, setAccessPolicies] = useState<AccessPolicy[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [k8sLease, setK8sLease] = useState<AppLease | null>(null);
+  const [stepUp, setStepUp] = useState<{
+    err: ApiError;
+    retry: (token: string) => Promise<void>;
+  } | null>(null);
   const [rotating, setRotating] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
@@ -53,9 +61,10 @@ export function AssetEditPage() {
     k8s_bind_user: false,
   });
   const [aclForm, setAclForm] = useState({
-    kind: "role" as "role" | "user",
+    kind: "role" as "role" | "user" | "group",
     role_id: "",
     user_id: "",
+    group_id: "",
     time_start: "",
     time_end: "",
     days_of_week: 127,
@@ -70,6 +79,8 @@ export function AssetEditPage() {
     command_policy_pack_id: "",
     sql_policy_pack_id: "",
     http_policy_pack_id: "",
+    app_object_pack_id: "",
+    access_policy_id: "",
     max_risk: "0",
     risk_action: "deny",
   });
@@ -122,6 +133,12 @@ export function AssetEditPage() {
       if (canACL || canUsers) {
         const r = await api.listRoles();
         setRoles(r.roles || []);
+        try {
+          const g = await api.listGroups();
+          setPamGroups(g.groups || []);
+        } catch {
+          setPamGroups([]);
+        }
       }
       if (canUsers) {
         const u = await api.listUsers();
@@ -129,18 +146,23 @@ export function AssetEditPage() {
       }
       if (canACL || hasPerm(user, "jea.read")) {
         try {
-          const [pk, sp, hp] = await Promise.all([
+          const [pk, sp, hp, ao, ap] = await Promise.all([
             api.listCommandPacks(),
             api.listSQLPacks(),
             api.listHTTPPacks(),
+            api.listAppObjectPacks(),
+            api.listAccessPolicies(),
           ]);
           setCmdPacks(pk.packs || []);
           setSqlPacks(sp.packs || []);
           setHttpPacks(hp.packs || []);
+          setAppPacks(ao.packs || []);
+          setAccessPolicies(ap.policies || []);
         } catch {
           setCmdPacks([]);
           setSqlPacks([]);
           setHttpPacks([]);
+          setAppPacks([]);
         }
       }
       if (a.protocol === "https" && (hasPerm(user, "apps.read") || canWrite)) {
@@ -174,7 +196,7 @@ export function AssetEditPage() {
     void load();
   }, [id]);
 
-  async function onConnect(acc: AssetAccount) {
+  async function onConnect(acc: AssetAccount, stepUpToken?: string) {
     if (!id || !asset) return;
     setError("");
     setConnecting(acc.id);
@@ -184,7 +206,9 @@ export function AssetEditPage() {
         reason: connectReason.trim() || undefined,
         db_privilege:
           asset.protocol === "postgres" || asset.protocol === "mysql" ? dbPrivilege : undefined,
+        step_up_token: stepUpToken,
       });
+      setStepUp(null);
       const title = `${asset.name} · ${acc.username}`;
       const kind = kindForProtocol(asset.protocol, appForm.recording_mode === "isolated");
       if (asset.protocol === "postgres" || asset.protocol === "mysql") {
@@ -201,13 +225,17 @@ export function AssetEditPage() {
         protocol: asset.protocol,
       });
     } catch (err) {
+      if (!stepUpToken && ApiError.isStepUp(err)) {
+        setStepUp({ err, retry: (tok) => onConnect(acc, tok) });
+        return;
+      }
       setError(err instanceof Error ? err.message : "Не удалось начать сессию");
     } finally {
       setConnecting(null);
     }
   }
 
-  async function onAppAccess(acc: AssetAccount) {
+  async function onAppAccess(acc: AssetAccount, stepUpToken?: string) {
     if (!id || !asset) return;
     setError("");
     setMsg("");
@@ -216,7 +244,9 @@ export function AssetEditPage() {
       const lease = await api.requestAppAccess(id, {
         account_id: acc.id,
         ticket_id: connectTicket.trim() || undefined,
+        step_up_token: stepUpToken,
       });
+      setStepUp(null);
       if (lease.auth_mode === "oidc_broker" && lease.open_url) {
         window.open(lease.open_url, "_blank");
         setMsg("OIDC redirect открыт в новой вкладке");
@@ -226,13 +256,17 @@ export function AssetEditPage() {
         );
       }
     } catch (err) {
+      if (!stepUpToken && ApiError.isStepUp(err)) {
+        setStepUp({ err, retry: (tok) => onAppAccess(acc, tok) });
+        return;
+      }
       setError(err instanceof Error ? err.message : "Ошибка доступа к приложению");
     } finally {
       setConnecting(null);
     }
   }
 
-  async function onK8sAccess(acc: AssetAccount) {
+  async function onK8sAccess(acc: AssetAccount, stepUpToken?: string) {
     if (!id || !asset) return;
     setError("");
     setMsg("");
@@ -242,10 +276,16 @@ export function AssetEditPage() {
         account_id: acc.id,
         ticket_id: connectTicket.trim() || undefined,
         reason: connectReason.trim() || undefined,
+        step_up_token: stepUpToken,
       });
+      setStepUp(null);
       setK8sLease(lease);
       setMsg(`K8s lease до ${new Date(lease.expires_at).toLocaleString()}`);
     } catch (err) {
+      if (!stepUpToken && ApiError.isStepUp(err)) {
+        setStepUp({ err, retry: (tok) => onK8sAccess(acc, tok) });
+        return;
+      }
       setError(err instanceof Error ? err.message : "Ошибка K8s access");
     } finally {
       setConnecting(null);
@@ -547,6 +587,7 @@ export function AssetEditPage() {
       const body: {
         user_id?: string;
         role_id?: string;
+        group_id?: string;
         time_start?: string;
         time_end?: string;
         days_of_week?: number;
@@ -561,6 +602,8 @@ export function AssetEditPage() {
         command_policy_pack_id?: string;
         sql_policy_pack_id?: string;
         http_policy_pack_id?: string;
+        app_object_pack_id?: string;
+        access_policy_id?: string;
         max_risk?: number;
         risk_action?: string;
       } = {
@@ -571,6 +614,9 @@ export function AssetEditPage() {
       if (aclForm.kind === "role") {
         if (!aclForm.role_id) throw new Error("выберите роль");
         body.role_id = aclForm.role_id;
+      } else if (aclForm.kind === "group") {
+        if (!aclForm.group_id) throw new Error("выберите группу");
+        body.group_id = aclForm.group_id;
       } else {
         if (!aclForm.user_id) throw new Error("выберите пользователя");
         body.user_id = aclForm.user_id;
@@ -614,6 +660,12 @@ export function AssetEditPage() {
       if (aclForm.http_policy_pack_id) {
         body.http_policy_pack_id = aclForm.http_policy_pack_id;
       }
+      if (aclForm.app_object_pack_id) {
+        body.app_object_pack_id = aclForm.app_object_pack_id;
+      }
+      if (aclForm.access_policy_id) {
+        body.access_policy_id = aclForm.access_policy_id;
+      }
       const maxRisk = Number(aclForm.max_risk);
       if (maxRisk > 0) {
         body.max_risk = maxRisk;
@@ -625,6 +677,7 @@ export function AssetEditPage() {
         kind: "role",
         role_id: roles[0]?.id || "",
         user_id: "",
+        group_id: "",
         time_start: "",
         time_end: "",
         days_of_week: 127,
@@ -639,6 +692,8 @@ export function AssetEditPage() {
         command_policy_pack_id: "",
         sql_policy_pack_id: "",
         http_policy_pack_id: "",
+        app_object_pack_id: "",
+        access_policy_id: "",
         max_risk: "0",
         risk_action: "deny",
       });
@@ -738,6 +793,13 @@ export function AssetEditPage() {
 
       {error && <p className="error">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
+      {stepUp && (
+        <StepUpDialog
+          err={stepUp.err}
+          onDone={(tok) => void stepUp.retry(tok)}
+          onCancel={() => setStepUp(null)}
+        />
+      )}
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
         <h2>Параметры</h2>
@@ -1623,12 +1685,14 @@ export function AssetEditPage() {
         <h2>Политика доступа</h2>
         <p className="muted">
           Deny-by-default + ABAC: tags, ticket, reason, CIDR, geo, device, K8s namespaces. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
-          JEA: SSH command pack, SQL table/mask pack и HTTP/URL ACL (см. <Link to="/jea">JEA</Link>).
+          Именованная Policy — <Link to="/jea">JEA</Link>. ACL на теги активов (без строки на хост) —{" "}
+          <Link to="/jea">JEA → Теги активов</Link>.
         </p>
         <table>
           <thead>
             <tr>
               <th>Субъект</th>
+              <th>Policy</th>
               <th>Окно</th>
               <th>Дни</th>
               <th>ABAC</th>
@@ -1636,6 +1700,7 @@ export function AssetEditPage() {
               <th>SSH JEA</th>
               <th>SQL JEA</th>
               <th>HTTP ACL</th>
+              <th>Objects</th>
               <th>Истекает</th>
               <th />
             </tr>
@@ -1648,11 +1713,23 @@ export function AssetEditPage() {
                     <>
                       user <span className="mono">{b.username}</span>
                     </>
+                  ) : b.group_name ? (
+                    <>
+                      group <span className="mono">{b.group_name}</span>
+                    </>
                   ) : (
                     <>
                       role <span className="mono">{b.role_name}</span>
                     </>
                   )}
+                  {b.inherited ? (
+                    <div className="muted" style={{ fontSize: "0.8rem" }}>
+                      по тегу {(b.asset_match_tags || []).join(", ")}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="mono" style={{ fontSize: "0.85rem" }}>
+                  {b.access_policy_name || "—"}
                 </td>
                 <td className="mono">
                   {b.time_start || b.time_end
@@ -1681,6 +1758,9 @@ export function AssetEditPage() {
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.http_policy_pack_name || "—"}
                 </td>
+                <td className="mono" style={{ fontSize: "0.85rem" }}>
+                  {b.app_object_pack_name || "—"}
+                </td>
                 <td className="mono">
                   {b.expires_at ? (
                     <>
@@ -1696,17 +1776,22 @@ export function AssetEditPage() {
                   )}
                 </td>
                 <td>
-                  {canACL && (
+                  {canACL && !b.inherited && (
                     <button className="btn danger" type="button" onClick={() => void onDeleteACL(b)}>
                       Отозвать
                     </button>
                   )}
+                  {b.inherited ? (
+                    <Link to="/jea" className="muted" style={{ fontSize: "0.85rem" }}>
+                      tag ACL
+                    </Link>
+                  ) : null}
                 </td>
               </tr>
             ))}
             {bindings.length === 0 && (
               <tr>
-                <td colSpan={10} className="muted">
+                <td colSpan={12} className="muted">
                   Привязок нет — доступ только у admin
                 </td>
               </tr>
@@ -1718,15 +1803,31 @@ export function AssetEditPage() {
       {canACL && (
         <form className="card" onSubmit={onAddACL} style={{ maxWidth: 560 }}>
           <h2>Выдать доступ</h2>
+          <label>Access Policy (опц.)</label>
+          <select
+            value={aclForm.access_policy_id}
+            onChange={(e) => setAclForm({ ...aclForm, access_policy_id: e.target.value })}
+          >
+            <option value="">— без именованной политики —</option>
+            {accessPolicies.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <p className="muted" style={{ fontSize: "0.85rem" }}>
+            Пустые поля ниже наследуются из политики. См. <Link to="/jea">JEA → Policy</Link>.
+          </p>
           <label>Тип</label>
           <select
             value={aclForm.kind}
             onChange={(e) =>
-              setAclForm({ ...aclForm, kind: e.target.value as "role" | "user" })
+              setAclForm({ ...aclForm, kind: e.target.value as "role" | "user" | "group" })
             }
           >
             <option value="role">Роль</option>
             <option value="user">Пользователь</option>
+            <option value="group">Группа</option>
           </select>
           {aclForm.kind === "role" ? (
             <>
@@ -1740,6 +1841,22 @@ export function AssetEditPage() {
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : aclForm.kind === "group" ? (
+            <>
+              <label>Группа</label>
+              <select
+                value={aclForm.group_id}
+                onChange={(e) => setAclForm({ ...aclForm, group_id: e.target.value })}
+                required
+              >
+                <option value="">—</option>
+                {pamGroups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
                   </option>
                 ))}
               </select>
@@ -1889,6 +2006,18 @@ export function AssetEditPage() {
               </option>
             ))}
           </select>
+          <label>Object ACL pack (функции приложения, опц.)</label>
+          <select
+            value={aclForm.app_object_pack_id}
+            onChange={(e) => setAclForm({ ...aclForm, app_object_pack_id: e.target.value })}
+          >
+            <option value="">— без объектов —</option>
+            {appPacks.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.unmatched})
+              </option>
+            ))}
+          </select>
           <div className="row" style={{ alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
               <label>Max risk (0 = выкл.)</label>
@@ -1908,12 +2037,14 @@ export function AssetEditPage() {
               >
                 <option value="deny">deny</option>
                 <option value="require_approval">require_approval (JIT)</option>
+                <option value="require_mfa">require_mfa (повторный MFA)</option>
               </select>
             </div>
           </div>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
             Score: off_hours 25, break_glass 40, failed_logins 15–45, concurrent 10–20, anom_brute 20,
             anom_multi 15 + операция (DROP/DDL 45, delete 30, k8s write 20…). Cap 100. 0 = выкл. и на connect, и на операции.
+            require_mfa — повторный TOTP/Passkey на connect; операции внутри сессии всё равно deny.
           </p>
           <button className="btn" type="submit">
             Выдать

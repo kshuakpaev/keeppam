@@ -13,7 +13,7 @@
 | каналы `direct-tcpip`, `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
 | global/session `tcpip-forward`, `x11-req` | отказ + аудит |
 
-Интерактивный `shell` / `pty-req` не ломается: line-buffer JEA включается только при привязанном command pack. Если pack есть, `scp`/`sftp`/`rsync` в шелле запрещены DLP даже когда pack их разрешает. Событие сессии: `dlp`.
+Интерактивный `shell` / `pty-req`: line-buffer включается при command pack **или** `max_risk > 0` на ACL (`docs/command-risk.txt`). Если pack есть, `scp`/`sftp`/`rsync` в шелле запрещены DLP даже когда pack их разрешает. Событие сессии: `dlp`.
 
 ## SQL
 

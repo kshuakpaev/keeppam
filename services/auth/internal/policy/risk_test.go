@@ -62,3 +62,31 @@ func TestRiskDenyMessage(t *testing.T) {
 		t.Fatalf("msg=%s", msg)
 	}
 }
+
+func TestNormalizeRiskAction(t *testing.T) {
+	ok, err := NormalizeRiskAction("require_mfa")
+	if err != nil || ok != "require_mfa" {
+		t.Fatalf("got %s %v", ok, err)
+	}
+	if _, err := NormalizeRiskAction("explode"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDecideRiskRequireMFA(t *testing.T) {
+	res := AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
+	decideRisk(&res, false, "")
+	if res.OK || !res.DeniedByRisk || !res.NeedsStepUp() {
+		t.Fatalf("want step-up, got ok=%v denied=%v action=%s", res.OK, res.DeniedByRisk, res.RiskAction)
+	}
+	res = AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
+	decideRisk(&res, true, "")
+	if !res.OK || res.DeniedByRisk {
+		t.Fatal("step-up should allow connect")
+	}
+	res = AccessResult{OK: true, MaxRisk: 40, RiskScore: 72, RiskAction: "require_mfa"}
+	decideRisk(&res, true, "sql.ddl")
+	if res.OK || res.RiskAction != "deny" {
+		t.Fatalf("operations cannot MFA: ok=%v action=%s", res.OK, res.RiskAction)
+	}
+}

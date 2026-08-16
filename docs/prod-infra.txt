@@ -70,6 +70,13 @@ OPA extra deny: `KEEPPAM_OPA_POLICY` — см. `docs/opa.txt`.
 
 Трейсы: `KEEPPAM_OTEL_ENDPOINT` → Tempo (`docs/tempo.txt`).
 
+## Memory hardening
+
+См. `docs/memory.txt`. Linux: нет coredump, `PR_SET_DUMPABLE=0`, `mlock` DEK.
+
+- `KEEPPAM_ALLOW_COREDUMP=true` — отладка (не для prod)
+- compose: `cap_add: IPC_LOCK` + `ulimits.memlock: -1`
+
 ## UI
 
 Конфигурация → блок «Инфраструктура (env)» — read-only статус (`GET /api/v1/admin/settings/infra`, право `settings.write`).

@@ -1,0 +1,44 @@
+# KeepPAM: forensic timeline
+
+Одна лента «что делал пользователь за интервал»: control-plane аудит + data-plane события сессий. Не полнотекст asciicast/RDP (`docs/session-search.txt`).
+
+## Метаданные сессии
+
+Снимок на `session.created` (миграция `049`):
+
+| Поле | Смысл |
+|------|--------|
+| `risk_score` / `risk_factors` | балл Evaluate на connect |
+| `labels` | теги пользователя ∪ теги актива |
+| `access_policy_id` | именованная Policy, если была |
+| `client_country` | GeoIP на момент входа |
+
+Старые сессии — нули/пусто; события всё равно попадают в ленту.
+
+## API
+
+`GET /api/v1/admin/sessions/timeline` (`sessions.read`)
+
+| Query | Смысл |
+|-------|--------|
+| `user_id` / `username` | актор; пусто = текущий пользователь |
+| `from` / `to` | RFC3339; иначе `hours` (default 24, max 2160, окно не длиннее 90 суток) |
+| `source` | `all` (default) / `audit` / `session` |
+| `q` | ILIKE по kind, payload, имени актива |
+| `limit` / `offset` | max 200 |
+| `format=csv` | выгрузка текущей страницы (limit до 200) |
+
+Без `audit.read` / `users.write` чужой `user_id` → 403.
+
+Источники:
+
+- `session_events` сессий этого пользователя (SQL, k8s, JEA deny, DLP, HTTP ACL, created/ended…)
+- `audit_events` с `actor_id` (login, ACL, JIT, OPA, session.denied…)
+
+## UI
+
+**Расследование** в меню (`sessions.read`). Фильтр: пользователь, окно, источник, поиск. Клик «Сессия» — replay/sql/k8s. Кнопка CSV.
+
+## Вне scope
+
+Полнотекст записей SSH/RDP, профиль «обычно 3 сервера». Готовый отчёт за период — `docs/compliance-report.txt`.

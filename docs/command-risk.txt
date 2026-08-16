@@ -1,0 +1,54 @@
+# KeepPAM: Command Risk Engine
+
+Парсер командной строки → класс риска → ALLOW / DENY / APPROVAL. Не заменяет glob JEA: pack по-прежнему режет набор команд, движок добавляет баллы и решение поверх ACL `max_risk`.
+
+## Парсер
+
+`ParseCommand` снимает обёртки (до 6 слоёв):
+
+- `sudo` / `doas` / `pkexec` (+ флаги `-u user`, `--`)
+- `su` / `su -c '…'` / `su user -c …`
+- `nohup` / `nice` / `time` / `stdbuf` / `env` / `FOO=bar cmd`
+- `sudo -i` / `su -` → `priv_shell` (класс `ssh.priv`)
+
+JEA `MatchCommand` сравнивает паттерны с raw, inner и binary: `sudo ls` проходит allowlist `ls`.
+
+DLP `scp`/`sftp`/`rsync` тоже через парсер (`sudo scp` по-прежнему deny).
+
+## Баллы операции
+
+Складываются с connect-факторами (`docs/abac-breakglass.txt`), cap 100. Сравнение с `max_risk` ACL/Policy.
+
+| Класс | Примеры | Баллы |
+|-------|---------|-------|
+| *(пусто)* | `ls`, `cat`, `grep` | 0 — не перепроверяется |
+| `ssh.status` | `systemctl status`, `journalctl` | 5 |
+| `ssh.restart` | `systemctl restart/stop`, `kill` | 10 |
+| `ssh.priv` | `sudo -i`, `su -` | 30 |
+| `ssh.chmod` | `chmod` / `chown` | 40 |
+| `ssh.chmod777` | `chmod 777` | 50 |
+| `ssh.user` | `useradd`, `passwd`, `visudo` | 60 |
+| `ssh.firewall` | `iptables`, `nft` | 70 |
+| `ssh.destructive` | `rm`, `dd`, `mkfs`, `reboot` | 90 |
+| `sql.drop` | `DROP DATABASE` / `DROP SCHEMA` | 100 |
+
+## Решение в сессии
+
+Line-buffer (QuietEcho) включается, если есть command pack **или** `max_risk > 0`. Без пакета опасные команды всё равно режутся порогом риска.
+
+| `risk_action` | Если score > max_risk |
+|---------------|------------------------|
+| `deny` / `require_mfa` (операция) | DENY, событие `risk` |
+| `require_approval` | команда не выполняется; аудит `session.command.approval_required`; нужен JIT на новую сессию (PTY не ждёт approve) |
+
+Break-glass и admin bypass — как у остального op-risk. Порог `max_risk` внутри сессии — из снимка connect (`docs/access-policy.txt`), не из live Policy.
+
+## API / UI
+
+`POST /api/v1/admin/jea/command-preview` (`jea.read`): `{ command, pack_id? }` → parsed + JEA + points.
+
+JEA → SSH → «Проверить команду».
+
+## Вне scope
+
+Полный shell AST / pipes / `bash -c`. Step-up MFA на каждую команду (только connect, `docs/adaptive-mfa.txt`). Пауза PTY до approve.

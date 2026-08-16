@@ -1,0 +1,67 @@
+# KeepPAM: Application Object ACL
+
+Контроль **функции/объекта** внутри приложения (main20 §5), не только method+path.
+
+HTTP/URL ACL режет транспорт. Этот пакет называет операцию (`customer.delete`) и задаёт ALLOW / DENY / APPROVAL.
+
+## Пакеты
+
+Таблица `app_object_packs` (миграция `054`). CRUD: `/api/v1/admin/jea/app-object-packs` (`jea.read` / `jea.write`). UI: **JEA → Объекты**.
+
+Правило (по одному в строке, первое совпадение побеждает):
+
+```text
+METHOD PATH OBJECT ACTION
+```
+
+| Поле | Смысл |
+|------|--------|
+| METHOD | `GET` `HEAD` `POST` `PUT` `PATCH` `DELETE` `OPTIONS` `*` |
+| PATH | glob как у HTTP ACL (`*` совпадает и с `/`). Query игнорируется |
+| OBJECT | `customer.view`, `admin.panel` — `[a-z][a-z0-9_.-]{0,63}` |
+| ACTION | `allow` / `deny` / `approval` |
+
+`unmatched`: `allow` (overlay — несовпавшее не режется) или `deny` (allowlist функций).
+
+Пример CRM (сид `crm-objects`, unmatched=deny):
+
+```text
+GET /api/customers/export customer.export approval
+GET /api/customers*       customer.view     allow
+POST /api/customers       customer.create   allow
+PUT /api/customers/*      customer.update   allow
+PATCH /api/customers/*    customer.update   allow
+DELETE /api/customers/*   customer.delete   deny
+* /admin*                 admin.panel       deny
+```
+
+Без пакета на ACL объекты не режутся. HTTP/URL pack применяется **раньше**, если задан.
+
+Привязка: `asset_access_bindings.app_object_pack_id` или наследование из Policy. Снимок на сессию (`sessions.app_object_pack_id`).
+
+## Где enforce
+
+| Канал | Поведение |
+|-------|-----------|
+| HTTPS reverse-proxy `recording_mode=full` | 403 JSON до upstream |
+| kubectl `:16443` и cookie API | 403, тот же pack по method+path |
+
+Isolated Chromium (VNC) пакет не видит.
+
+## APPROVAL
+
+В HTTP-запросе ждать согласование нельзя (как Command Risk в PTY): **deny + аудит**. Ответ `403` `{code:approval_required, object, action}`. Событие сессии `app_approval`, аудит `session.app.approval_required`.
+
+## Preview
+
+`POST /api/v1/admin/jea/app-object-preview` (`jea.read`): `{ method, path, pack_id? }` → allowed / object / action / code.
+
+## Аудит / forensic
+
+- `session.app.denied` / событие `app_denied`
+- `session.app.approval_required` / `app_approval`
+- Сессии → События, фильтры `app_denied` / `app_approval`
+
+## Вне scope
+
+GraphQL field, тело запроса, живой JIT-approve внутри HTTP, привязка объекта без URL, isolated browser.

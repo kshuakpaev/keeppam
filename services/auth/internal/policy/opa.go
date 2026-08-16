@@ -180,12 +180,34 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 	}
 	username := ""
 	_ = s.db.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, in.UserID).Scan(&username)
+	groupNames, _ := s.userGroupNames(ctx, in.UserID)
+	if groupNames == nil {
+		groupNames = []string{}
+	}
 	var name, assetType, proto string
 	_ = s.db.Pool.QueryRow(ctx, `SELECT name, COALESCE(asset_type,''), protocol FROM assets WHERE id=$1`, in.AssetID).Scan(&name, &assetType, &proto)
 	assetTags, _ := s.assetTags(ctx, in.AssetID)
 	binding := map[string]any{}
 	if res.BindingID != nil {
 		binding["id"] = res.BindingID.String()
+	}
+	if res.AccessPolicyID != nil {
+		binding["access_policy_id"] = res.AccessPolicyID.String()
+	}
+	if res.GroupID != nil {
+		binding["group_id"] = res.GroupID.String()
+	}
+	if res.HTTPPolicyPackID != nil {
+		binding["http_policy_pack_id"] = res.HTTPPolicyPackID.String()
+	}
+	if res.AppObjectPackID != nil {
+		binding["app_object_pack_id"] = res.AppObjectPackID.String()
+	}
+	binding["tag_acl"] = res.TagACL
+	if res.MatchTags == nil {
+		binding["asset_match_tags"] = []string{}
+	} else {
+		binding["asset_match_tags"] = res.MatchTags
 	}
 	binding["max_risk"] = res.MaxRisk
 	binding["risk_action"] = res.RiskAction
@@ -217,6 +239,7 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 			"id":       in.UserID.String(),
 			"username": username,
 			"roles":    roles,
+			"groups":   groupNames,
 			"tags":     userTags,
 		},
 		"asset": map[string]any{

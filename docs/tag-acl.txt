@@ -1,0 +1,33 @@
+# KeepPAM: ACL на теги активов
+
+WHAT без строки на каждый хост: WHO (пользователь / роль / группа) + набор тегов. Актив подходит, если у него есть **все** теги селектора (`prod,linux` ≠ только `prod`).
+
+Прямой ACL на карточке актива **специфичнее** и выбирается первым, если WHO совпал.
+
+## Модель
+
+`asset_access_bindings.asset_id` может быть NULL. Тогда `asset_match_tags` непустой (CHECK). Миграция `053`.
+
+`required_tags` по-прежнему ABAC (теги должны быть и у пользователя, и у актива). Это не селектор WHAT.
+
+## API
+
+`assets.read` / `assets.acl`:
+
+| Метод | Путь |
+|-------|------|
+| GET | `/api/v1/admin/acl/tags` |
+| POST | `/api/v1/admin/acl/tags` `{ user_id\|role_id\|group_id, asset_match_tags, access_policy_id?, duration_minutes? }` |
+| DELETE | `/api/v1/admin/assets/{id}/acl/{bindingId}` (id актива для tag-binding не проверяется) |
+
+`GET /assets/{id}/acl` возвращает и прямые, и подходящие tag ACL (`inherited: true`, `asset_match_tags`).
+
+Остальные поля ACL (время, JEA, max_risk) и overlay Policy — как у обычного binding.
+
+## UI
+
+**JEA → Теги активов**. На карточке актива унаследованные строки без кнопки «Отозвать».
+
+## Вне scope
+
+OR по тегам. Вложенные теги. Автосоздание ACL при появлении нового актива. Редактирование binding (revoke + create).

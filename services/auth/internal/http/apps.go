@@ -58,9 +58,10 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AccountID string `json:"account_id"`
-		TicketID  string `json:"ticket_id"`
-		Reason    string `json:"reason"`
+		AccountID   string `json:"account_id"`
+		TicketID    string `json:"ticket_id"`
+		Reason      string `json:"reason"`
+		StepUpToken string `json:"step_up_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -81,7 +82,11 @@ func (s *Server) handleAppAccess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, body.Reason, s.clientIP(r), r.UserAgent())
+	lease, err := s.apps.RequestAccess(r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass, body.TicketID, body.Reason, s.clientIP(r), r.UserAgent(), s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken))
+	if se, ok := isStepUpErr(err); ok {
+		s.writeStepUpChallenge(w, r, sess, se.Result, assetID)
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return
@@ -170,6 +175,13 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 			httpPack, hasHTTPPack = p, true
 		}
 	}
+	var appPack policy.AppObjectPack
+	hasAppPack := false
+	if row.AppObjectPackID != nil && s.policy != nil {
+		if p, err := s.policy.GetAppObjectPack(r.Context(), *row.AppObjectPackID); err == nil {
+			appPack, hasAppPack = p, true
+		}
+	}
 
 	justStarted := row.Status == "pending"
 	if justStarted {
@@ -201,13 +213,13 @@ func (s *Server) handleSessionApp(w http.ResponseWriter, r *http.Request) {
 			r2.URL.Path = "/"
 		}
 	}
-	if s.denyHTTPRequest(w, r2, row, authSess.Roles, httpPack, hasHTTPPack, rec, s.clientIP(r)) {
+	if s.denyHTTPRequest(w, r2, row, authSess.Roles, httpPack, hasHTTPPack, appPack, hasAppPack, rec, s.clientIP(r)) {
 		return
 	}
 	proxy.ServeHTTP(w, r2)
 }
 
-func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row sessionsvc.Session, roles []string, pack policy.HTTPPack, hasPack bool, rec *appaccess.ProxyRecorder, ip string) bool {
+func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row sessionsvc.Session, roles []string, pack policy.HTTPPack, hasPack bool, appPack policy.AppObjectPack, hasAppPack bool, rec *appaccess.ProxyRecorder, ip string) bool {
 	method := req.Method
 	path := req.URL.RequestURI()
 	if req.URL.Path != "" {
@@ -228,6 +240,30 @@ func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row s
 			return true
 		}
 	}
+	if hasAppPack {
+		d := policy.MatchAppObject(appPack, method, path)
+		if !d.Allowed {
+			action := "session.app.denied"
+			evt := "app_denied"
+			if d.Code == "approval_required" {
+				action = "session.app.approval_required"
+				evt = "app_approval"
+			}
+			payload := map[string]any{
+				"method": method, "path": path, "reason": d.Reason, "pack": appPack.Name,
+				"object": d.Object, "action": d.Action, "code": d.Code,
+			}
+			_ = s.audit.Record(req.Context(), &row.UserID, action, "session", row.ID.String(), ip, "http", payload)
+			_ = s.sessionsvc.AddEvent(req.Context(), row.ID, evt, payload)
+			if rec != nil {
+				rec.Record(method, path, http.StatusForbidden)
+			}
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": d.Reason, "code": d.Code, "object": d.Object, "action": d.Action,
+			})
+			return true
+		}
+	}
 	if s.policy == nil {
 		return false
 	}
@@ -237,7 +273,7 @@ func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row s
 	}
 	ev, err := s.policy.CheckOpRisk(req.Context(), policy.AccessCheck{
 		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
-		TicketID: row.TicketID, ClientIP: ip, Operation: op,
+		TicketID: row.TicketID, ClientIP: ip, Operation: op, Snapshot: row.PolicySnapshot,
 	})
 	if err != nil || ev.OK {
 		return false

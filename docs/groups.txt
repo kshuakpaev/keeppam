@@ -1,0 +1,47 @@
+# KeepPAM: группы
+
+Группа — WHO на ACL (оргединица). Роль — права платформы (`users.write`, `sessions.connect`, …). Это разные оси: оператор может быть в `dba` и не быть в `linux-ops`.
+
+## Модель
+
+| Таблица | Смысл |
+|---------|--------|
+| `groups` | имя, описание |
+| `user_group_members` | пользователь ↔ группа |
+| `asset_access_bindings.group_id` | ACL на группу (ровно один из user/role/group) |
+
+Миграция `052`. Seed: `dba`, `linux-ops` (без участников).
+
+`Evaluate`: совпадение, если пользователь состоит в группе binding. Остальное (время, CIDR, Policy overlay, риск, OPA) без изменений.
+
+## API
+
+`users.read` / `users.write`:
+
+| Метод | Путь |
+|-------|------|
+| GET | `/api/v1/admin/groups` |
+| GET | `/api/v1/admin/groups/{id}` (+ `members`) |
+| POST | `/api/v1/admin/groups` `{ name, description, member_ids }` |
+| PUT | `/api/v1/admin/groups/{id}` |
+| DELETE | `/api/v1/admin/groups/{id}` — ACL на группу снимаются (`ON DELETE CASCADE`) |
+
+`PATCH /users/{id}`: `group_ids`. Пользователь в JSON: `groups` (имена) и `group_ids`.
+
+ACL: `POST .../acl` с `group_id` вместо `user_id`/`role_id`.
+
+## SAML
+
+Если имя IdP-группы совпадает с PAM-группой (`dba`=`dba`), при логине участник **добавляется**. Ручные членства не снимаются. Map IdP→роль по-прежнему отдельно (`docs/saml.txt`).
+
+## K8s impersonate
+
+К `keeppam:role:{роль}` добавляется `keeppam:group:{имя}`.
+
+## UI
+
+Меню **Группы**. Карточка пользователя — чекбоксы. ACL актива — тип «Группа».
+
+## Вне scope
+
+Вложенные группы. SCIM. Автоудаление членства, если IdP-группа пропала. Группа как роль платформы.

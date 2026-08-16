@@ -2,7 +2,6 @@ package policy
 
 import (
 	"testing"
-	"time"
 )
 
 func TestSQLOperation(t *testing.T) {
@@ -18,6 +17,9 @@ func TestSQLOperation(t *testing.T) {
 	if SQLOperation("DROP TABLE t") != "sql.ddl" {
 		t.Fatal("ddl")
 	}
+	if SQLOperation("DROP DATABASE prod") != "sql.drop" {
+		t.Fatal("drop database")
+	}
 	if SQLOperation("COPY t TO STDOUT") != "sql.export" {
 		t.Fatal("export")
 	}
@@ -32,6 +34,24 @@ func TestSSHOperation(t *testing.T) {
 	}
 	if SSHOperation("sudo -u root rm -rf /") != "ssh.destructive" {
 		t.Fatal("sudo rm")
+	}
+	if SSHOperation("su -c 'iptables -F'") != "ssh.firewall" {
+		t.Fatal("su iptables")
+	}
+	if SSHOperation("systemctl status nginx") != "ssh.status" {
+		t.Fatal("status")
+	}
+	if SSHOperation("systemctl restart nginx") != "ssh.restart" {
+		t.Fatal("restart")
+	}
+	if SSHOperation("chmod 777 /tmp/x") != "ssh.chmod777" {
+		t.Fatal("chmod777")
+	}
+	if SSHOperation("useradd alice") != "ssh.user" {
+		t.Fatal("useradd")
+	}
+	if SSHOperation("sudo -i") != "ssh.priv" {
+		t.Fatal("sudo -i")
 	}
 	if SSHOperation("scp -t /tmp") != "" {
 		t.Fatal("scp is DLP")
@@ -72,10 +92,14 @@ func TestOperationPoints(t *testing.T) {
 	if p, f := operationPoints("sql.ddl"); p != 45 || f != "op:sql.ddl" {
 		t.Fatalf("%d %s", p, f)
 	}
-	p, _ := operationPoints("sql.ddl")
-	base, _ := computeRisk(RiskInputs{Now: time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)})
-	if base+p != 45 {
-		t.Fatalf("daytime ddl should be 45, got %d", base+p)
+	if p, f := operationPoints("ssh.destructive"); p != 90 || f != "op:ssh.destructive" {
+		t.Fatalf("destructive %d %s", p, f)
+	}
+	if p, _ := operationPoints("ssh.priv"); p != 30 {
+		t.Fatalf("priv %d", p)
+	}
+	if p, _ := operationPoints("sql.drop"); p != 100 {
+		t.Fatalf("drop %d", p)
 	}
 }
 

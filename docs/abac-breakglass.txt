@@ -19,7 +19,7 @@ Deny-by-default: нет совпавшей привязки — отказ.
 
 ## Risk-based access
 
-На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval`).
+На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval` | `require_mfa`).
 
 Score 0–100 (сумма, cap 100). **Connect / JIT request** — факторы окружения. **Операция внутри сессии** — те же факторы + баллы операции (JIT-окно connect-риск не отменяет).
 
@@ -31,9 +31,9 @@ Score 0–100 (сумма, cap 100). **Connect / JIT request** — фактор�
 | `concurrent` | pending+active сессии: 3–4 / ≥5 | 10 / 20 |
 | `anom_brute` | ≥8 fail за 24ч | 20 |
 | `anom_multi` | ≥4 разных актива за 24ч | 15 |
-| `op:sql.insert` / `update` / `delete` / `ddl` / `export` | SQL DML/DDL/COPY | 15 / 20 / 30 / 45 / 50 |
+| `op:sql.insert` / `update` / `delete` / `ddl` / `drop` / `export` | SQL DML/DDL/`DROP DATABASE`/COPY | 15 / 20 / 30 / 45 / 100 / 50 |
 | `op:k8s.write` / `delete` / `exec` | kubectl create/patch; delete; exec | 20 / 35 / 45 |
-| `op:ssh.destructive` / `priv` | `rm`/`dd`/… (при JEA pack); sudo без команды | 40 / 25 |
+| `op:ssh.status` / `restart` / `priv` / `chmod` / `chmod777` / `user` / `firewall` / `destructive` | парсер sudo/su; баллы 5…90, см. `docs/command-risk.txt` |
 | `op:http.write` / `delete` | HTTPS/kubectl POST/PUT/PATCH; DELETE | 20 / 35 |
 
 `SELECT` / k8s GET не добавляют баллов и не перепроверяются.
@@ -41,6 +41,7 @@ Score 0–100 (сумма, cap 100). **Connect / JIT request** — фактор�
 Если score > `max_risk`:
 - `deny` — отказ (в т.ч. создать JIT; операция в сессии — отказ без нового JIT)
 - `require_approval` — отказ на connect, нужен JIT; после approve **вход** без порога, **операции** (DDL, delete, …) порог всё ещё действует
+- `require_mfa` — повторный TOTP/Passkey на connect (см. `docs/adaptive-mfa.txt`); операции внутри сессии как `deny`
 
 Break-glass и admin bypass риск не применяют. JIT-binding (`expires_at`) пропускает только **connect**-риск.
 

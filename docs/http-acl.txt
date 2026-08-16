@@ -22,7 +22,7 @@
 
 Без пакета на ACL URL не режется (как SQL JEA). Deny-by-default остаётся на **connect** (`policy.Evaluate`).
 
-Привязка: `asset_access_bindings.http_policy_pack_id`. Снимок на сессию при создании (`sessions.http_policy_pack_id`).
+Привязка: `asset_access_bindings.http_policy_pack_id` или наследование из именованной Policy (`docs/access-policy.txt`). Снимок на сессию при создании (`sessions.http_policy_pack_id`).
 
 Seed: `http-readonly` (GET/HEAD/OPTIONS *), `http-block-admin` (`* /admin*`, `DELETE *`).
 
@@ -56,3 +56,5 @@ OPA extra-deny видит `request.operation`.
 ## Вне scope
 
 GraphQL field ACL, тело запроса/ответа, isolated browser URL, отдельный API gateway вне PAM-сессии.
+
+Object/Function ACL поверх URL — `docs/app-object-acl.txt`.

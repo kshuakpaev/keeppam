@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/keeppam/auth/internal/audit"
+	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/sbom"
@@ -330,6 +331,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	st.Controls = append(st.Controls, s.checkKMSHSM())
 	st.Controls = append(st.Controls, s.checkFIPS())
 	st.Controls = append(st.Controls, s.checkSBOM())
+	st.Controls = append(st.Controls, s.checkMemory())
 	return st, nil
 }
 
@@ -482,6 +484,23 @@ func (s *Service) checkKMSHSM() ControlResult {
 		return ControlResult{ID: "kms_hsm_key", Title: "KMS/HSM data key", Status: "fail",
 			Detail: "env data key — не для prod"}
 	}
+}
+
+func (s *Service) checkMemory() ControlResult {
+	st := crypto.LastMemStatus()
+	detail := fmt.Sprintf("coredump=%s dumpable=%v mlock=%v", st.CoreDump, st.Dumpable, st.DataKeyMlock)
+	if st.MlockError != "" {
+		detail += " (" + st.MlockError + ")"
+	}
+	if st.CoreDump == "disabled" && !st.Dumpable && st.DataKeyMlock {
+		return ControlResult{ID: "memory_hardening", Title: "Memory hardening", Status: "pass", Detail: detail}
+	}
+	if st.CoreDump == "disabled" {
+		return ControlResult{ID: "memory_hardening", Title: "Memory hardening", Status: "warn",
+			Detail: detail + " — mlock нужен CAP_IPC_LOCK (см. docs/memory.txt)"}
+	}
+	return ControlResult{ID: "memory_hardening", Title: "Memory hardening", Status: "fail",
+		Detail: detail}
 }
 
 func (s *Service) checkFIPS() ControlResult {

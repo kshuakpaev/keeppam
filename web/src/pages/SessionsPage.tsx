@@ -6,6 +6,21 @@ import { kindForProtocol, useSessionTabs } from "../sessionTabs";
 
 const PAGE_SIZE = 50;
 
+function snapshotHint(s: PamSession): string {
+  const p = s.policy_snapshot;
+  if (!p) return "";
+  const bits: string[] = [];
+  if (p.access_policy_name) bits.push(p.access_policy_name);
+  if (p.max_risk) bits.push(`risk≤${p.max_risk}/${p.risk_action || "deny"}`);
+  if (p.command_policy_pack_name) bits.push(`ssh:${p.command_policy_pack_name}`);
+  if (p.sql_policy_pack_name) bits.push(`sql:${p.sql_policy_pack_name}`);
+  if (p.http_policy_pack_name) bits.push(`http:${p.http_policy_pack_name}`);
+  if (p.app_object_pack_name) bits.push(`obj:${p.app_object_pack_name}`);
+  if (p.tag_acl) bits.push("tag-acl");
+  if (p.admin_bypass) bits.push("bypass");
+  return bits.join(" · ");
+}
+
 type Tab = "all" | "live" | "events";
 
 export function SessionsPage() {
@@ -93,7 +108,8 @@ export function SessionsPage() {
         <div>
           <h1>Сессии</h1>
           <p className="muted">
-            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / JEA deny
+            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / JEA deny.
+            Лента по пользователю — <Link to="/forensic">Расследование</Link>.
           </p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
@@ -167,6 +183,8 @@ export function SessionsPage() {
                 <option value="command_denied">command_denied</option>
                 <option value="dlp">dlp</option>
                 <option value="http_denied">http_denied</option>
+                <option value="app_denied">app_denied</option>
+                <option value="app_approval">app_approval</option>
                 <option value="risk">risk</option>
                 <option value="all">все типы</option>
               </select>
@@ -350,6 +368,11 @@ export function SessionsPage() {
                     <span className="badge locked" style={{ marginLeft: 6 }} title="break-glass session">
                       glass
                     </span>
+                  )}
+                  {snapshotHint(s) && (
+                    <div className="muted mono" style={{ fontSize: "0.8rem" }} title="политика на момент connect">
+                      {snapshotHint(s)}
+                    </div>
                   )}
                 </td>
                 <td>

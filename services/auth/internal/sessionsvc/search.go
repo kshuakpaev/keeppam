@@ -20,18 +20,18 @@ type EventSearchFilter struct {
 }
 
 type EventHit struct {
-	ID          uuid.UUID      `json:"id"`
-	SessionID   uuid.UUID      `json:"session_id"`
-	TS          time.Time      `json:"ts"`
-	Type        string         `json:"type"`
-	Snippet     string         `json:"snippet"`
-	Payload     map[string]any `json:"payload"`
-	Username    string         `json:"username,omitempty"`
-	AssetName   string         `json:"asset_name,omitempty"`
-	AssetID     uuid.UUID      `json:"asset_id"`
-	Protocol    string         `json:"protocol"`
-	Status      string         `json:"status"`
-	BreakGlass  bool           `json:"break_glass"`
+	ID         uuid.UUID      `json:"id"`
+	SessionID  uuid.UUID      `json:"session_id"`
+	TS         time.Time      `json:"ts"`
+	Type       string         `json:"type"`
+	Snippet    string         `json:"snippet"`
+	Payload    map[string]any `json:"payload"`
+	Username   string         `json:"username,omitempty"`
+	AssetName  string         `json:"asset_name,omitempty"`
+	AssetID    uuid.UUID      `json:"asset_id"`
+	Protocol   string         `json:"protocol"`
+	Status     string         `json:"status"`
+	BreakGlass bool           `json:"break_glass"`
 }
 
 func EventSnippet(eventType string, payload map[string]any) string {
@@ -74,7 +74,7 @@ func EventSnippet(eventType string, payload map[string]any) string {
 		if line != "" {
 			return line
 		}
-	case "command_denied", "dlp", "risk", "http_denied":
+	case "command_denied", "dlp", "risk", "http_denied", "app_denied", "app_approval":
 		if s := payloadString(payload, "command"); s != "" {
 			return "DENIED " + s
 		}
@@ -163,7 +163,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk','http_denied')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command_denied','dlp','risk','http_denied','app_denied','app_approval')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))

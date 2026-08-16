@@ -2,6 +2,8 @@
 
 Поиск по `session_events` (SQL, kubectl, JEA deny, DLP, risk, HTTP ACL) без разбора asciicast/видео.
 
+Лента «все действия пользователя за день» (аудит + сессии) — `docs/forensic.txt`.
+
 ## API
 
 `GET /api/v1/admin/sessions/events` (`sessions.read`)
@@ -9,7 +11,7 @@
 | Query | Смысл |
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
-| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command_denied`, `dlp`, `risk`, `http_denied`); `all` = любые; иначе точный тип |
+| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command_denied`, `dlp`, `risk`, `http_denied`, `app_denied`, `app_approval`); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 

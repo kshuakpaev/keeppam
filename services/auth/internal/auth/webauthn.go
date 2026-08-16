@@ -179,6 +179,42 @@ func (s *Service) FinishWebAuthnRegister(ctx context.Context, userID uuid.UUID, 
 	return saved, nil
 }
 
+func (s *Service) finishWebAuthnAssertion(ctx context.Context, challengeToken string, credentialJSON []byte, ip, ua string, loginAudit bool) (store.User, error) {
+	chal, err := s.sessions.GetChallenge(ctx, challengeToken)
+	if err != nil {
+		return store.User{}, fmt.Errorf("invalid challenge")
+	}
+	wa, err := s.webAuthn()
+	if err != nil {
+		return store.User{}, err
+	}
+	var sessionData webauthn.SessionData
+	if err := s.sessions.GetJSON(ctx, "wa:login:"+challengeToken, &sessionData); err != nil {
+		return store.User{}, fmt.Errorf("webauthn session expired")
+	}
+	user, u, err := s.loadWAUser(ctx, chal.UserID)
+	if err != nil {
+		return store.User{}, err
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(credentialJSON)
+	if err != nil {
+		return store.User{}, fmt.Errorf("invalid assertion")
+	}
+	cred, err := wa.ValidateLogin(user, sessionData, parsed)
+	if err != nil {
+		action := "user.login.failure"
+		payload := map[string]any{"reason": "invalid_webauthn"}
+		if !loginAudit {
+			action = "access.stepup.failure"
+		}
+		_ = s.audit.Record(ctx, &u.ID, action, "user", u.ID.String(), ip, ua, payload)
+		return store.User{}, fmt.Errorf("invalid webauthn assertion")
+	}
+	_ = s.db.UpdateWebAuthnSignCount(ctx, u.ID, cred.ID, cred.Authenticator.SignCount, cred.Flags.BackupState)
+	_ = s.sessions.DeleteKey(ctx, "wa:login:"+challengeToken)
+	return u, nil
+}
+
 func (s *Service) BeginWebAuthnLogin(ctx context.Context, challengeToken string) (any, error) {
 	chal, err := s.sessions.GetChallenge(ctx, challengeToken)
 	if err != nil {
@@ -210,29 +246,13 @@ func (s *Service) FinishWebAuthnLogin(ctx context.Context, challengeToken string
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("invalid challenge")
 	}
-	wa, err := s.webAuthn()
+	if chal.Purpose == stepUpPurpose {
+		return LoginResult{}, fmt.Errorf("invalid challenge")
+	}
+	u, err := s.finishWebAuthnAssertion(ctx, challengeToken, credentialJSON, ip, ua, true)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	var sessionData webauthn.SessionData
-	if err := s.sessions.GetJSON(ctx, "wa:login:"+challengeToken, &sessionData); err != nil {
-		return LoginResult{}, fmt.Errorf("webauthn session expired")
-	}
-	user, u, err := s.loadWAUser(ctx, chal.UserID)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	parsed, err := protocol.ParseCredentialRequestResponseBytes(credentialJSON)
-	if err != nil {
-		return LoginResult{}, fmt.Errorf("invalid assertion")
-	}
-	cred, err := wa.ValidateLogin(user, sessionData, parsed)
-	if err != nil {
-		_ = s.audit.Record(ctx, &u.ID, "user.login.failure", "user", u.ID.String(), ip, ua, map[string]any{"reason": "invalid_webauthn"})
-		return LoginResult{}, fmt.Errorf("invalid webauthn assertion")
-	}
-	_ = s.db.UpdateWebAuthnSignCount(ctx, u.ID, cred.ID, cred.Authenticator.SignCount, cred.Flags.BackupState)
-	_ = s.sessions.DeleteKey(ctx, "wa:login:"+challengeToken)
 	_ = s.sessions.DeleteChallenge(ctx, challengeToken)
 
 	sessTok, err := s.issueSession(ctx, u)

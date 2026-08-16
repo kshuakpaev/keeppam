@@ -11,6 +11,8 @@ export type User = {
   created_at: string;
   updated_at: string;
   roles?: string[];
+  groups?: string[];
+  group_ids?: string[];
   permissions?: string[];
   tags?: string[];
 };
@@ -19,6 +21,16 @@ export type Role = {
   id: string;
   name: string;
   description: string;
+};
+
+export type PamGroup = {
+  id: string;
+  name: string;
+  description: string;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+  members?: { id: string; username: string; email: string; display_name: string; status: string }[];
 };
 
 export type UserSSHKey = {
@@ -143,11 +155,15 @@ export type Asset = {
 
 export type AccessBinding = {
   id: string;
-  asset_id: string;
+  asset_id?: string;
+  asset_match_tags?: string[];
+  inherited?: boolean;
   user_id?: string;
   role_id?: string;
+  group_id?: string;
   username?: string;
   role_name?: string;
+  group_name?: string;
   time_start?: string;
   time_end?: string;
   days_of_week: number;
@@ -165,6 +181,10 @@ export type AccessBinding = {
   sql_policy_pack_name?: string;
   http_policy_pack_id?: string;
   http_policy_pack_name?: string;
+  app_object_pack_id?: string;
+  app_object_pack_name?: string;
+  access_policy_id?: string;
+  access_policy_name?: string;
   max_risk?: number;
   risk_action?: string;
   created_at: string;
@@ -391,6 +411,9 @@ export type InfraStatus = {
   sbom_components?: number;
   otel_endpoint?: string;
   otel_ready?: boolean;
+  coredump?: string;
+  dumpable?: boolean;
+  data_key_mlock?: boolean;
 };
 
 export type DiscoveryJob = {
@@ -526,9 +549,56 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((data as { error?: string }).error || res.statusText);
+    throw ApiError.fromResponse(res.status, data);
   }
   return data as T;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  challenge_token?: string;
+  totp?: boolean;
+  webauthn?: boolean;
+  risk_score?: number;
+  max_risk?: number;
+  risk_factors?: string[];
+  risk_action?: string;
+
+  constructor(message: string, status: number, extra?: Partial<ApiError>) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    Object.assign(this, extra);
+  }
+
+  static fromResponse(status: number, data: unknown): ApiError {
+    const d = (data || {}) as {
+      error?: string;
+      code?: string;
+      challenge_token?: string;
+      totp?: boolean;
+      webauthn?: boolean;
+      risk_score?: number;
+      max_risk?: number;
+      risk_factors?: string[];
+      risk_action?: string;
+    };
+    return new ApiError(d.error || "request failed", status, {
+      code: d.code,
+      challenge_token: d.challenge_token,
+      totp: d.totp,
+      webauthn: d.webauthn,
+      risk_score: d.risk_score,
+      max_risk: d.max_risk,
+      risk_factors: d.risk_factors,
+      risk_action: d.risk_action,
+    });
+  }
+
+  static isStepUp(err: unknown): err is ApiError {
+    return err instanceof ApiError && err.code === "mfa_required" && !!err.challenge_token;
+  }
 }
 
 export const api = {
@@ -569,6 +639,21 @@ export const api = {
     ),
   deleteMyWebAuthn: (id: string) =>
     request<{ status: string }>(`/api/v1/auth/webauthn/credentials/${id}`, { method: "DELETE" }),
+  stepUpTotp: (challenge_token: string, code: string) =>
+    request<{ step_up_token: string }>("/api/v1/auth/stepup/totp", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, code }),
+    }),
+  stepUpWebAuthnBegin: (challenge_token: string) =>
+    request<unknown>("/api/v1/auth/stepup/webauthn/begin", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token }),
+    }),
+  stepUpWebAuthnFinish: (challenge_token: string, credential: unknown) =>
+    request<{ step_up_token: string }>("/api/v1/auth/stepup/webauthn/finish", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token, credential }),
+    }),
   listUserWebAuthn: (userId: string) =>
     request<{ credentials: { id: string; name: string; created_at: string }[] }>(
       `/api/v1/admin/users/${userId}/webauthn`,
@@ -692,6 +777,7 @@ export const api = {
       status?: string;
       roles?: string[];
       tags?: string[];
+      group_ids?: string[];
     },
   ) =>
     request<User>(`/api/v1/admin/users/${id}`, {
@@ -714,6 +800,14 @@ export const api = {
   deleteUserSSHKey: (id: string, keyId: string) =>
     request<{ status: string }>(`/api/v1/admin/users/${id}/ssh-keys/${keyId}`, { method: "DELETE" }),
   listRoles: () => request<{ roles: Role[] }>("/api/v1/admin/roles"),
+  listGroups: () => request<{ groups: PamGroup[] }>("/api/v1/admin/groups"),
+  getGroup: (id: string) => request<PamGroup>(`/api/v1/admin/groups/${id}`),
+  createGroup: (body: { name: string; description?: string; member_ids?: string[] }) =>
+    request<PamGroup>("/api/v1/admin/groups", { method: "POST", body: JSON.stringify(body) }),
+  updateGroup: (id: string, body: { name?: string; description?: string; member_ids?: string[] }) =>
+    request<PamGroup>(`/api/v1/admin/groups/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteGroup: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/groups/${id}`, { method: "DELETE" }),
   listAudit: (params?: {
     q?: string;
     field?: string;
@@ -898,11 +992,29 @@ export const api = {
     }),
   listACL: (assetId: string) =>
     request<{ bindings: AccessBinding[] }>(`/api/v1/admin/assets/${assetId}/acl`),
+  listTagACL: () => request<{ bindings: AccessBinding[] }>("/api/v1/admin/acl/tags"),
+  createTagACL: (
+    body: {
+      user_id?: string;
+      role_id?: string;
+      group_id?: string;
+      asset_match_tags: string[];
+      duration_minutes?: number;
+      access_policy_id?: string;
+      max_risk?: number;
+      risk_action?: string;
+    },
+  ) =>
+    request<AccessBinding>("/api/v1/admin/acl/tags", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   createACL: (
     assetId: string,
     body: {
       user_id?: string;
       role_id?: string;
+      group_id?: string;
       time_start?: string;
       time_end?: string;
       days_of_week?: number;
@@ -917,6 +1029,8 @@ export const api = {
       command_policy_pack_id?: string;
       sql_policy_pack_id?: string;
       http_policy_pack_id?: string;
+      app_object_pack_id?: string;
+      access_policy_id?: string;
       max_risk?: number;
       risk_action?: string;
     },
@@ -974,7 +1088,7 @@ export const api = {
   createSession: (
     asset_id: string,
     account_id: string,
-    opts?: { ticket_id?: string; reason?: string; db_privilege?: string },
+    opts?: { ticket_id?: string; reason?: string; db_privilege?: string; step_up_token?: string },
   ) =>
     request<PamSession>("/api/v1/admin/sessions", {
       method: "POST",
@@ -984,6 +1098,7 @@ export const api = {
         ticket_id: opts?.ticket_id || undefined,
         reason: opts?.reason || undefined,
         db_privilege: opts?.db_privilege || undefined,
+        step_up_token: opts?.step_up_token || undefined,
       }),
     }),
   endSession: (id: string) =>
@@ -1024,6 +1139,65 @@ export const api = {
     return request<{ events: SessionEventHit[]; total: number }>(
       `/api/v1/admin/sessions/events${q ? `?${q}` : ""}`,
     );
+  },
+  searchTimeline: (params: {
+    user_id?: string;
+    username?: string;
+    q?: string;
+    source?: string;
+    hours?: number;
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.user_id) qs.set("user_id", params.user_id);
+    if (params.username) qs.set("username", params.username);
+    if (params.q) qs.set("q", params.q);
+    if (params.source) qs.set("source", params.source);
+    if (params.hours != null) qs.set("hours", String(params.hours));
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<TimelineResult>(`/api/v1/admin/sessions/timeline${q ? `?${q}` : ""}`);
+  },
+  downloadTimelineCsv: async (params: {
+    user_id?: string;
+    username?: string;
+    q?: string;
+    source?: string;
+    from?: string;
+    to?: string;
+    hours?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.user_id) qs.set("user_id", params.user_id);
+    if (params.username) qs.set("username", params.username);
+    if (params.q) qs.set("q", params.q);
+    if (params.source) qs.set("source", params.source);
+    if (params.hours != null) qs.set("hours", String(params.hours));
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    qs.set("limit", String(params.limit ?? 200));
+    qs.set("format", "csv");
+    const res = await fetch(`/api/v1/admin/sessions/timeline?${qs.toString()}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keeppam-timeline.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   },
   getKubeconfig: (id: string) =>
     request<{ kubeconfig: string; k8s_addr: string; k8s_token: string }>(
@@ -1091,12 +1265,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  requestAppAccess: (assetId: string, body: { account_id?: string; ticket_id?: string; reason?: string }) =>
+  requestAppAccess: (assetId: string, body: { account_id?: string; ticket_id?: string; reason?: string; step_up_token?: string }) =>
     request<AppLease>(`/api/v1/admin/assets/${assetId}/app/access`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  requestK8sAccess: (assetId: string, body: { account_id: string; ticket_id?: string; reason?: string }) =>
+  requestK8sAccess: (assetId: string, body: { account_id: string; ticket_id?: string; reason?: string; step_up_token?: string }) =>
     request<AppLease>(`/api/v1/admin/assets/${assetId}/k8s/access`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -1131,6 +1305,51 @@ export const api = {
       skipped_holds: number;
       audit_note: string;
     }>("/api/v1/admin/compliance/purge", { method: "POST" }),
+  getComplianceReport: (params: {
+    from?: string;
+    to?: string;
+    days?: number;
+    framework?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.days != null) qs.set("days", String(params.days));
+    if (params.framework) qs.set("framework", params.framework);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<ComplianceReport>(`/api/v1/admin/compliance/report${suffix}`);
+  },
+  downloadComplianceReportCsv: async (params: {
+    from?: string;
+    to?: string;
+    days?: number;
+    framework?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.days != null) qs.set("days", String(params.days));
+    if (params.framework) qs.set("framework", params.framework);
+    qs.set("limit", String(params.limit ?? 500));
+    qs.set("format", "csv");
+    const res = await fetch(`/api/v1/admin/compliance/report?${qs.toString()}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keeppam-compliance.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   getDRStatus: () => request<DRStatus>("/api/v1/admin/dr/status"),
   getDRSettings: () => request<DRSettings>("/api/v1/admin/dr/settings"),
   putDRSettings: (body: Partial<DRSettings>) =>
@@ -1161,6 +1380,11 @@ export const api = {
     }),
   deleteCommandPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/packs/${id}`, { method: "DELETE" }),
+  previewCommand: (body: { command: string; pack_id?: string }) =>
+    request<CommandPreview>("/api/v1/admin/jea/command-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listSQLPacks: () => request<{ packs: SQLPolicyPack[] }>("/api/v1/admin/jea/sql-packs"),
   createSQLPack: (body: SQLPolicyPackInput) =>
     request<SQLPolicyPack>("/api/v1/admin/jea/sql-packs", {
@@ -1187,6 +1411,41 @@ export const api = {
     }),
   deleteHTTPPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/http-packs/${id}`, { method: "DELETE" }),
+  listAppObjectPacks: () =>
+    request<{ packs: AppObjectPack[] }>("/api/v1/admin/jea/app-object-packs"),
+  createAppObjectPack: (body: AppObjectPackInput) =>
+    request<AppObjectPack>("/api/v1/admin/jea/app-object-packs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAppObjectPack: (id: string, body: AppObjectPackInput) =>
+    request<AppObjectPack>(`/api/v1/admin/jea/app-object-packs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteAppObjectPack: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/jea/app-object-packs/${id}`, { method: "DELETE" }),
+  previewAppObject: (body: { method: string; path: string; pack_id?: string }) =>
+    request<AppObjectPreview>("/api/v1/admin/jea/app-object-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listAccessPolicies: () =>
+    request<{ policies: AccessPolicy[] }>("/api/v1/admin/jea/access-policies"),
+  getAccessPolicy: (id: string) =>
+    request<AccessPolicy>(`/api/v1/admin/jea/access-policies/${id}`),
+  createAccessPolicy: (body: AccessPolicyInput) =>
+    request<AccessPolicy>("/api/v1/admin/jea/access-policies", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateAccessPolicy: (id: string, body: AccessPolicyInput) =>
+    request<AccessPolicy>(`/api/v1/admin/jea/access-policies/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteAccessPolicy: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/jea/access-policies/${id}`, { method: "DELETE" }),
   listAttackScenarios: () =>
     request<{ scenarios: AttackSimScenario[] }>("/api/v1/admin/attack-sim/scenarios"),
   listAttackRuns: () => request<{ runs: AttackSimRun[] }>("/api/v1/admin/attack-sim/runs"),
@@ -1245,6 +1504,25 @@ export type CommandPolicyPackInput = {
   patterns: string[];
 };
 
+export type CommandPreview = {
+  command: string;
+  parsed: {
+    raw: string;
+    inner: string;
+    binary: string;
+    args: string[];
+    wrappers: string[];
+    priv_shell: boolean;
+  };
+  dlp: boolean;
+  jea_allowed?: boolean;
+  pack?: string;
+  operation: string;
+  points: number;
+  kind: string;
+  note: string;
+};
+
 export type SQLPolicyPack = {
   id: string;
   name: string;
@@ -1287,6 +1565,82 @@ export type HTTPPolicyPackInput = {
   description?: string;
   mode: string;
   rules: string[];
+};
+
+export type AppObjectPack = {
+  id: string;
+  name: string;
+  description: string;
+  unmatched: "allow" | "deny" | string;
+  rules: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppObjectPackInput = {
+  name: string;
+  description?: string;
+  unmatched: string;
+  rules: string[];
+};
+
+export type AppObjectPreview = {
+  allowed: boolean;
+  matched: boolean;
+  object?: string;
+  action: string;
+  reason?: string;
+  code?: string;
+  pack_name?: string;
+};
+
+export type AccessPolicy = {
+  id: string;
+  name: string;
+  description: string;
+  time_start?: string;
+  time_end?: string;
+  days_of_week: number;
+  required_tags: string[];
+  require_ticket: boolean;
+  require_reason: boolean;
+  allowed_cidrs: string[];
+  allowed_countries: string[];
+  allowed_devices: string[];
+  allowed_namespaces: string[];
+  command_policy_pack_id?: string;
+  command_policy_pack_name?: string;
+  sql_policy_pack_id?: string;
+  sql_policy_pack_name?: string;
+  http_policy_pack_id?: string;
+  http_policy_pack_name?: string;
+  app_object_pack_id?: string;
+  app_object_pack_name?: string;
+  max_risk: number;
+  risk_action: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AccessPolicyInput = {
+  name: string;
+  description?: string;
+  time_start?: string;
+  time_end?: string;
+  days_of_week?: number;
+  required_tags?: string[];
+  require_ticket?: boolean;
+  require_reason?: boolean;
+  allowed_cidrs?: string[];
+  allowed_countries?: string[];
+  allowed_devices?: string[];
+  allowed_namespaces?: string[];
+  command_policy_pack_id?: string;
+  sql_policy_pack_id?: string;
+  http_policy_pack_id?: string;
+  app_object_pack_id?: string;
+  max_risk?: number;
+  risk_action?: string;
 };
 
 export type SessionEventHit = {
@@ -1335,6 +1689,60 @@ export type PamSession = {
   db_privilege?: string;
   break_glass?: boolean;
   k8s_namespaces?: string[];
+  risk_score?: number;
+  risk_factors?: string[];
+  labels?: string[];
+  access_policy_id?: string;
+  client_country?: string;
+  policy_snapshot?: PolicySnapshot;
+};
+
+export type PolicySnapshot = {
+  binding_id?: string;
+  group_id?: string;
+  access_policy_id?: string;
+  access_policy_name?: string;
+  max_risk?: number;
+  risk_action?: string;
+  command_policy_pack_id?: string;
+  command_policy_pack_name?: string;
+  sql_policy_pack_id?: string;
+  sql_policy_pack_name?: string;
+  http_policy_pack_id?: string;
+  http_policy_pack_name?: string;
+  app_object_pack_id?: string;
+  app_object_pack_name?: string;
+  allowed_namespaces?: string[];
+  tag_acl?: boolean;
+  match_tags?: string[];
+  break_glass?: boolean;
+  admin_bypass?: boolean;
+};
+
+export type TimelineEvent = {
+  id: string;
+  ts: string;
+  source: "audit" | "session" | string;
+  kind: string;
+  snippet: string;
+  session_id?: string;
+  asset_id?: string;
+  asset_name?: string;
+  protocol?: string;
+  ip?: string;
+  labels?: string[];
+  risk_score?: number;
+  ticket_id?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type TimelineResult = {
+  user_id: string;
+  username: string;
+  from: string;
+  to: string;
+  events: TimelineEvent[];
+  total: number;
 };
 
 export type K8sResourceKind = {
@@ -1434,6 +1842,47 @@ export type ComplianceStatus = {
   last_purge_at?: string;
   last_purge_stats?: Record<string, unknown>;
   generated_at: string;
+};
+
+export type ComplianceReport = {
+  generated_at: string;
+  from: string;
+  to: string;
+  framework: string;
+  controls: { id: string; title: string; categories: string[] }[];
+  summary: {
+    access: number;
+    privileged: number;
+    approvals: number;
+    connections: number;
+    commands: number;
+    sql: number;
+    downloads: number;
+    changes: number;
+    revoked: number;
+  };
+  snapshot: {
+    acl_live: number;
+    sessions_active: number;
+    jit_pending: number;
+    break_glass_active: number;
+    legal_holds: number;
+  };
+  evidence: {
+    id: string;
+    ts: string;
+    category: string;
+    source: string;
+    actor: string;
+    action: string;
+    resource_type: string;
+    resource_id: string;
+    detail: string;
+    ip?: string;
+  }[];
+  evidence_total: number;
+  truncated: boolean;
+  notes: string[];
 };
 
 export type DRSettings = {

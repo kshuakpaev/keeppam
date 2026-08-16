@@ -1,54 +1,17 @@
 package policy
 
 import (
-	"path"
 	"strings"
 )
 
-// FileTransferCommand reports scp/sftp/rsync (including sudo wrappers).
+// FileTransferCommand reports scp/sftp/rsync (including sudo/su wrappers).
 func FileTransferCommand(line string) (kind string, ok bool) {
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) == 0 {
-		return "", false
-	}
-	i := 0
-	switch strings.ToLower(fields[0]) {
-	case "sudo", "doas", "pkexec":
-		i = skipSudoFlags(fields, 1)
-	}
-	if i >= len(fields) {
-		return "", false
-	}
-	base := strings.ToLower(path.Base(fields[i]))
-	switch base {
+	p := ParseCommand(line)
+	switch p.Binary {
 	case "scp", "sftp", "rsync":
-		return base, true
+		return p.Binary, true
 	}
 	return "", false
-}
-
-func skipSudoFlags(fields []string, i int) int {
-	for i < len(fields) {
-		f := fields[i]
-		if f == "--" {
-			return i + 1
-		}
-		if !strings.HasPrefix(f, "-") {
-			return i
-		}
-		if strings.Contains(f, "=") {
-			i++
-			continue
-		}
-		switch f {
-		case "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt",
-			"-C", "--close-from", "-D", "--chdir", "-R", "--chroot", "-T", "--command-timeout":
-			i += 2
-		default:
-			i++
-		}
-	}
-	return i
 }
 
 // SSHChannelDLP denies port-forward / X11 / tun channels.

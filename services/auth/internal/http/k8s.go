@@ -20,9 +20,10 @@ func (s *Server) handleK8sAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AccountID string `json:"account_id"`
-		TicketID  string `json:"ticket_id"`
-		Reason    string `json:"reason"`
+		AccountID   string `json:"account_id"`
+		TicketID    string `json:"ticket_id"`
+		Reason      string `json:"reason"`
+		StepUpToken string `json:"step_up_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -46,7 +47,12 @@ func (s *Server) handleK8sAccess(w http.ResponseWriter, r *http.Request) {
 	lease, err := s.apps.RequestK8sAccess(
 		r.Context(), sess.UserID, assetID, accountID, sess.Roles, bypass,
 		body.TicketID, body.Reason, s.clientIP(r), r.UserAgent(),
+		s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken),
 	)
+	if se, ok := isStepUpErr(err); ok {
+		s.writeStepUpChallenge(w, r, sess, se.Result, assetID)
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return

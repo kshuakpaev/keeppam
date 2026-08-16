@@ -14,32 +14,40 @@ import (
 
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/obs"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/store"
 )
 
 type Session struct {
-	ID            uuid.UUID  `json:"id"`
-	UserID        uuid.UUID  `json:"user_id"`
-	AssetID       uuid.UUID  `json:"asset_id"`
-	AccountID     uuid.UUID  `json:"account_id"`
-	Protocol      string     `json:"protocol"`
-	Status        string     `json:"status"`
-	ClientIP      string     `json:"client_ip"`
-	RecordingPath string     `json:"recording_path,omitempty"`
-	ErrorMessage  string     `json:"error_message,omitempty"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
-	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	TicketID        string     `json:"ticket_id,omitempty"`
-	Reason          string     `json:"reason,omitempty"`
-	DBPrivilege     string     `json:"db_privilege,omitempty"`
-	DatabaseName    string     `json:"database_name,omitempty"`
-	SQLPolicyPackID *uuid.UUID `json:"sql_policy_pack_id,omitempty"`
-	HTTPPolicyPackID *uuid.UUID `json:"http_policy_pack_id,omitempty"`
-	K8sNamespaces   []string   `json:"k8s_namespaces,omitempty"`
-	BreakGlass      bool       `json:"break_glass"`
+	ID               uuid.UUID        `json:"id"`
+	UserID           uuid.UUID        `json:"user_id"`
+	AssetID          uuid.UUID        `json:"asset_id"`
+	AccountID        uuid.UUID        `json:"account_id"`
+	Protocol         string           `json:"protocol"`
+	Status           string           `json:"status"`
+	ClientIP         string           `json:"client_ip"`
+	RecordingPath    string           `json:"recording_path,omitempty"`
+	ErrorMessage     string           `json:"error_message,omitempty"`
+	StartedAt        *time.Time       `json:"started_at,omitempty"`
+	EndedAt          *time.Time       `json:"ended_at,omitempty"`
+	LastSeenAt       *time.Time       `json:"last_seen_at,omitempty"`
+	CreatedAt        time.Time        `json:"created_at"`
+	TicketID         string           `json:"ticket_id,omitempty"`
+	Reason           string           `json:"reason,omitempty"`
+	DBPrivilege      string           `json:"db_privilege,omitempty"`
+	DatabaseName     string           `json:"database_name,omitempty"`
+	SQLPolicyPackID  *uuid.UUID       `json:"sql_policy_pack_id,omitempty"`
+	HTTPPolicyPackID *uuid.UUID       `json:"http_policy_pack_id,omitempty"`
+	AppObjectPackID  *uuid.UUID       `json:"app_object_pack_id,omitempty"`
+	K8sNamespaces    []string         `json:"k8s_namespaces,omitempty"`
+	BreakGlass       bool             `json:"break_glass"`
+	RiskScore        int              `json:"risk_score"`
+	RiskFactors      []string         `json:"risk_factors,omitempty"`
+	Labels           []string         `json:"labels,omitempty"`
+	AccessPolicyID   *uuid.UUID       `json:"access_policy_id,omitempty"`
+	ClientCountry    string           `json:"client_country,omitempty"`
+	PolicySnapshot   *policy.Snapshot `json:"policy_snapshot,omitempty"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
@@ -91,19 +99,26 @@ func (s *Service) syncRecording(ctx context.Context, id uuid.UUID) {
 }
 
 type CreateInput struct {
-	AssetID     uuid.UUID
-	AccountID   uuid.UUID
-	Protocol    string
-	ClientIP    string
-	TicketID    string
-	Reason      string
-	DBPrivilege  string // readonly|readwrite for postgres/mysql
-	DatabaseName    string     // target database/schema name
-	SQLPolicyPackID *uuid.UUID // optional SQL JEA pack snapshot
+	AssetID          uuid.UUID
+	AccountID        uuid.UUID
+	Protocol         string
+	ClientIP         string
+	TicketID         string
+	Reason           string
+	DBPrivilege      string     // readonly|readwrite for postgres/mysql
+	DatabaseName     string     // target database/schema name
+	SQLPolicyPackID  *uuid.UUID // optional SQL JEA pack snapshot
 	HTTPPolicyPackID *uuid.UUID // optional HTTP/URL ACL pack snapshot
-	K8sNamespaces   []string
-	Isolated        bool       // https isolated Chromium via VNC
-	BreakGlass      bool
+	AppObjectPackID  *uuid.UUID // optional app object ACL pack snapshot
+	K8sNamespaces    []string
+	Isolated         bool
+	BreakGlass       bool
+	RiskScore        int
+	RiskFactors      []string
+	Labels           []string
+	AccessPolicyID   *uuid.UUID
+	ClientCountry    string
+	PolicySnapshot   *policy.Snapshot
 }
 
 type ListFilter struct {
@@ -154,17 +169,27 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if ns == nil {
 		ns = []string{}
 	}
+	factors := in.RiskFactors
+	if factors == nil {
+		factors = []string{}
+	}
+	labels := in.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, k8s_namespaces, break_glass, created_at)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
-		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, ns, in.BreakGlass, now)
+		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, ns, in.BreakGlass,
+		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now)
 	if err != nil {
 		return Session{}, err
 	}
 	_ = s.aud.Record(ctx, &userID, "session.created", "session", id.String(), in.ClientIP, ua, map[string]any{
 		"asset_id": in.AssetID.String(), "account_id": in.AccountID.String(), "protocol": in.Protocol,
 		"ticket_id": strings.TrimSpace(in.TicketID), "break_glass": in.BreakGlass,
+		"risk_score": in.RiskScore, "labels": labels, "client_country": strings.TrimSpace(in.ClientCountry),
 	})
 	_ = s.AddEvent(ctx, id, "created", map[string]any{"protocol": in.Protocol})
 	return s.Get(ctx, id)
@@ -295,9 +320,11 @@ func (s *Service) ListEvents(ctx context.Context, sessionID uuid.UUID, limit int
 const sessionSelect = `
 		SELECT s.id, s.user_id, s.asset_id, s.account_id, s.protocol, s.status, s.client_ip,
 			s.recording_path, s.error_message, s.started_at, s.ended_at, s.last_seen_at, s.created_at,
-			s.ticket_id, s.reason, COALESCE(s.db_privilege,''), COALESCE(s.database_name,''), s.sql_policy_pack_id,
-			s.http_policy_pack_id,
+			s.ticket_id, s.reason, COALESCE(s.db_privilege,''), COALESCE(s.database_name,''),
+			s.sql_policy_pack_id, s.http_policy_pack_id, s.app_object_pack_id,
 			COALESCE(s.k8s_namespaces,'{}'), COALESCE(s.break_glass,false),
+			COALESCE(s.risk_score,0), COALESCE(s.risk_factors,'{}'), COALESCE(s.labels,'{}'),
+			s.access_policy_id, COALESCE(s.client_country,''), s.policy_snapshot,
 			u.username, a.name, aa.username, a.address,
 			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
 		FROM sessions s
@@ -430,18 +457,43 @@ type scannable interface {
 
 func scanSession(row scannable) (Session, error) {
 	var s Session
+	var snapRaw []byte
 	err := row.Scan(
 		&s.ID, &s.UserID, &s.AssetID, &s.AccountID, &s.Protocol, &s.Status, &s.ClientIP,
 		&s.RecordingPath, &s.ErrorMessage, &s.StartedAt, &s.EndedAt, &s.LastSeenAt, &s.CreatedAt,
-		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID, &s.HTTPPolicyPackID,
+		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID, &s.HTTPPolicyPackID, &s.AppObjectPackID,
 		&s.K8sNamespaces, &s.BreakGlass,
+		&s.RiskScore, &s.RiskFactors, &s.Labels, &s.AccessPolicyID, &s.ClientCountry, &snapRaw,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
 	)
 	if err != nil {
 		return s, err
 	}
+	if s.RiskFactors == nil {
+		s.RiskFactors = []string{}
+	}
+	if s.Labels == nil {
+		s.Labels = []string{}
+	}
 	s.Isolated = s.Protocol == "https" && strings.Contains(filepath.ToSlash(s.RecordingPath), "/guac/")
+	if len(snapRaw) > 0 {
+		var sn policy.Snapshot
+		if json.Unmarshal(snapRaw, &sn) == nil {
+			s.PolicySnapshot = &sn
+		}
+	}
 	return s, nil
+}
+
+func marshalSnapshot(sn *policy.Snapshot) any {
+	if sn == nil {
+		return nil
+	}
+	b, err := json.Marshal(sn)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func IsNotFound(err error) bool { return err == pgx.ErrNoRows }

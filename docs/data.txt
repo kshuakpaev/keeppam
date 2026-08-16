@@ -11,7 +11,7 @@
 
 A) Identity and Access
 - users
-- groups
+- groups (`docs/groups.txt` — WHO на ACL)
 - roles
 - permissions
 - user_role_bindings

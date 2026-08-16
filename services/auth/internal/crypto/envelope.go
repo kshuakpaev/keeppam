@@ -13,14 +13,23 @@ import (
 )
 
 type Envelope struct {
-	key []byte
+	key       []byte
+	keyLocked bool
 }
 
 func NewEnvelope(key []byte) (*Envelope, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("envelope key must be 32 bytes")
 	}
-	return &Envelope{key: key}, nil
+	held := make([]byte, 32)
+	copy(held, key)
+	err := Lock(held)
+	setKeyMlock(err == nil, err)
+	return &Envelope{key: held, keyLocked: err == nil}, nil
+}
+
+func (e *Envelope) KeyLocked() bool {
+	return e != nil && e.keyLocked
 }
 
 func (e *Envelope) Encrypt(plain []byte) ([]byte, error) {

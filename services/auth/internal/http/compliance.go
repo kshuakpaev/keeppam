@@ -4,12 +4,47 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/compliance"
 )
+
+func (s *Server) handleComplianceReport(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	q := r.URL.Query()
+	in := compliance.ReportInput{
+		From:      q.Get("from"),
+		To:        q.Get("to"),
+		Framework: q.Get("framework"),
+	}
+	if v := q.Get("days"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			in.Days = n
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			in.Limit = n
+		}
+	}
+	rep, err := s.compliance.Report(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if strings.EqualFold(q.Get("format"), "csv") {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="keeppam-compliance.csv"`)
+		if err := compliance.WriteReportCSV(w, rep); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
 
 func (s *Server) handleComplianceStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.compliance.Status(r.Context())

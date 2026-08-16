@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		TicketID    string `json:"ticket_id"`
 		Reason      string `json:"reason"`
 		DBPrivilege string `json:"db_privilege"`
+		StepUpToken string `json:"step_up_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -79,6 +81,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	check := policy.AccessCheck{
 		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: false, Now: time.Now(),
 		TicketID: body.TicketID, Reason: body.Reason, ClientIP: s.clientIP(r),
+		StepUpVerified: s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken),
 	}
 	ev, err := s.policy.Evaluate(r.Context(), check)
 	if err != nil {
@@ -99,6 +102,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		})
 		ok = true
 	}
+	if !ok && ev.NeedsStepUp() {
+		s.writeStepUpChallenge(w, r, sess, ev, assetID)
+		return
+	}
 	if !ok {
 		payload := map[string]any{"reason": "policy", "ticket_id": body.TicketID}
 		ev.FillDenyPayload(payload)
@@ -113,24 +120,39 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var sqlPackID, httpPackID *uuid.UUID
+	var sqlPackID, httpPackID, appPackID *uuid.UUID
 	var k8sNS []string
 	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
 		if ev.OK && ev.SQLPolicyPackID != nil {
 			sqlPackID = ev.SQLPolicyPackID
 		}
 	}
-	if (creds.Asset.Protocol == "https" || creds.Asset.Protocol == "kubectl") && ev.OK && ev.HTTPPolicyPackID != nil {
-		httpPackID = ev.HTTPPolicyPackID
+	if (creds.Asset.Protocol == "https" || creds.Asset.Protocol == "kubectl") && ev.OK {
+		if ev.HTTPPolicyPackID != nil {
+			httpPackID = ev.HTTPPolicyPackID
+		}
+		if ev.AppObjectPackID != nil {
+			appPackID = ev.AppObjectPackID
+		}
 	}
 	if creds.Asset.Protocol == "kubectl" && ev.OK {
 		k8sNS = ev.AllowedNamespaces
 	}
+	labels := sessionsvc.MergeLabels()
+	if ut, err := s.policy.UserTags(r.Context(), sess.UserID); err == nil {
+		labels = sessionsvc.MergeLabels(labels, ut)
+	}
+	if at, err := s.policy.AssetTags(r.Context(), assetID); err == nil {
+		labels = sessionsvc.MergeLabels(labels, at)
+	}
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: s.clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
-		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, K8sNamespaces: k8sNS,
+		DatabaseName: creds.Asset.DatabaseName, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, AppObjectPackID: appPackID, K8sNamespaces: k8sNS,
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
+		RiskScore: ev.RiskScore, RiskFactors: ev.RiskFactors, Labels: labels,
+		AccessPolicyID: ev.AccessPolicyID, ClientCountry: s.policy.ClientCountry(s.clientIP(r)),
+		PolicySnapshot: snapPtr(s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)),
 	}, r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -204,6 +226,81 @@ func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": list, "total": total})
+}
+
+func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	q := r.URL.Query()
+	f := sessionsvc.TimelineFilter{
+		Q:      q.Get("q"),
+		Source: q.Get("source"),
+		Limit:  50,
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.Limit = n
+		}
+	}
+	if v := q.Get("offset"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			f.Offset = n
+		}
+	}
+	hours := 24
+	if v := q.Get("hours"); v != "" {
+		if n, err := parseInt(v); err == nil && n > 0 {
+			hours = n
+		}
+	}
+	if hours > 2160 {
+		hours = 2160
+	}
+	now := time.Now().UTC()
+	f.To = now
+	f.From = now.Add(-time.Duration(hours) * time.Hour)
+	if v := q.Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.From = t.UTC()
+		}
+	}
+	if v := q.Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.To = t.UTC()
+		}
+	}
+	want := strings.TrimSpace(q.Get("user_id"))
+	if want == "" {
+		want = strings.TrimSpace(q.Get("username"))
+	}
+	canAny := rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")
+	if want == "" {
+		f.UserID = sess.UserID
+	} else {
+		id, _, err := s.sessionsvc.LookupUser(r.Context(), want)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if !canAny && id != sess.UserID {
+			writeErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		f.UserID = id
+	}
+	res, err := s.sessionsvc.Timeline(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if strings.EqualFold(q.Get("format"), "csv") {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="keeppam-timeline.csv"`)
+		if err := sessionsvc.WriteTimelineCSV(w, res); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +569,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 
 	bypass := rbac.HasPermission(authSess.Permissions, "users.write")
 	var injectMu sync.Mutex
-	opts := s.buildSSHSessionOpts(r.Context(), authSess.UserID, row.AssetID, id, authSess.Roles, bypass, row.TicketID, func(p []byte) {
+	opts := s.buildSSHSessionOpts(r.Context(), authSess.UserID, row.AssetID, id, authSess.Roles, bypass, row.TicketID, row.PolicySnapshot, func(p []byte) {
 		injectMu.Lock()
 		defer injectMu.Unlock()
 		_ = conn.WriteMessage(websocket.BinaryMessage, p)
@@ -579,4 +676,8 @@ func parseInt(s string) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	return n, nil
+}
+
+func snapPtr(sn policy.Snapshot) *policy.Snapshot {
+	return &sn
 }

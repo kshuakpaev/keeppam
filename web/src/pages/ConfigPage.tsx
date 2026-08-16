@@ -501,6 +501,14 @@ export function ConfigPage() {
                   : "off"}
             </span>
           </p>
+          <p>
+            Memory:{" "}
+            <span className="mono">
+              coredump={infra.coredump || "?"}
+              {infra.dumpable ? " · dumpable" : " · not dumpable"}
+              {infra.data_key_mlock ? " · mlock" : " · no mlock"}
+            </span>
+          </p>
         </div>
       )}
 

@@ -222,7 +222,9 @@ export function AppLayout() {
             </NavLink>
           ) : null}
           {hasPerm(user, "sessions.read") && <NavLink to="/sessions">Сессии</NavLink>}
+          {hasPerm(user, "sessions.read") && <NavLink to="/forensic">Расследование</NavLink>}
           {hasPerm(user, "users.read") && <NavLink to="/users">Пользователи</NavLink>}
+          {hasPerm(user, "users.read") && <NavLink to="/groups">Группы</NavLink>}
           {hasPerm(user, "audit.read") && <NavLink to="/analytics">Аналитика</NavLink>}
           {hasPerm(user, "compliance.read") && <NavLink to="/compliance">Compliance</NavLink>}
           {hasPerm(user, "jea.read") && <NavLink to="/jea">JEA</NavLink>}

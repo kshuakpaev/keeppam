@@ -29,6 +29,8 @@ type User struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 	CreatedBy          *uuid.UUID `json:"created_by,omitempty"`
 	Roles              []string   `json:"roles,omitempty"`
+	Groups             []string   `json:"groups,omitempty"`
+	GroupIDs           []string   `json:"group_ids,omitempty"`
 	Permissions        []string   `json:"permissions,omitempty"`
 	Tags               []string   `json:"tags,omitempty"`
 }
@@ -144,7 +146,54 @@ func (db *DB) attachRoles(ctx context.Context, u User) (User, error) {
 		return u, err
 	}
 	u.Tags = tags
+	groups, gids, err := db.UserGroups(ctx, u.ID)
+	if err != nil {
+		return u, err
+	}
+	u.Groups = groups
+	u.GroupIDs = gids
 	return u, rows.Err()
+}
+
+func (db *DB) UserGroups(ctx context.Context, userID uuid.UUID) ([]string, []string, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT g.id::text, g.name FROM groups g
+		JOIN user_group_members m ON m.group_id = g.id
+		WHERE m.user_id=$1 ORDER BY g.name`, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var names, ids []string
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		names = append(names, name)
+	}
+	if names == nil {
+		names = []string{}
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return names, ids, rows.Err()
+}
+
+func (db *DB) AddUserToGroupsByName(ctx context.Context, userID uuid.UUID, names []string) error {
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if n == "" {
+			continue
+		}
+		_, _ = db.Pool.Exec(ctx, `
+			INSERT INTO user_group_members (user_id, group_id)
+			SELECT $1, id FROM groups WHERE lower(name)=lower($2)
+			ON CONFLICT DO NOTHING`, userID, n)
+	}
+	return nil
 }
 
 func (db *DB) UserTags(ctx context.Context, userID uuid.UUID) ([]string, error) {

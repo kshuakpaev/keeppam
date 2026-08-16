@@ -1,0 +1,44 @@
+# KeepPAM: Adaptive MFA (step-up)
+
+Повторный фактор на **connect**, если риск сессии выше порога ACL/Policy. Это не логин-MFA: пользователь уже в KeepPAM.
+
+## Когда
+
+ACL или именованная Policy: `max_risk` > 0 и `risk_action=require_mfa`.
+
+Если score > `max_risk` на connect (HTTP-сессия, app/k8s lease, SSH `:2222`):
+
+1. API отвечает `403` `{ code: "mfa_required", challenge_token, totp, webauthn, risk_score, max_risk, risk_factors }`.
+2. UI: TOTP и/или Passkey.
+3. `POST /api/v1/auth/stepup/totp` или `.../stepup/webauthn/begin|finish` → `{ step_up_token }` (TTL 2 мин, привязан к user+asset).
+4. Повтор connect с `step_up_token`.
+
+Нет ни TOTP, ни passkey → `403` `mfa_not_enrolled`.
+
+SSH-шлюз: интерактивный TOTP в канале (WebAuthn на `:2222` нет).
+
+## Операции внутри сессии
+
+`require_mfa` на SQL/k8s/SSH-команду **не** запрашивает MFA: порог как `deny`. Интерактивного шага в протоколе нет.
+
+JIT по-прежнему можно создать (как при `require_approval`). Break-glass и admin bypass (`users.write`) шаг пропускают.
+
+## API
+
+| Метод | Путь | Право |
+|-------|------|--------|
+| POST | `/api/v1/auth/stepup/totp` | сессия |
+| POST | `/api/v1/auth/stepup/webauthn/begin` | сессия |
+| POST | `/api/v1/auth/stepup/webauthn/finish` | сессия |
+
+Connect: `step_up_token` в теле `POST /admin/sessions`, `/assets/{id}/app/access`, `/assets/{id}/k8s/access`.
+
+Миграция `051`: CHECK `risk_action` включает `require_mfa`. Seed Policy `adaptive-mfa` (порог 40, не привязана).
+
+## Аудит
+
+`access.stepup.challenged` / `access.stepup.ok` / `access.stepup.failure`. Оценка по-прежнему `access.risk.evaluated` (`decision=require_mfa`).
+
+## Вне scope
+
+Step-up на каждую опасную команду внутри сессии. WebAuthn на SSH-gateway. Remember-device / TTL длиннее 2 мин.

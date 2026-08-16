@@ -38,7 +38,7 @@ deny[msg] {
 |------|--------|
 | `user.id` / `username` / `roles` / `tags` | PAM-пользователь |
 | `asset.id` / `name` / `type` / `protocol` / `tags` | актив |
-| `binding.id` / `max_risk` / `risk_action` / `allowed_namespaces` | совпавший ACL |
+| `binding.id` / `max_risk` / `risk_action` / `allowed_namespaces` / `access_policy_id` / `tag_acl` / `asset_match_tags` / `http_policy_pack_id` / `app_object_pack_id` | совпавший ACL (+ именованная Policy; tag ACL — селектор тегов) |
 | `request.ticket_id` / `reason` / `client_ip` / `client_country` / `client_devices` | контекст |
 | `request.risk_score` / `risk_factors` | уже посчитанный риск |
 | `request.operation` | операция в сессии (`sql.ddl`, `k8s.delete`, `http.write`, …); на connect пусто |
@@ -63,5 +63,5 @@ JIT-запрос при OPA-deny не создаётся.
 ## Вне scope
 
 - Rego из UI/БД (только файл)
-- OPA на SQL/JEA/k8s verb
+- OPA на SQL/JEA/k8s verb / app object (pack ID в input есть, матчинг — нет)
 - Gatekeeper/Kyverno в кластере

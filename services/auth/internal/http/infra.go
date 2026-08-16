@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/keeppam/auth/internal/config"
+	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/sbom"
@@ -24,6 +25,7 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 	if s.policy != nil && s.policy.OPA() != nil {
 		opaPkg = s.policy.OPA().Package()
 	}
+	mem := crypto.LastMemStatus()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data_key_source":     s.cfg.DataKeySource,
 		"recordings_backend":  backend,
@@ -64,6 +66,9 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		"sbom_components":     infraSBOMCount(),
 		"otel_endpoint":       obs.NormalizeOTLPEndpoint(s.cfg.OTELEndpoint),
 		"otel_ready":          obs.TracingEnabled(),
+		"coredump":            mem.CoreDump,
+		"dumpable":            mem.Dumpable,
+		"data_key_mlock":      mem.DataKeyMlock,
 	})
 }
 

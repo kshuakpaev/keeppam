@@ -1,0 +1,43 @@
+# KeepPAM: compliance-отчёт за период
+
+Готовый срез «кто / что / когда» из аудита и событий сессий. Не полнотекст asciicast/RDP (`docs/session-search.txt`) и не UEBA «обычно 3 сервера».
+
+## API
+
+`GET /api/v1/admin/compliance/report` (`compliance.read`)
+
+| Query | Смысл |
+|-------|--------|
+| `from` / `to` | RFC3339 или `YYYY-MM-DD` (дата — UTC, `to` включительно до конца дня) |
+| `days` | если нет `from`/`to`: default 30, max 90 |
+| `framework` | `iso27001` / `pci` / `soc2` / `nist` / `all` (default) |
+| `limit` | строк evidence, default 200, max 500 |
+| `format=csv` | выгрузка evidence |
+
+Окно не длиннее 90 суток. Framework — подписи контролей, не разные SQL.
+
+JSON: `summary` + `snapshot` (live ACL / активные сессии / JIT pending / break-glass / legal holds) + `evidence[]` + `controls[]`.
+
+Аудит генерации: `compliance.report.generated` (без тела evidence).
+
+## Категории
+
+| bucket | Источник |
+|--------|----------|
+| access | `asset.acl.granted` |
+| privileged | break-glass, admin bypass; в summary также JIT approved |
+| approvals | JIT approve/deny/stage, checkout approve/deny |
+| connections | session created/started/ended/denied, app/k8s access |
+| commands | session_events: JEA deny, k8s, HTTP ACL — не полный shell |
+| sql | session_events `sql` / `sql_denied` |
+| downloads | reveal секрета, MP4 export, DLP deny |
+| changes | user/group/role/asset/Policy/JEA packs |
+| revoked | ACL revoke, user.disabled, JIT cancel |
+
+## UI
+
+Страница **Compliance** — карточка «Отчёт за период»: даты, framework, таблица, CSV.
+
+## Вне scope
+
+Полнотекст записей. Профиль поведения пользователя. Отдельный PDF/подписанный пакет для внешнего аудитора.

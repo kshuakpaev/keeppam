@@ -26,23 +26,32 @@ func ImpersonateUser(prefix, pamUsername string) string {
 	return CanonImpersonatePrefix(prefix) + u
 }
 
-func ImpersonateGroups(roles []string) []string {
+func ImpersonateGroups(roles, pamGroups []string) []string {
 	out := []string{"system:authenticated", "keeppam:users"}
 	seen := map[string]struct{}{
 		"system:authenticated": {},
 		"keeppam:users":        {},
+	}
+	add := func(g string) {
+		if _, ok := seen[g]; ok {
+			return
+		}
+		seen[g] = struct{}{}
+		out = append(out, g)
 	}
 	for _, r := range roles {
 		r = strings.TrimSpace(r)
 		if r == "" {
 			continue
 		}
-		g := "keeppam:role:" + r
-		if _, ok := seen[g]; ok {
+		add("keeppam:role:" + r)
+	}
+	for _, n := range pamGroups {
+		n = strings.TrimSpace(n)
+		if n == "" {
 			continue
 		}
-		seen[g] = struct{}{}
-		out = append(out, g)
+		add("keeppam:group:" + n)
 	}
 	return out
 }

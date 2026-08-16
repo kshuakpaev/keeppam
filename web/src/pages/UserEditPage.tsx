@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, hasPerm, type Role, type User, type UserSSHKey } from "../api";
+import { api, hasPerm, type PamGroup, type Role, type User, type UserSSHKey } from "../api";
 import { useAuth } from "../auth";
 
 export function UserEditPage() {
@@ -9,6 +9,8 @@ export function UserEditPage() {
   const nav = useNavigate();
   const [target, setTarget] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [pamGroups, setPamGroups] = useState<PamGroup[]>([]);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [sshKeys, setSshKeys] = useState<UserSSHKey[]>([]);
   const [passkeys, setPasskeys] = useState<{ id: string; name: string; created_at: string }[]>([]);
   const [email, setEmail] = useState("");
@@ -39,15 +41,17 @@ export function UserEditPage() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([api.getUser(id), api.listRoles(), api.listUserSSHKeys(id), api.listUserWebAuthn(id)])
-      .then(([u, r, keys, wa]) => {
+    Promise.all([api.getUser(id), api.listRoles(), api.listGroups(), api.listUserSSHKeys(id), api.listUserWebAuthn(id)])
+      .then(([u, r, g, keys, wa]) => {
         setTarget(u);
         setEmail(u.email);
         setDisplayName(u.display_name || "");
         setStatus(u.status);
         setRole((u.roles && u.roles[0]) || "operator");
         setTags((u.tags || []).join(", "));
+        setGroupIds(u.group_ids || []);
         setRoles(r.roles || []);
+        setPamGroups(g.groups || []);
         setSshKeys(keys.keys || []);
         setPasskeys(wa.credentials || []);
       })
@@ -66,6 +70,7 @@ export function UserEditPage() {
         display_name: displayName,
         status,
         roles: [role],
+        group_ids: groupIds,
         tags: tags
           .split(",")
           .map((t) => t.trim())
@@ -214,6 +219,25 @@ export function UserEditPage() {
             </option>
           ))}
         </select>
+
+        <label>Группы PAM</label>
+        <div style={{ marginBottom: "0.75rem" }}>
+          {pamGroups.map((g) => (
+            <label key={g.id} className="row" style={{ gap: 8, alignItems: "center", marginBottom: 4 }}>
+              <input
+                type="checkbox"
+                checked={groupIds.includes(g.id)}
+                disabled={!canWrite}
+                onChange={() =>
+                  setGroupIds((ids) => (ids.includes(g.id) ? ids.filter((x) => x !== g.id) : [...ids, g.id]))
+                }
+              />
+              <span className="mono">{g.name}</span>
+              <span className="muted">{g.description}</span>
+            </label>
+          ))}
+          {pamGroups.length === 0 && <p className="muted">Нет групп — создайте на странице «Группы»</p>}
+        </div>
 
         <label htmlFor="tags">ABAC-теги (через запятую)</label>
         <input

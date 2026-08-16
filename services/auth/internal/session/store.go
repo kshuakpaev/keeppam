@@ -24,6 +24,13 @@ type Session struct {
 type Challenge struct {
 	UserID   uuid.UUID `json:"user_id"`
 	Username string    `json:"username"`
+	Purpose  string    `json:"purpose,omitempty"` // "" = login, "stepup"
+	AssetID  string    `json:"asset_id,omitempty"`
+}
+
+type StepUpGrant struct {
+	UserID  uuid.UUID `json:"user_id"`
+	AssetID uuid.UUID `json:"asset_id"`
 }
 
 type Store struct {
@@ -167,6 +174,14 @@ func (s *Store) GetJSON(ctx context.Context, key string, dest any) error {
 
 func (s *Store) DeleteKey(ctx context.Context, key string) error {
 	return s.rdb.Del(ctx, key).Err()
+}
+
+func (s *Store) ConsumeJSON(ctx context.Context, key string, dest any) error {
+	data, err := s.rdb.GetDel(ctx, key).Bytes()
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, dest)
 }
 
 func RateKey(ip, username string) string {

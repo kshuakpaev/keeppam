@@ -24,6 +24,8 @@ import { AttackSimPage } from "./pages/AttackSimPage";
 import { SqlConsolePage } from "./pages/SqlConsolePage";
 import { AppSessionPage } from "./pages/AppSessionPage";
 import { K8sSessionPage } from "./pages/K8sSessionPage";
+import { ForensicPage } from "./pages/ForensicPage";
+import { GroupsPage } from "./pages/GroupsPage";
 import { UserEditPage } from "./pages/UserEditPage";
 import { UsersPage } from "./pages/UsersPage";
 import "./styles.css";
@@ -47,6 +49,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/attack-sim" element={<AttackSimPage />} />
               <Route path="/access-requests" element={<AccessRequestsPage />} />
               <Route path="/sessions" element={<SessionsPage />} />
+              <Route path="/forensic" element={<ForensicPage />} />
               <Route path="/sessions/:id/terminal" element={<TerminalPage />} />
               <Route path="/sessions/:id/sql" element={<SqlConsolePage />} />
               <Route path="/sessions/:id/app" element={<AppSessionPage />} />
@@ -56,6 +59,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/sessions/:id/watch" element={<WatchPage />} />
               <Route path="/users" element={<UsersPage />} />
               <Route path="/users/:id" element={<UserEditPage />} />
+              <Route path="/groups" element={<GroupsPage />} />
               <Route path="/audit" element={<AuditPage />} />
               <Route path="/config" element={<ConfigPage />} />
             </Route>

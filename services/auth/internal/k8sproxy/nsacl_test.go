@@ -62,7 +62,7 @@ func TestImpersonateUserAndHeaders(t *testing.T) {
 	if ImpersonateUser("-", "alice") != "alice" {
 		t.Fatal("raw username")
 	}
-	groups := ImpersonateGroups([]string{"operator", " operator ", "admin"})
+	groups := ImpersonateGroups([]string{"operator", " operator ", "admin"}, []string{"dba"})
 	if len(groups) < 4 || groups[0] != "system:authenticated" {
 		t.Fatalf("%v", groups)
 	}
@@ -75,7 +75,8 @@ func TestImpersonateUserAndHeaders(t *testing.T) {
 		t.Fatal(h.Get("Impersonate-Extra-keeppam-uid"))
 	}
 	got := h.Values("Impersonate-Group")
-	if !strings.Contains(strings.Join(got, ","), "keeppam:role:operator") {
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "keeppam:role:operator") || !strings.Contains(joined, "keeppam:group:dba") {
 		t.Fatalf("groups %v", got)
 	}
 }

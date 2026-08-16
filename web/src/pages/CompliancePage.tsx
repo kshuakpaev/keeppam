@@ -3,6 +3,7 @@ import {
   api,
   hasPerm,
   type CompliancePack,
+  type ComplianceReport,
   type ComplianceStatus,
   type DRSettings,
   type DRStatus,
@@ -10,6 +11,38 @@ import {
   type RetentionPolicy,
 } from "../api";
 import { useAuth } from "../auth";
+
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function isoDate(d: Date) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+const SUMMARY_LABELS: { key: keyof ComplianceReport["summary"]; label: string }[] = [
+  { key: "access", label: "Доступ" },
+  { key: "privileged", label: "Privileged" },
+  { key: "approvals", label: "Согласования" },
+  { key: "connections", label: "Подключения" },
+  { key: "commands", label: "Команды" },
+  { key: "sql", label: "SQL" },
+  { key: "downloads", label: "Скачивания" },
+  { key: "changes", label: "Изменения" },
+  { key: "revoked", label: "Отозван" },
+];
+
+const CAT_LABELS: Record<string, string> = {
+  access: "Доступ",
+  privileged: "Privileged",
+  approvals: "Согласования",
+  connections: "Подключения",
+  commands: "Команды",
+  sql: "SQL",
+  downloads: "Скачивания",
+  changes: "Изменения",
+  revoked: "Отозван",
+};
 
 export function CompliancePage() {
   const { user } = useAuth();
@@ -30,6 +63,14 @@ export function CompliancePage() {
     resource_id: "",
     reason: "",
   });
+  const [reportFrom, setReportFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return isoDate(d);
+  });
+  const [reportTo, setReportTo] = useState(() => isoDate(new Date()));
+  const [reportFw, setReportFw] = useState("all");
+  const [report, setReport] = useState<ComplianceReport | null>(null);
 
   async function load() {
     setError("");
@@ -148,12 +189,45 @@ export function CompliancePage() {
     }
   }
 
+  async function loadReport(e?: FormEvent) {
+    e?.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.getComplianceReport({
+        from: reportFrom,
+        to: reportTo,
+        framework: reportFw,
+        limit: 200,
+      });
+      setReport(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка отчёта");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadReportCsv() {
+    setError("");
+    try {
+      await api.downloadComplianceReportCsv({
+        from: reportFrom,
+        to: reportTo,
+        framework: reportFw,
+        limit: 500,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка CSV");
+    }
+  }
+
   return (
     <div>
       <div className="page-head">
         <div>
           <h1>Compliance</h1>
-          <p className="muted">Пакеты контролей, retention и legal hold</p>
+          <p className="muted">Отчёт за период, пакеты контролей, retention и legal hold</p>
         </div>
         <div className="row gap">
           <button className="btn secondary" type="button" disabled={busy} onClick={() => void load()}>
@@ -204,6 +278,108 @@ export function CompliancePage() {
           </ul>
         </section>
       )}
+
+      <section className="card" style={{ marginBottom: "1.25rem" }}>
+        <h2>Отчёт за период</h2>
+        <p className="muted">
+          Кто имел доступ, согласовал, подключался, какие SQL/команды (deny), скачивания, изменения и отзывы. Не
+          полнотекст asciicast.
+        </p>
+        <form
+          className="row"
+          style={{ gap: "0.75rem", flexWrap: "wrap", alignItems: "end", marginBottom: "0.75rem" }}
+          onSubmit={(e) => void loadReport(e)}
+        >
+          <label>
+            С
+            <input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} />
+          </label>
+          <label>
+            По
+            <input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} />
+          </label>
+          <label>
+            Framework
+            <select value={reportFw} onChange={(e) => setReportFw(e.target.value)}>
+              <option value="all">все</option>
+              <option value="iso27001">ISO 27001</option>
+              <option value="pci">PCI DSS</option>
+              <option value="soc2">SOC 2</option>
+              <option value="nist">NIST</option>
+            </select>
+          </label>
+          <button className="btn" type="submit" disabled={busy}>
+            Сформировать
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void downloadReportCsv()}
+          >
+            CSV
+          </button>
+        </form>
+
+        {report && (
+          <>
+            <div className="stats-grid" style={{ marginBottom: "0.75rem" }}>
+              {SUMMARY_LABELS.map((s) => (
+                <div key={s.key} className="card stat-card" style={{ margin: 0 }}>
+                  <div className="stat-value">{report.summary[s.key]}</div>
+                  <div className="muted">{s.label}</div>
+                </div>
+              ))}
+            </div>
+            <p className="muted" style={{ marginBottom: "0.75rem" }}>
+              Live: ACL {report.snapshot.acl_live} · сессии {report.snapshot.sessions_active} · JIT pending{" "}
+              {report.snapshot.jit_pending} · break-glass {report.snapshot.break_glass_active} · holds{" "}
+              {report.snapshot.legal_holds}
+              {report.truncated ? ` · evidence ${report.evidence.length} из ${report.evidence_total}` : ""}
+            </p>
+            {report.controls.length > 0 && (
+              <p className="muted" style={{ marginBottom: "0.75rem", fontSize: "0.85rem" }}>
+                {report.controls.map((c) => `${c.id} ${c.title}`).join(" · ")}
+              </p>
+            )}
+            <table>
+              <thead>
+                <tr>
+                  <th>Время</th>
+                  <th>Категория</th>
+                  <th>Актор</th>
+                  <th>Действие</th>
+                  <th>Деталь</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.evidence.map((e) => (
+                  <tr key={e.id}>
+                    <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                      {new Date(e.ts).toLocaleString()}
+                    </td>
+                    <td>
+                      <span className="badge">{CAT_LABELS[e.category] || e.category}</span>
+                    </td>
+                    <td className="mono">{e.actor || "—"}</td>
+                    <td className="mono">{e.action}</td>
+                    <td className="muted" style={{ maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {e.detail}
+                    </td>
+                  </tr>
+                ))}
+                {report.evidence.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      Нет событий в окне
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
 
       <section className="card" style={{ marginBottom: "1.25rem" }}>
         <h2>Пакеты</h2>

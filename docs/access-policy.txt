@@ -1,0 +1,66 @@
+# KeepPAM: единый Policy object
+
+Именованный набор ограничений (WHEN / FROM WHERE / HOW / CONTEXT). WHO и WHAT остаются на ACL: пользователь, **роль** или **группа** (`docs/groups.txt`) + актив + опциональный TTL.
+
+Протокол по-прежнему транспорт: одна политика может висеть на SSH, HTTPS и kubectl — enforcement точек не плодим.
+
+## Модель
+
+| Объект | Поля |
+|--------|------|
+| `access_policies` | время, дни, tags, ticket/reason, CIDR, geo, device, namespaces, JEA-пакеты, max_risk |
+| `asset_access_bindings.access_policy_id` | ссылка; WHO + asset + expires_at |
+
+Ссылка живая: правка политики сразу действует на все ACL. Удаление политики (`ON DELETE SET NULL`) не снимает доступ, только наследование.
+
+Миграция `048`. CRUD: `/api/v1/admin/jea/access-policies` (`jea.read` / `jea.write`). UI: **JEA → Policy**. На карточке актива — выпадающий список.
+
+## Слияние (overlay)
+
+Пустые поля ACL берутся из политики. Заполненные на ACL побеждают (можно сузить под конкретный актив).
+
+| Поле | Правило |
+|------|---------|
+| time_start / time_end | NULL на ACL → из политики |
+| days_of_week | `127` (все дни, дефолт INSERT) → маска политики |
+| массивы (CIDR, geo, device, ns, tags) | пустой на ACL → из политики |
+| require_ticket / require_reason | OR (политика только ужесточает) |
+| JEA pack IDs | NULL на ACL → из политики |
+| max_risk | `0` на ACL → из политики (вместе с risk_action) |
+
+`policy.Evaluate` сливает до проверки окна/ABAC/риска. Снимок JEA на сессию (SSH/SQL/HTTP/object pack) тоже берёт эффективный ID.
+
+## Снимок на сессию
+
+На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, tag ACL, break-glass / admin bypass.
+
+Операции внутри сессии (SQL / HTTP / kubectl / SSH-команда) берут порог риска и pack IDs из снимка, не из live Policy. Правка политики или revoke ACL **не** меняет уже открытую сессию — чтобы оборвать, нужен force-kill.
+
+Старые сессии без колонки (NULL) по-прежнему Evaluate live.
+
+Миграция `055`. UI: Сессии → под статусом строка снимка.
+
+OPA extra-deny на операции видит `binding.*` из снимка.
+
+Список ACL в UI показывает **эффективные** поля после слияния и имя политики.
+
+OPA extra-deny видит `binding.access_policy_id`.
+
+## Seed
+
+| Имя | Смысл |
+|-----|--------|
+| `office-hours` | пн–пт 09:00–18:00 UTC |
+| `lan-webauthn` | RFC1918 + устройство `WEBAUTHN` |
+| `ssh-readonly` | pack `readonly-linux`, max_risk 40 |
+| `adaptive-mfa` | max_risk 40, `require_mfa` (миграция `051`) |
+
+Не привязаны к активам сами по себе.
+
+## Аудит
+
+`access.policy.created` / `updated` / `deleted`. Выдача ACL с политикой — в `asset.acl.granted` (`access_policy_id`).
+
+## Вне scope
+
+Policy на группу активов по тегу — `docs/tag-acl.txt`. Редактирование существующего binding (по-прежнему revoke + create). Отдельный движок правил на протокол. Step-up MFA на каждую опасную команду внутри сессии (`docs/adaptive-mfa.txt` — только connect). Снимок не копирует CIDR/время: они проверяются только на connect.

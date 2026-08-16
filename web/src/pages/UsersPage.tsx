@@ -54,7 +54,7 @@ export function UsersPage() {
       <div className="toolbar">
         <div>
           <h1>Пользователи</h1>
-          <p className="muted">Управление учётными записями и ролями</p>
+          <p className="muted">Учётные записи, роли и группы PAM</p>
         </div>
         {canWrite && (
           <button className="btn" type="button" onClick={() => setShowCreate((v) => !v)}>
@@ -114,6 +114,7 @@ export function UsersPage() {
               <th>Статус</th>
               <th>MFA</th>
               <th>Роли</th>
+              <th>Группы</th>
               <th />
             </tr>
           </thead>
@@ -129,6 +130,7 @@ export function UsersPage() {
                 </td>
                 <td>{u.mfa_enabled ? "да" : "нет"}</td>
                 <td className="mono">{(u.roles || []).join(", ")}</td>
+                <td className="mono">{(u.groups || []).join(", ") || "—"}</td>
                 <td>
                   {canRead && (
                     <Link className="btn secondary" to={`/users/${u.id}`}>

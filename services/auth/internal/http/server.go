@@ -136,6 +136,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 					r.Post("/webauthn/register/finish", s.handleWebAuthnRegisterFinish)
 					r.Get("/webauthn/credentials", s.handleListMyWebAuthn)
 					r.Delete("/webauthn/credentials/{id}", s.handleDeleteMyWebAuthn)
+					r.Post("/stepup/totp", s.handleStepUpTOTP)
+					r.Post("/stepup/webauthn/begin", s.handleStepUpWebAuthnBegin)
+					r.Post("/stepup/webauthn/finish", s.handleStepUpWebAuthnFinish)
 				})
 			})
 
@@ -182,6 +185,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("users.write")).Delete("/users/{id}/ssh-keys/{keyId}", s.handleDeleteUserSSHKey)
 				r.With(s.requirePerm("users.read")).Get("/users/{id}/webauthn", s.handleListUserWebAuthn)
 				r.With(s.requirePerm("users.read")).Get("/roles", s.handleListRoles)
+				r.With(s.requirePerm("users.read")).Get("/groups", s.handleListGroups)
+				r.With(s.requirePerm("users.read")).Get("/groups/{id}", s.handleGetGroup)
+				r.With(s.requirePerm("users.write")).Post("/groups", s.handleCreateGroup)
+				r.With(s.requirePerm("users.write")).Put("/groups/{id}", s.handleUpdateGroup)
+				r.With(s.requirePerm("users.write")).Delete("/groups/{id}", s.handleDeleteGroup)
 				r.With(s.requirePerm("audit.read")).Get("/audit-events/verify", s.handleVerifyAudit)
 				r.With(s.requirePerm("audit.read")).Get("/audit-events/batches", s.handleListAuditBatches)
 				r.With(s.requirePerm("audit.read")).Post("/audit-events/seal", s.handleSealAudit)
@@ -190,6 +198,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("audit.read")).Get("/analytics/slo", s.handleAnalyticsSLO)
 
 				r.With(s.requirePerm("compliance.read")).Get("/compliance/status", s.handleComplianceStatus)
+				r.With(s.requirePerm("compliance.read")).Get("/compliance/report", s.handleComplianceReport)
 				r.With(s.requirePerm("compliance.read")).Get("/compliance/packs", s.handleListCompliancePacks)
 				r.With(s.requirePerm("compliance.write")).Post("/compliance/packs/{id}/apply", s.handleApplyCompliancePack)
 				r.With(s.requirePerm("compliance.read")).Get("/compliance/retention", s.handleGetRetention)
@@ -231,8 +240,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/acl", s.handleListACL)
 				r.With(s.requirePerm("assets.acl")).Post("/assets/{id}/acl", s.handleCreateACL)
 				r.With(s.requirePerm("assets.acl")).Delete("/assets/{id}/acl/{bindingId}", s.handleDeleteACL)
+				r.With(s.requirePerm("assets.read")).Get("/acl/tags", s.handleListTagACL)
+				r.With(s.requirePerm("assets.acl")).Post("/acl/tags", s.handleCreateTagACL)
 
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs", s.handleListCommandPacks)
+				r.With(s.requirePerm("jea.read")).Post("/jea/command-preview", s.handleCommandPreview)
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs/{id}", s.handleGetCommandPack)
 				r.With(s.requirePerm("jea.write")).Post("/jea/packs", s.handleCreateCommandPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/packs/{id}", s.handleUpdateCommandPack)
@@ -247,6 +259,17 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("jea.write")).Post("/jea/http-packs", s.handleCreateHTTPPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/http-packs/{id}", s.handleUpdateHTTPPack)
 				r.With(s.requirePerm("jea.write")).Delete("/jea/http-packs/{id}", s.handleDeleteHTTPPack)
+				r.With(s.requirePerm("jea.read")).Post("/jea/app-object-preview", s.handleAppObjectPreview)
+				r.With(s.requirePerm("jea.read")).Get("/jea/app-object-packs", s.handleListAppObjectPacks)
+				r.With(s.requirePerm("jea.read")).Get("/jea/app-object-packs/{id}", s.handleGetAppObjectPack)
+				r.With(s.requirePerm("jea.write")).Post("/jea/app-object-packs", s.handleCreateAppObjectPack)
+				r.With(s.requirePerm("jea.write")).Put("/jea/app-object-packs/{id}", s.handleUpdateAppObjectPack)
+				r.With(s.requirePerm("jea.write")).Delete("/jea/app-object-packs/{id}", s.handleDeleteAppObjectPack)
+				r.With(s.requirePerm("jea.read")).Get("/jea/access-policies", s.handleListAccessPolicies)
+				r.With(s.requirePerm("jea.read")).Get("/jea/access-policies/{id}", s.handleGetAccessPolicy)
+				r.With(s.requirePerm("jea.write")).Post("/jea/access-policies", s.handleCreateAccessPolicy)
+				r.With(s.requirePerm("jea.write")).Put("/jea/access-policies/{id}", s.handleUpdateAccessPolicy)
+				r.With(s.requirePerm("jea.write")).Delete("/jea/access-policies/{id}", s.handleDeleteAccessPolicy)
 
 				r.With(s.requirePerm("attacksim.read")).Get("/attack-sim/scenarios", s.handleListAttackScenarios)
 				r.With(s.requirePerm("attacksim.read")).Get("/attack-sim/runs", s.handleListAttackRuns)
@@ -266,6 +289,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Post("/sessions/{id}/end", s.handleEndSession)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/timeline", s.handleSessionTimeline)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/kubeconfig", s.handleGetKubeconfig)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/catalog", s.handleK8sCatalog)
@@ -1003,6 +1027,30 @@ func (s *Server) handleListACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"bindings": list})
+}
+
+func (s *Server) handleListTagACL(w http.ResponseWriter, r *http.Request) {
+	list, err := s.policy.ListTagBindings(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"bindings": list})
+}
+
+func (s *Server) handleCreateTagACL(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	var in policy.CreateBindingInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	b, err := s.policy.CreateTag(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, b)
 }
 
 func (s *Server) handleCreateACL(w http.ResponseWriter, r *http.Request) {

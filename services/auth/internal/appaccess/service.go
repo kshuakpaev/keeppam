@@ -38,26 +38,26 @@ func New(db *store.DB, aud *audit.Service, env *crypto.Envelope, assetsSvc *asse
 }
 
 type Integration struct {
-	AssetID              uuid.UUID `json:"asset_id"`
-	AuthMode             string    `json:"auth_mode"`
-	LoginURL             string    `json:"login_url"`
-	OIDCIssuer           string    `json:"oidc_issuer"`
-	OIDCClientID         string    `json:"oidc_client_id"`
-	HasOIDCClientSecret  bool      `json:"has_oidc_client_secret"`
-	RecordingMode        string    `json:"recording_mode"`
-	HeaderName           string    `json:"header_name"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	AssetID             uuid.UUID `json:"asset_id"`
+	AuthMode            string    `json:"auth_mode"`
+	LoginURL            string    `json:"login_url"`
+	OIDCIssuer          string    `json:"oidc_issuer"`
+	OIDCClientID        string    `json:"oidc_client_id"`
+	HasOIDCClientSecret bool      `json:"has_oidc_client_secret"`
+	RecordingMode       string    `json:"recording_mode"`
+	HeaderName          string    `json:"header_name"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type UpsertInput struct {
-	AuthMode            string `json:"auth_mode"`
-	LoginURL            string `json:"login_url"`
-	OIDCIssuer          string `json:"oidc_issuer"`
-	OIDCClientID        string `json:"oidc_client_id"`
-	OIDCClientSecret    string `json:"oidc_client_secret"`
-	ClearOIDCClientSecret bool `json:"clear_oidc_client_secret"`
-	RecordingMode       string `json:"recording_mode"`
-	HeaderName          string `json:"header_name"`
+	AuthMode              string `json:"auth_mode"`
+	LoginURL              string `json:"login_url"`
+	OIDCIssuer            string `json:"oidc_issuer"`
+	OIDCClientID          string `json:"oidc_client_id"`
+	OIDCClientSecret      string `json:"oidc_client_secret"`
+	ClearOIDCClientSecret bool   `json:"clear_oidc_client_secret"`
+	RecordingMode         string `json:"recording_mode"`
+	HeaderName            string `json:"header_name"`
 }
 
 type Lease struct {
@@ -150,19 +150,22 @@ func (s *Service) UpsertIntegration(ctx context.Context, actorID, assetID uuid.U
 	return s.GetIntegration(ctx, assetID)
 }
 
-func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string) (Lease, error) {
+func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string, stepUpVerified bool) (Lease, error) {
 	integ, err := s.GetIntegration(ctx, assetID)
 	if err != nil {
 		return Lease{}, err
 	}
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
-		TicketID: ticketID, Reason: reason, ClientIP: ip,
+		TicketID: ticketID, Reason: reason, ClientIP: ip, StepUpVerified: stepUpVerified,
 	})
 	if err != nil {
 		return Lease{}, err
 	}
 	if !ev.OK {
+		if ev.NeedsStepUp() && !bypass {
+			return Lease{}, &policy.StepUpError{Result: ev}
+		}
 		payload := map[string]any{"reason": "policy"}
 		ev.FillDenyPayload(payload)
 		_ = s.aud.Record(ctx, &userID, "app.access.denied", "asset", assetID.String(), ip, ua, payload)
@@ -180,7 +183,7 @@ func (s *Service) RequestAccess(ctx context.Context, userID, assetID, accountID 
 }
 
 // RequestK8sAccess issues a short-lived kubeconfig/SA token lease for a k8s asset.
-func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string) (Lease, error) {
+func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, accountID uuid.UUID, roles []string, bypass bool, ticketID, reason, ip, ua string, stepUpVerified bool) (Lease, error) {
 	asset, err := s.assets.Get(ctx, assetID)
 	if err != nil {
 		return Lease{}, err
@@ -193,12 +196,15 @@ func (s *Service) RequestK8sAccess(ctx context.Context, userID, assetID, account
 	}
 	ev, err := s.policy.Evaluate(ctx, policy.AccessCheck{
 		UserID: userID, AssetID: assetID, RoleNames: roles, Bypass: bypass, Now: time.Now(),
-		TicketID: ticketID, Reason: reason, ClientIP: ip,
+		TicketID: ticketID, Reason: reason, ClientIP: ip, StepUpVerified: stepUpVerified,
 	})
 	if err != nil {
 		return Lease{}, err
 	}
 	if !ev.OK {
+		if ev.NeedsStepUp() && !bypass {
+			return Lease{}, &policy.StepUpError{Result: ev}
+		}
 		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
 		ev.FillDenyPayload(payload)
 		_ = s.aud.Record(ctx, &userID, "k8s.access.denied", "asset", assetID.String(), ip, ua, payload)

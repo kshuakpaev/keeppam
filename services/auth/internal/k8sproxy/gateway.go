@@ -37,6 +37,7 @@ type Gateway struct {
 	live     *sessionsvc.LiveHub
 	policy   *policy.Service
 	rolesOf  func(context.Context, uuid.UUID) []string
+	groupsOf func(context.Context, uuid.UUID) []string
 	trusted  []string
 
 	mu        sync.Mutex
@@ -74,6 +75,10 @@ func (g *Gateway) SetPolicy(p *policy.Service) {
 
 func (g *Gateway) SetRoles(fn func(context.Context, uuid.UUID) []string) {
 	g.rolesOf = fn
+}
+
+func (g *Gateway) SetGroups(fn func(context.Context, uuid.UUID) []string) {
+	g.groupsOf = fn
 }
 
 func (g *Gateway) SetTrustedProxies(cidrs []string) {
@@ -310,12 +315,15 @@ func (g *Gateway) ensureUpstream(ctx context.Context, row sessionsvc.Session) (*
 		if uname == "" {
 			return nil, fmt.Errorf("impersonate: session username empty")
 		}
-		var roles []string
+		var roles, pamGroups []string
 		if g.rolesOf != nil {
 			roles = g.rolesOf(ctx, row.UserID)
 		}
+		if g.groupsOf != nil {
+			pamGroups = g.groupsOf(ctx, row.UserID)
+		}
 		su.impersonateUser = ImpersonateUser(creds.Account.K8sImpersonatePrefix, uname)
-		su.impersonateGroups = ImpersonateGroups(roles)
+		su.impersonateGroups = ImpersonateGroups(roles, pamGroups)
 		su.impersonateUID = row.UserID.String()
 		_ = g.audit.Record(ctx, &row.UserID, "session.k8s.impersonate", "session", row.ID.String(), "", "k8s", map[string]any{
 			"impersonate_user": su.impersonateUser, "groups": su.impersonateGroups,
@@ -440,24 +448,46 @@ func (g *Gateway) DropSession(id uuid.UUID) {
 }
 
 func (g *Gateway) denyHTTPACL(ctx context.Context, row sessionsvc.Session, method, path, ip string) (string, bool) {
-	if g == nil || g.policy == nil || row.HTTPPolicyPackID == nil {
+	if g == nil || g.policy == nil {
 		return "", false
 	}
-	pack, err := g.policy.GetHTTPPack(ctx, *row.HTTPPolicyPackID)
-	if err != nil {
-		return "", false
+	if row.HTTPPolicyPackID != nil {
+		pack, err := g.policy.GetHTTPPack(ctx, *row.HTTPPolicyPackID)
+		if err == nil {
+			ok, why := policy.MatchHTTP(pack, method, path)
+			if !ok {
+				_ = g.audit.Record(ctx, &row.UserID, "session.http.denied", "session", row.ID.String(), ip, "k8s", map[string]any{
+					"method": method, "path": path, "reason": why, "pack": pack.Name, "mode": pack.Mode,
+				})
+				_ = g.sessions.AddEvent(ctx, row.ID, "http_denied", map[string]any{
+					"method": method, "path": path, "reason": why, "pack": pack.Name,
+				})
+				return why, true
+			}
+		}
 	}
-	ok, why := policy.MatchHTTP(pack, method, path)
-	if ok {
-		return "", false
+	if row.AppObjectPackID != nil {
+		pack, err := g.policy.GetAppObjectPack(ctx, *row.AppObjectPackID)
+		if err == nil {
+			d := policy.MatchAppObject(pack, method, path)
+			if !d.Allowed {
+				action := "session.app.denied"
+				evt := "app_denied"
+				if d.Code == "approval_required" {
+					action = "session.app.approval_required"
+					evt = "app_approval"
+				}
+				payload := map[string]any{
+					"method": method, "path": path, "reason": d.Reason, "pack": pack.Name,
+					"object": d.Object, "action": d.Action, "code": d.Code,
+				}
+				_ = g.audit.Record(ctx, &row.UserID, action, "session", row.ID.String(), ip, "k8s", payload)
+				_ = g.sessions.AddEvent(ctx, row.ID, evt, payload)
+				return d.Reason, true
+			}
+		}
 	}
-	_ = g.audit.Record(ctx, &row.UserID, "session.http.denied", "session", row.ID.String(), ip, "k8s", map[string]any{
-		"method": method, "path": path, "reason": why, "pack": pack.Name, "mode": pack.Mode,
-	})
-	_ = g.sessions.AddEvent(ctx, row.ID, "http_denied", map[string]any{
-		"method": method, "path": path, "reason": why, "pack": pack.Name,
-	})
-	return why, true
+	return "", false
 }
 
 func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call APICall, ip string) (string, bool) {
@@ -474,7 +504,7 @@ func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call A
 	}
 	ev, err := g.policy.CheckOpRisk(ctx, policy.AccessCheck{
 		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
-		TicketID: row.TicketID, ClientIP: ip, Operation: op,
+		TicketID: row.TicketID, ClientIP: ip, Operation: op, Snapshot: row.PolicySnapshot,
 	})
 	if err != nil || ev.OK {
 		return "", false

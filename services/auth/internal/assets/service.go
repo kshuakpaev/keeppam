@@ -39,26 +39,26 @@ func (s *Service) SetSSHCA(ca SSHCertIssuer) {
 }
 
 type Asset struct {
-	ID                  uuid.UUID  `json:"id"`
-	Name                string     `json:"name"`
-	AssetType           string     `json:"asset_type"`
-	Hostname            string     `json:"hostname"`
-	Address             string     `json:"address"`
-	Port                int        `json:"port"`
-	Protocol            string     `json:"protocol"`
-	DatabaseName        string     `json:"database_name,omitempty"`
-	Description         string     `json:"description"`
-	Status              string     `json:"status"`
-	Tags                []string   `json:"tags"`
-	ApprovalStages      []string   `json:"approval_stages"`
-	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
-	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
-	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
-	HostKeyBlob         []byte     `json:"-"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	CreatedBy           *uuid.UUID `json:"created_by,omitempty"`
-	Accounts            []Account  `json:"accounts,omitempty"`
+	ID                 uuid.UUID  `json:"id"`
+	Name               string     `json:"name"`
+	AssetType          string     `json:"asset_type"`
+	Hostname           string     `json:"hostname"`
+	Address            string     `json:"address"`
+	Port               int        `json:"port"`
+	Protocol           string     `json:"protocol"`
+	DatabaseName       string     `json:"database_name,omitempty"`
+	Description        string     `json:"description"`
+	Status             string     `json:"status"`
+	Tags               []string   `json:"tags"`
+	ApprovalStages     []string   `json:"approval_stages"`
+	HostKeyAlgo        string     `json:"host_key_algo,omitempty"`
+	HostKeyFingerprint string     `json:"host_key_fingerprint,omitempty"`
+	HostKeyLearnedAt   *time.Time `json:"host_key_learned_at,omitempty"`
+	HostKeyBlob        []byte     `json:"-"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	CreatedBy          *uuid.UUID `json:"created_by,omitempty"`
+	Accounts           []Account  `json:"accounts,omitempty"`
 }
 
 type Account struct {
@@ -94,63 +94,63 @@ type Account struct {
 }
 
 type CreateAssetInput struct {
-	Name        string   `json:"name"`
-	AssetType   string   `json:"asset_type"`
-	Hostname    string   `json:"hostname"`
-	Address     string   `json:"address"`
-	Port        int      `json:"port"`
-	Protocol     string   `json:"protocol"`
-	DatabaseName string   `json:"database_name"`
-	Description  string   `json:"description"`
-	Tags         []string `json:"tags"`
+	Name           string   `json:"name"`
+	AssetType      string   `json:"asset_type"`
+	Hostname       string   `json:"hostname"`
+	Address        string   `json:"address"`
+	Port           int      `json:"port"`
+	Protocol       string   `json:"protocol"`
+	DatabaseName   string   `json:"database_name"`
+	Description    string   `json:"description"`
+	Tags           []string `json:"tags"`
 	ApprovalStages []string `json:"approval_stages"`
 }
 
 type UpdateAssetInput struct {
-	Name         *string  `json:"name"`
-	AssetType    *string  `json:"asset_type"`
-	Hostname     *string  `json:"hostname"`
-	Address      *string  `json:"address"`
-	Port         *int     `json:"port"`
-	Protocol     *string  `json:"protocol"`
-	DatabaseName *string  `json:"database_name"`
-	Description  *string  `json:"description"`
-	Status       *string  `json:"status"`
-	Tags         *[]string `json:"tags"`
+	Name           *string   `json:"name"`
+	AssetType      *string   `json:"asset_type"`
+	Hostname       *string   `json:"hostname"`
+	Address        *string   `json:"address"`
+	Port           *int      `json:"port"`
+	Protocol       *string   `json:"protocol"`
+	DatabaseName   *string   `json:"database_name"`
+	Description    *string   `json:"description"`
+	Status         *string   `json:"status"`
+	Tags           *[]string `json:"tags"`
 	ApprovalStages *[]string `json:"approval_stages"`
 }
 
 type CreateAccountInput struct {
-	Username            string `json:"username"`
-	AuthMethod          string `json:"auth_method"`
-	Secret              string `json:"secret"`
-	Description         string `json:"description"`
-	TokenRequestEnabled bool   `json:"token_request_enabled"`
-	K8sSANamespace      string `json:"k8s_sa_namespace"`
-	K8sSAName           string `json:"k8s_sa_name"`
-	TokenTTLSeconds     int    `json:"token_ttl_seconds"`
-	K8sImpersonate      bool   `json:"k8s_impersonate"`
+	Username             string `json:"username"`
+	AuthMethod           string `json:"auth_method"`
+	Secret               string `json:"secret"`
+	Description          string `json:"description"`
+	TokenRequestEnabled  bool   `json:"token_request_enabled"`
+	K8sSANamespace       string `json:"k8s_sa_namespace"`
+	K8sSAName            string `json:"k8s_sa_name"`
+	TokenTTLSeconds      int    `json:"token_ttl_seconds"`
+	K8sImpersonate       bool   `json:"k8s_impersonate"`
 	K8sImpersonatePrefix string `json:"k8s_impersonate_prefix"`
-	K8sBindUser         bool   `json:"k8s_bind_user"`
+	K8sBindUser          bool   `json:"k8s_bind_user"`
 }
 
 type UpdateAccountInput struct {
-	Username              *string `json:"username"`
-	AuthMethod            *string `json:"auth_method"`
-	Secret                *string `json:"secret"`
-	Description           *string `json:"description"`
-	Status                *string `json:"status"`
-	RotateAfterSession    *bool   `json:"rotate_after_session"`
-	RotateOnCheckin       *bool   `json:"rotate_on_checkin"`
-	RotateIntervalHours   *int    `json:"rotate_interval_hours"`
-	DualControlCheckout   *bool   `json:"dual_control_checkout"`
-	TokenRequestEnabled   *bool   `json:"token_request_enabled"`
-	K8sSANamespace        *string `json:"k8s_sa_namespace"`
-	K8sSAName             *string `json:"k8s_sa_name"`
-	TokenTTLSeconds       *int    `json:"token_ttl_seconds"`
-	K8sImpersonate        *bool   `json:"k8s_impersonate"`
-	K8sImpersonatePrefix  *string `json:"k8s_impersonate_prefix"`
-	K8sBindUser           *bool   `json:"k8s_bind_user"`
+	Username             *string `json:"username"`
+	AuthMethod           *string `json:"auth_method"`
+	Secret               *string `json:"secret"`
+	Description          *string `json:"description"`
+	Status               *string `json:"status"`
+	RotateAfterSession   *bool   `json:"rotate_after_session"`
+	RotateOnCheckin      *bool   `json:"rotate_on_checkin"`
+	RotateIntervalHours  *int    `json:"rotate_interval_hours"`
+	DualControlCheckout  *bool   `json:"dual_control_checkout"`
+	TokenRequestEnabled  *bool   `json:"token_request_enabled"`
+	K8sSANamespace       *string `json:"k8s_sa_namespace"`
+	K8sSAName            *string `json:"k8s_sa_name"`
+	TokenTTLSeconds      *int    `json:"token_ttl_seconds"`
+	K8sImpersonate       *bool   `json:"k8s_impersonate"`
+	K8sImpersonatePrefix *string `json:"k8s_impersonate_prefix"`
+	K8sBindUser          *bool   `json:"k8s_bind_user"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
@@ -715,7 +715,17 @@ func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UU
 		}
 		return TargetCreds{}, err
 	}
-	return TargetCreds{Account: acc, Asset: asset, Secret: string(plain), AuthMethod: acc.AuthMethod}, nil
+	secret := string(plain)
+	crypto.Wipe(plain)
+	return TargetCreds{Account: acc, Asset: asset, Secret: secret, AuthMethod: acc.AuthMethod}, nil
+}
+
+// WipeSecret best-effort zeroize of decrypted vault material on this value.
+func (c *TargetCreds) WipeSecret() {
+	if c == nil {
+		return
+	}
+	crypto.WipeString(&c.Secret)
 }
 
 // LearnHostKey stores the first-seen SSH host key (TOFU). If a key is already stored, it must match.

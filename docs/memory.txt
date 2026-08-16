@@ -1,0 +1,38 @@
+# KeepPAM: memory hardening
+
+Не memguard и не гарантия против дампа всего процесса. Цель из `docs/concept.txt`: DEK не уходит в swap, plaintext секретов затирается после использования, coredump выключен.
+
+## При старте
+
+`crypto.Harden()` (Linux):
+
+| Шаг | Эффект |
+|-----|--------|
+| `RLIMIT_CORE=0` | нет coredump-файла |
+| `PR_SET_DUMPABLE=0` | ptrace/proc mem чужим uid недоступны |
+| `mlock` 32-байтного DEK | страницы ключа не свапаются |
+
+`KEEPPAM_ALLOW_COREDUMP=true` — не трогать dump (отладка). По умолчанию hardening **вкл**.
+
+После `NewEnvelope` копия DEK в процессе `mlock`; исходный буфер из provider затирается (`clear`). Источник `env` всё ещё держит ключ в environ процесса — для prod лучше `file` / KMS / PKCS#11 (`docs/kms.txt`).
+
+## Zeroize
+
+- буфер `Envelope.Decrypt` после копирования в string
+- SSH `:2222` password callback (`[]byte` пароля PAM-пользователя)
+- промежуточные буферы argon2
+- vault-секрет исходящего SSH после handshake (`TargetCreds.WipeSecret`)
+
+Строки Go неизменяемы: `WipeString` — best-effort по unique backing (`string([]byte)`). Копии в SSH/DSN/HTTP reveal могут жить до GC. Это не секретница уровня HSM.
+
+## Стенд
+
+compose: `cap_add: IPC_LOCK` и `ulimits.memlock: -1` у api и session-worker. Без capability `mlock` даёт warn, coredump всё равно disabled.
+
+Лог: `memory coredump=disabled dumpable=false` и `data_key_mlock=true|false`.
+
+Конфиг → Инфраструктура: `coredump`, `dumpable`, `data_key_mlock`. Compliance-контроль `memory_hardening`.
+
+## Вне scope
+
+Полный запрет GC-копий, mlock всех DSN, wipe KEEPPAM_* из environ, Windows.
