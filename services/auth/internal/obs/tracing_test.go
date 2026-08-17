@@ -25,6 +25,39 @@ func TestNormalizeOTLPEndpoint(t *testing.T) {
 	}
 }
 
+func TestOTELVia(t *testing.T) {
+	if OTELVia("") != "off" {
+		t.Fatal(OTELVia(""))
+	}
+	if OTELVia("http://otel-collector:4318") != "collector" {
+		t.Fatal(OTELVia("http://otel-collector:4318"))
+	}
+	if OTELVia("http://tempo:4318/v1/traces") != "tempo" {
+		t.Fatal(OTELVia("http://tempo:4318/v1/traces"))
+	}
+	if OTELVia("http://jaeger:4318") != "jaeger" {
+		t.Fatal(OTELVia("http://jaeger:4318"))
+	}
+}
+
+func TestStartSessionSpan(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	otel.SetTracerProvider(tp)
+	tracingOn.Store(true)
+	t.Cleanup(func() {
+		tracingOn.Store(false)
+		otel.SetTracerProvider(noop.NewTracerProvider())
+	})
+	ctx, end := StartSessionSpan(context.Background(), "ssh", "sid-1", "web-1")
+	end()
+	_ = ctx
+	spans := sr.Ended()
+	if len(spans) != 1 || spans[0].Name() != "ssh.session" {
+		t.Fatalf("spans=%v", spans)
+	}
+}
+
 func TestInitTracingDisabled(t *testing.T) {
 	stop, err := InitTracing(context.Background(), "", "keeppam-api")
 	if err != nil {

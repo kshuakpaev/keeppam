@@ -12,6 +12,7 @@
 - `allowed_devices` — `TLS` / `WEBAUTHN` / `SSH` / `SPIFFE` / `spiffe://…` / fingerprint; пусто = любое. См. `docs/managed-device.txt`, `docs/spiffe.txt`
 - `allowed_namespaces` — kubectl proxy; пусто = любой ns. См. `docs/k8s-pam.txt`
 - `allowed_egress` — SSH `direct-tcpip` / `-L`; пусто = туннели запрещены. См. `docs/network-pam.txt`
+- `pii_action` — mask/deny PII в SQL/HTTP ответе; пусто = выкл. См. `docs/dlp.txt`
 - окно времени / дни недели / JIT `expires_at`
 
 Deny-by-default: нет совпавшей привязки — отказ.

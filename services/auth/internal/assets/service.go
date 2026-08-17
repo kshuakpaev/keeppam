@@ -56,6 +56,8 @@ type Asset struct {
 	HostKeyFingerprint string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt   *time.Time `json:"host_key_learned_at,omitempty"`
 	HostKeyBlob        []byte     `json:"-"`
+	PamOnly            bool       `json:"pam_only"`
+	FirewallAppliedAt  *time.Time `json:"firewall_applied_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	CreatedBy          *uuid.UUID `json:"created_by,omitempty"`
@@ -105,6 +107,7 @@ type CreateAssetInput struct {
 	Description    string   `json:"description"`
 	Tags           []string `json:"tags"`
 	ApprovalStages []string `json:"approval_stages"`
+	PamOnly        *bool    `json:"pam_only"`
 }
 
 type UpdateAssetInput struct {
@@ -119,6 +122,7 @@ type UpdateAssetInput struct {
 	Status         *string   `json:"status"`
 	Tags           *[]string `json:"tags"`
 	ApprovalStages *[]string `json:"approval_stages"`
+	PamOnly        *bool     `json:"pam_only"`
 }
 
 type CreateAccountInput struct {
@@ -158,7 +162,7 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}')
+			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}'), COALESCE(pam_only, TRUE), firewall_applied_at
 		FROM assets ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -184,7 +188,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 	row := s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
 			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}')
+			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}'), COALESCE(pam_only, TRUE), firewall_applied_at
 		FROM assets WHERE id=$1`, id)
 	a, err := scanAsset(row)
 	if err != nil {
@@ -220,7 +224,10 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 		ID: store.NewID(), Name: in.Name, AssetType: in.AssetType,
 		Hostname: in.Hostname, Address: in.Address, Port: in.Port,
 		Protocol: in.Protocol, DatabaseName: dbName, Description: in.Description, Status: "active",
-		Tags: in.Tags, ApprovalStages: assetApprovalStages(in.ApprovalStages), CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
+		Tags: in.Tags, ApprovalStages: assetApprovalStages(in.ApprovalStages), PamOnly: true, CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
+	}
+	if in.PamOnly != nil {
+		a.PamOnly = *in.PamOnly
 	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
@@ -228,9 +235,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -296,9 +303,16 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 		a.HostKeyBlob = nil
 		a.HostKeyFingerprint = ""
 		a.HostKeyLearnedAt = nil
+		a.FirewallAppliedAt = nil
 	}
 	if in.ApprovalStages != nil {
 		a.ApprovalStages = assetApprovalStages(*in.ApprovalStages)
+	}
+	if in.PamOnly != nil {
+		a.PamOnly = *in.PamOnly
+		if !a.PamOnly {
+			a.FirewallAppliedAt = nil
+		}
 	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
@@ -309,10 +323,12 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 		UPDATE assets SET name=$2, asset_type=$3, hostname=$4, address=$5, port=$6,
 			protocol=$7, database_name=$8, description=$9, status=$10, updated_at=$11,
 			host_key_algo=$12, host_key_blob=$13, host_key_fp=$14, host_key_learned_at=$15,
-			approval_stages=$16
+			approval_stages=$16, pam_only=$17, firewall_applied_at=$18,
+			firewall_probe_at=CASE WHEN $19 THEN NULL ELSE firewall_probe_at END,
+			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
-		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages)
+		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -817,7 +833,7 @@ func scanAsset(row scannable) (Asset, error) {
 	err := row.Scan(&a.ID, &a.Name, &a.AssetType, &a.Hostname, &a.Address, &a.Port,
 		&a.Protocol, &a.DatabaseName, &a.Description, &a.Status,
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
-		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages)
+		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}

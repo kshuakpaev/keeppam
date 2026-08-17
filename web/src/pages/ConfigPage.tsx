@@ -3,6 +3,8 @@ import {
   api,
   hasPerm,
   type AuthSettings,
+  type FirewallStatus,
+  type FirewallProbeAgent,
   type InfraStatus,
   type ITSMSettings,
   type NotifySettings,
@@ -95,6 +97,8 @@ const emptySIEM: SIEMSettings = {
   nats_url: "",
   nats_subject: "keeppam.audit",
   has_nats_token: false,
+  opensearch_url: "",
+  opensearch_index: "keeppam-audit",
   format: "json",
   batch_size: 100,
   poll_interval_sec: 10,
@@ -135,6 +139,19 @@ export function ConfigPage() {
   const [form, setForm] = useState<AuthSettings>(empty);
   const [siem, setSiem] = useState<SIEMSettings>(emptySIEM);
   const [itsm, setItsm] = useState<ITSMSettings>(emptyITSM);
+  const [firewallCidrsText, setFirewallCidrsText] = useState("");
+  const [firewallForm, setFirewallForm] = useState({
+    probe_url: "",
+    probe_interval_hours: 0,
+    awx_launch_url: "",
+    awx_auto_push: false,
+  });
+  const [firewallAwxToken, setFirewallAwxToken] = useState("");
+  const [probeQuorum, setProbeQuorum] = useState(1);
+  const [probeAgents, setProbeAgents] = useState<
+    { name: string; segment: string; probe_url: string; enabled: boolean; token: string; has_token?: boolean }[]
+  >([]);
+  const [firewallStatus, setFirewallStatus] = useState<FirewallStatus | null>(null);
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
@@ -162,12 +179,14 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, nt, idps] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nt, idps] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
           api.getInfraStatus(),
           api.getITSMSettings(),
+          api.getFirewallSettings(),
+          api.getFirewallStatus().catch(() => null),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
         ]);
@@ -181,6 +200,25 @@ export function ConfigPage() {
           ...it,
           ok_statuses: it.ok_statuses?.length ? it.ok_statuses : emptyITSM.ok_statuses,
         });
+        setFirewallCidrsText((fw.pam_gateway_cidrs || []).join(", "));
+        setFirewallForm({
+          probe_url: fw.probe_url || "",
+          probe_interval_hours: fw.probe_interval_hours || 0,
+          awx_launch_url: fw.awx_launch_url || "",
+          awx_auto_push: !!fw.awx_auto_push,
+        });
+        setProbeQuorum(fw.probe_quorum || 1);
+        setProbeAgents(
+          (fw.probe_agents || []).map((a: FirewallProbeAgent) => ({
+            name: a.name,
+            segment: a.segment || "",
+            probe_url: a.probe_url,
+            enabled: a.enabled,
+            token: "",
+            has_token: a.has_token,
+          })),
+        );
+        setFirewallStatus(fws);
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
       } catch (err) {
@@ -251,6 +289,79 @@ export function ConfigPage() {
       setMsg("ITSM сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения ITSM");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveFirewall(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const cidrs = firewallCidrsText
+        .split(/[,;\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const saved = await api.putFirewallSettings({
+        pam_gateway_cidrs: cidrs,
+        probe_url: firewallForm.probe_url.trim(),
+        probe_quorum: probeQuorum,
+        probe_interval_hours: Number(firewallForm.probe_interval_hours) || 0,
+        awx_launch_url: firewallForm.awx_launch_url.trim(),
+        awx_auto_push: firewallForm.awx_auto_push,
+        ...(firewallAwxToken.trim() ? { awx_token: firewallAwxToken.trim() } : {}),
+      });
+      setFirewallCidrsText((saved.pam_gateway_cidrs || []).join(", "));
+      setFirewallForm({
+        probe_url: saved.probe_url || "",
+        probe_interval_hours: saved.probe_interval_hours || 0,
+        awx_launch_url: saved.awx_launch_url || "",
+        awx_auto_push: !!saved.awx_auto_push,
+      });
+      setFirewallAwxToken("");
+      setProbeQuorum(saved.probe_quorum || 1);
+      setFirewallStatus(await api.getFirewallStatus().catch(() => null));
+      setMsg("Firewall PAM сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения Firewall PAM");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveProbeAgents(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const res = await api.putFirewallProbeAgents({
+        probe_quorum: probeQuorum,
+        agents: probeAgents.map((a) => ({
+          name: a.name.trim(),
+          segment: a.segment.trim(),
+          probe_url: a.probe_url.trim(),
+          enabled: a.enabled,
+          ...(a.token.trim() ? { token: a.token.trim() } : {}),
+        })),
+      });
+      setProbeQuorum(res.probe_quorum);
+      setProbeAgents(
+        res.agents.map((a) => ({
+          name: a.name,
+          segment: a.segment || "",
+          probe_url: a.probe_url,
+          enabled: a.enabled,
+          token: "",
+          has_token: a.has_token,
+        })),
+      );
+      setFirewallStatus(await api.getFirewallStatus().catch(() => null));
+      setMsg("Probe agents сохранены");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения probe agents");
     } finally {
       setBusy(false);
     }
@@ -528,7 +639,7 @@ export function ConfigPage() {
             OTEL traces:{" "}
             <span className="mono">
               {infra.otel_ready
-                ? infra.otel_endpoint || "on"
+                ? `${infra.otel_via || "otlp"} · ${infra.otel_endpoint || "on"}`
                 : infra.otel_endpoint
                   ? `${infra.otel_endpoint} (не активен)`
                   : "off"}
@@ -1105,6 +1216,275 @@ export function ConfigPage() {
         </button>
       </form>
 
+      <form className="card" onSubmit={onSaveFirewall} style={{ maxWidth: 640 }}>
+        <h2>Firewall PAM</h2>
+        <p className="muted">
+          CIDR шлюзов KeepPAM (SSH :2222, Guacamole, wire). Экспорт iptables/nft для активов с{" "}
+          <span className="mono">pam_only</span>. На SSH worker дополнительно блокируется port-forward на
+          сервисный порт другого pam-only актива.
+        </p>
+        <label>PAM gateway CIDR (через запятую)</label>
+        <input
+          value={firewallCidrsText}
+          onChange={(e) => setFirewallCidrsText(e.target.value)}
+          placeholder="10.0.1.0/24, 10.0.2.0/24"
+        />
+        <label>Probe agents (сегменты, до 16)</label>
+        {probeAgents.map((a, i) => (
+          <div key={i} className="card" style={{ padding: "0.5rem", marginBottom: "0.5rem" }}>
+            <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+              <input
+                placeholder="name"
+                value={a.name}
+                onChange={(e) => {
+                  const next = [...probeAgents];
+                  next[i] = { ...next[i], name: e.target.value };
+                  setProbeAgents(next);
+                }}
+                style={{ width: 100 }}
+              />
+              <input
+                placeholder="segment"
+                value={a.segment}
+                onChange={(e) => {
+                  const next = [...probeAgents];
+                  next[i] = { ...next[i], segment: e.target.value };
+                  setProbeAgents(next);
+                }}
+                style={{ width: 90 }}
+              />
+              <input
+                placeholder="http://host:8100/probe"
+                value={a.probe_url}
+                onChange={(e) => {
+                  const next = [...probeAgents];
+                  next[i] = { ...next[i], probe_url: e.target.value };
+                  setProbeAgents(next);
+                }}
+                style={{ flex: 1, minWidth: 200 }}
+              />
+              <label className="row" style={{ gap: 4, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={a.enabled}
+                  onChange={(e) => {
+                    const next = [...probeAgents];
+                    next[i] = { ...next[i], enabled: e.target.checked };
+                    setProbeAgents(next);
+                  }}
+                />
+                on
+              </label>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setProbeAgents(probeAgents.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </div>
+            <input
+              type="password"
+              placeholder={a.has_token ? "token (задан) — пусто = не менять" : "Bearer token (опц.)"}
+              value={a.token}
+              onChange={(e) => {
+                const next = [...probeAgents];
+                next[i] = { ...next[i], token: e.target.value };
+                setProbeAgents(next);
+              }}
+              style={{ width: "100%", marginTop: 4 }}
+            />
+          </div>
+        ))}
+        <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() =>
+              setProbeAgents([
+                ...probeAgents,
+                { name: "agent" + (probeAgents.length + 1), segment: "", probe_url: "", enabled: true, token: "" },
+              ])
+            }
+          >
+            + agent
+          </button>
+          <label>Quorum (drift если ≥ N агентов видят reachable)</label>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={probeQuorum}
+            onChange={(e) => setProbeQuorum(Number(e.target.value) || 1)}
+            style={{ width: 64 }}
+          />
+          <button type="button" className="btn secondary" disabled={busy} onClick={(e) => void onSaveProbeAgents(e)}>
+            Сохранить agents
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 0 }}>
+          POST {"{host, port}"} → {"{reachable}"}. Стенд:{" "}
+          <span className="mono">http://firewall-probe:8100/probe</span>,{" "}
+          <span className="mono">http://firewall-probe-b:8101/probe</span>. Legacy{" "}
+          <span className="mono">probe_url</span> — если agents пуст.
+        </p>
+        <label>Legacy probe URL (если agents пуст)</label>
+        <input
+          value={firewallForm.probe_url}
+          onChange={(e) => setFirewallForm({ ...firewallForm, probe_url: e.target.value })}
+          placeholder="http://firewall-probe:8100/probe"
+        />
+        <label>Probe interval (часы, 0 = выкл.)</label>
+        <input
+          type="number"
+          min={0}
+          max={168}
+          value={firewallForm.probe_interval_hours}
+          onChange={(e) =>
+            setFirewallForm({ ...firewallForm, probe_interval_hours: Number(e.target.value) })
+          }
+        />
+        <label>AWX launch URL</label>
+        <input
+          value={firewallForm.awx_launch_url}
+          onChange={(e) => setFirewallForm({ ...firewallForm, awx_launch_url: e.target.value })}
+          placeholder="https://awx.example/api/v2/job_templates/7/launch/"
+        />
+        <label>AWX token {firewallStatus?.last_push_error ? "" : ""}</label>
+        <input
+          type="password"
+          value={firewallAwxToken}
+          onChange={(e) => setFirewallAwxToken(e.target.value)}
+          placeholder="Bearer token — пусто = не менять"
+        />
+        <label className="row" style={{ gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={firewallForm.awx_auto_push}
+            onChange={(e) => setFirewallForm({ ...firewallForm, awx_auto_push: e.target.checked })}
+          />
+          Auto-push AWX при отметке «правила применены»
+        </label>
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void api.downloadFirewallRules("iptables").catch((err) => setError(String(err)))}
+          >
+            Скачать iptables
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void api.downloadFirewallRules("nft").catch((err) => setError(String(err)))}
+          >
+            Скачать nft
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void api.downloadFirewallRules("ansible").catch((err) => setError(String(err)))}
+          >
+            Скачать Ansible
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api
+                .runFirewallProbe()
+                .then(async () => {
+                  setFirewallStatus(await api.getFirewallStatus());
+                  setMsg("Firewall probe завершён");
+                })
+                .catch((err) => setError(String(err)))
+            }
+          >
+            Drift probe
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api
+                .pushFirewallAWX()
+                .then(async () => {
+                  setFirewallStatus(await api.getFirewallStatus());
+                  setMsg("AWX job запущен");
+                })
+                .catch((err) => setError(String(err)))
+            }
+          >
+            Push AWX
+          </button>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить
+          </button>
+        </div>
+        {firewallStatus && (
+          <div style={{ marginTop: "1rem" }}>
+            <p className="muted">
+              pam_only: {firewallStatus.pam_only_count} · без отметки: {firewallStatus.unapplied_count}
+              {firewallStatus.non_ip_count > 0 ? ` · hostname в address: ${firewallStatus.non_ip_count}` : ""}
+              {firewallStatus.probe_reachable_count > 0
+                ? ` · probe reachable: ${firewallStatus.probe_reachable_count}`
+                : ""}
+              {firewallStatus.probe_agents_total
+                ? ` · agents: ${firewallStatus.probe_agents_healthy ?? 0}/${firewallStatus.probe_agents_total} healthy · quorum ${firewallStatus.probe_quorum ?? 1}`
+                : ""}
+              {firewallStatus.last_probe_at
+                ? ` · probe: ${new Date(firewallStatus.last_probe_at).toLocaleString()}`
+                : ""}
+              {firewallStatus.last_push_at
+                ? ` · push: ${new Date(firewallStatus.last_push_at).toLocaleString()}`
+                : ""}
+              {firewallStatus.last_push_error ? (
+                <span className="error"> · push err: {firewallStatus.last_push_error}</span>
+              ) : null}
+              {firewallStatus.ready ? " · ready" : ""}
+            </p>
+            {firewallStatus.assets.length > 0 && (
+              <table className="table compact">
+                <thead>
+                  <tr>
+                    <th>Актив</th>
+                    <th>Endpoint</th>
+                    <th>Правила</th>
+                    <th>Probe</th>
+                    <th>Gaps</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {firewallStatus.assets.map((a) => (
+                    <tr key={a.id}>
+                      <td>{a.name}</td>
+                      <td className="mono">
+                        {a.address}:{a.port}
+                      </td>
+                      <td>
+                        {a.firewall_applied_at
+                          ? new Date(a.firewall_applied_at).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td>
+                        {a.firewall_probe_at
+                          ? `${a.firewall_probe_reachable ? "OPEN" : "closed"} ${new Date(a.firewall_probe_at).toLocaleDateString()}`
+                          : "—"}
+                      </td>
+                      <td className="muted">{(a.gaps || []).join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </form>
 
       <form className="card" onSubmit={onSaveITSM} style={{ maxWidth: 640 }}>
         <h2>ITSM gate (тикеты JIT)</h2>
@@ -1376,9 +1756,8 @@ export function ConfigPage() {
       <form className="card" onSubmit={onSaveSIEM} style={{ maxWidth: 640 }}>
         <h2>SIEM-экспорт аудита</h2>
         <p className="muted">
-          Асинхронная отправка событий из audit_events (syslog, webhook, Kafka или NATS).
-          Курсор продвигается только после успешной доставки. Стенд: NATS `nats://nats:4222`,
-          subject `keeppam.audit`.
+          Асинхронная отправка событий из audit_events (syslog, webhook, Kafka, NATS или OpenSearch _bulk).
+          Курсор продвигается только после успешной доставки. Формат ECS — Elastic Common Schema, не кластер в compose.
         </p>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
@@ -1399,11 +1778,13 @@ export function ConfigPage() {
           <option value="webhook">HTTPS Webhook</option>
           <option value="kafka">Kafka</option>
           <option value="nats">NATS</option>
+          <option value="opensearch">OpenSearch (_bulk)</option>
         </select>
         <label>Формат</label>
         <select value={siem.format} onChange={(e) => setSiem({ ...siem, format: e.target.value })}>
           <option value="json">JSON</option>
           <option value="cef">CEF</option>
+          <option value="ecs">ECS (OpenSearch)</option>
         </select>
         {(siem.transport === "syslog_udp" || siem.transport === "syslog_tcp") && (
           <>
@@ -1500,6 +1881,39 @@ export function ConfigPage() {
             />
           </>
         )}
+        {siem.transport === "opensearch" && (
+          <>
+            <label>OpenSearch URL (https://host:9200)</label>
+            <input
+              value={siem.opensearch_url || ""}
+              onChange={(e) => setSiem({ ...siem, opensearch_url: e.target.value })}
+              placeholder="https://opensearch.example.com:9200"
+            />
+            <label>Index</label>
+            <input
+              value={siem.opensearch_index || "keeppam-audit"}
+              onChange={(e) => setSiem({ ...siem, opensearch_index: e.target.value })}
+              placeholder="keeppam-audit"
+            />
+            <label>
+              Auth header {siem.has_webhook_auth_header ? "(задан)" : ""} — пусто = не менять
+            </label>
+            <input
+              type="password"
+              value={webhookAuth}
+              onChange={(e) => setWebhookAuth(e.target.value)}
+              placeholder="Authorization: ApiKey … или Basic …"
+              autoComplete="off"
+            />
+            <p className="muted">
+              Стенд: OpenSearch <code>http://opensearch:9200</code>, Dashboards{" "}
+              <a href="http://localhost:5601/app/dashboards#/view/keeppam-audit" target="_blank" rel="noreferrer">
+                localhost:5601
+              </a>
+              . Security выкл.; auth header не нужен.
+            </p>
+          </>
+        )}
         <div className="row" style={{ gap: "0.75rem" }}>
           <div style={{ flex: 1 }}>
             <label>Batch size</label>
@@ -1536,9 +1950,23 @@ export function ConfigPage() {
             ) : null}
           </p>
         )}
-        <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
-          Сохранить SIEM
-        </button>
+        <div className="row" style={{ gap: "0.75rem", marginTop: "1rem" }}>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить SIEM
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api.downloadSIEMBulk(200).catch((err) =>
+                setError(err instanceof Error ? err.message : "Ошибка ECS bulk"),
+              )
+            }
+          >
+            Скачать ECS bulk
+          </button>
+        </div>
       </form>
     </div>
   );

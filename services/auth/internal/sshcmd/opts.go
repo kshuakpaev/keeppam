@@ -41,12 +41,10 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 	}
 	var pack policy.CommandPack
 	hasPack := false
-	maxRisk := 0
 	check := policy.AccessCheck{
 		UserID: m.UserID, AssetID: m.AssetID, RoleNames: m.Roles, Bypass: m.Bypass, TicketID: m.TicketID, Snapshot: m.Snap,
 	}
 	if m.Snap != nil {
-		maxRisk = m.Snap.MaxRisk
 		if m.Snap.CommandPolicyPackID != nil {
 			if p, perr := d.Policy.GetCommandPack(ctx, *m.Snap.CommandPolicyPackID); perr == nil {
 				pack, hasPack = p, true
@@ -57,16 +55,12 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 			UserID: m.UserID, AssetID: m.AssetID, RoleNames: m.Roles, Bypass: m.Bypass, TicketID: m.TicketID, SkipRisk: true,
 		})
 		if err == nil && ev.OK {
-			maxRisk = ev.MaxRisk
 			if ev.CommandPolicyPackID != nil {
 				if p, perr := d.Policy.GetCommandPack(ctx, *ev.CommandPolicyPackID); perr == nil {
 					pack, hasPack = p, true
 				}
 			}
 		}
-	}
-	if !hasPack && maxRisk <= 0 {
-		return opts
 	}
 	opts.QuietEcho = true
 	held := false

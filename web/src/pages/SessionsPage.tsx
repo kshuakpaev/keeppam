@@ -17,6 +17,7 @@ function snapshotHint(s: PamSession): string {
   if (p.http_policy_pack_name) bits.push(`http:${p.http_policy_pack_name}`);
   if (p.app_object_pack_name) bits.push(`obj:${p.app_object_pack_name}`);
   if ((p.allowed_egress || []).length) bits.push(`egress:${(p.allowed_egress || []).length}`);
+  if (p.pii_action) bits.push(`pii:${p.pii_action}`);
   if (p.tag_acl) bits.push(p.match_mode === "any" ? "tag-acl:any" : "tag-acl");
   if (p.admin_bypass) bits.push("bypass");
   return bits.join(" · ");
@@ -185,6 +186,9 @@ export function SessionsPage() {
                 <option value="command_denied">command_denied</option>
                 <option value="command_approval">command_approval</option>
                 <option value="command_approved">command_approved</option>
+                <option value="output">output (SSH stdout)</option>
+                <option value="keystroke">keystroke (RDP/VNC)</option>
+                <option value="screen_text">screen_text (OCR RDP/VNC)</option>
                 <option value="dlp">dlp</option>
                 <option value="egress">egress</option>
                 <option value="egress_denied">egress_denied</option>
@@ -226,7 +230,7 @@ export function SessionsPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={tab === "events" ? "SELECT / kubectl / rm -rf" : "user / актив / адрес"}
+            placeholder={tab === "events" ? "SELECT / kubectl / rm -rf / notepad" : "user / актив / адрес"}
           />
         </label>
         <button className="btn secondary" type="submit">

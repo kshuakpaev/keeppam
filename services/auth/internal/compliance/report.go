@@ -36,6 +36,7 @@ type ReportInput struct {
 	Days      int
 	Framework string
 	Limit     int
+	Format    string
 }
 
 type FrameworkControl struct {
@@ -248,7 +249,7 @@ func EvidenceCategory(source, kind string) string {
 	case "session.sql", "session.sql.denied":
 		return CatSQL
 	case "asset.account.secret_revealed", "session.export_mp4", "session.dlp.denied",
-		"session.egress.denied", "session.egress.opened":
+		"session.dlp.masked", "session.egress.denied", "session.egress.opened":
 		return CatDownloads
 	case "session.command.denied", "session.command.approval_required", "session.command.approval_timeout", "session.risk.denied",
 		"session.app.denied", "session.app.approval_required":
@@ -312,7 +313,7 @@ func (s *ReportSummary) add(cat string, n int) {
 
 func reportNotes() []string {
 	return []string{
-		"Команды SSH: PTY-журнал и индекс stdin asciicast (не вывод терминала и не RDP).",
+		"Команды SSH: PTY-журнал и индекс stdin asciicast. Вывод терминала — отдельный тип output (не в этом отчёте).",
 		"SQL: разрешённые и запрещённые statements из session_events.",
 		"Framework задаёт подписи контролей (ISO A.9 / PCI 7–10 / SOC2 CC6–CC7 / NIST AC,AU,CM), не разные выборки.",
 		"Snapshot — live ACL/сессии/JIT/break-glass на момент генерации, не за период.",
@@ -362,9 +363,19 @@ func (s *Service) Report(ctx context.Context, actorID uuid.UUID, in ReportInput,
 		Truncated:     total > len(evidence),
 		Notes:         reportNotes(),
 	}
-	_ = s.aud.Record(ctx, &actorID, "compliance.report.generated", "compliance_report", fw, ip, ua, map[string]any{
-		"from": from, "to": to, "framework": fw, "evidence_total": total, "truncated": rep.Truncated,
-	})
+	format := strings.ToLower(strings.TrimSpace(in.Format))
+	if format == "" {
+		format = "json"
+	}
+	meta := map[string]any{
+		"from": from, "to": to, "framework": fw, "format": format, "evidence_total": total, "truncated": rep.Truncated,
+	}
+	if format == "pdf" && s.PDFSigned() {
+		meta["signed"] = true
+		meta["pades"] = s.PDFProfile()
+		meta["cert_cn"] = s.PDFSignerCN()
+	}
+	_ = s.aud.Record(ctx, &actorID, "compliance.report.generated", "compliance_report", fw, ip, ua, meta)
 	return rep, nil
 }
 

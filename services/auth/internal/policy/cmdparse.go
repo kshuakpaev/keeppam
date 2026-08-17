@@ -135,6 +135,30 @@ func parseSuRemainder(fields []string) []string {
 	return nil
 }
 
+func parseShellCRemainder(fields []string) []string {
+	for i := 0; i < len(fields); i++ {
+		f := fields[i]
+		switch {
+		case f == "-c", f == "--command":
+			if i+1 >= len(fields) {
+				return nil
+			}
+			return splitShell(fields[i+1])
+		case strings.HasPrefix(f, "--command="):
+			return splitShell(strings.TrimPrefix(f, "--command="))
+		case strings.HasPrefix(f, "-") && strings.Contains(f, "c"):
+			if strings.HasPrefix(f, "-c") && len(f) > 2 {
+				return splitShell(f[2:])
+			}
+			if i+1 >= len(fields) {
+				return nil
+			}
+			return splitShell(fields[i+1])
+		}
+	}
+	return nil
+}
+
 // ParseCommand unwraps sudo/su/doas/env/nohup and returns the inner binary.
 func ParseCommand(line string) ParsedCommand {
 	raw := strings.TrimSpace(line)
@@ -177,6 +201,12 @@ func ParseCommand(line string) ParsedCommand {
 			}
 			fields = skipEnvAssign(fields)
 			continue
+		case "bash", "sh", "dash", "zsh", "ksh":
+			p.Wrappers = append(p.Wrappers, base)
+			if inner := parseShellCRemainder(fields[1:]); inner != nil {
+				fields = inner
+				continue
+			}
 		}
 		break
 	}

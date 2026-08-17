@@ -68,7 +68,11 @@ OPA extra deny: `KEEPPAM_OPA_POLICY` — см. `docs/opa.txt`.
 - `KEEPPAM_SBOM_FILE` — готовый CycloneDX; иначе runtime `ReadBuildInfo`
 - `GET /api/v1/admin/settings/sbom`
 
-Трейсы: `KEEPPAM_OTEL_ENDPOINT` → Tempo (`docs/tempo.txt`).
+Трейсы: `KEEPPAM_OTEL_ENDPOINT` → Collector → Tempo (`docs/otel-collector.txt`, `docs/tempo.txt`). `KEEPPAM_OTEL_ENV` — `deployment.environment`.
+
+## PAdES (compliance PDF)
+
+`KEEPPAM_PDF_CERT_FILE` + `KEEPPAM_PDF_KEY_FILE` — RSA PEM. Опц. `KEEPPAM_PDF_TSA_URL` → B-T; `KEEPPAM_PDF_LTV=true` (+ TSA) → B-LT; `KEEPPAM_PDF_LTA=true` (+ LTV) → B-LTA. См. `docs/pades.txt`. Без пары PDF unsigned.
 
 ## Memory hardening
 

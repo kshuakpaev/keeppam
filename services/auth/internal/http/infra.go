@@ -66,6 +66,7 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		"sbom_components":     infraSBOMCount(),
 		"otel_endpoint":       obs.NormalizeOTLPEndpoint(s.cfg.OTELEndpoint),
 		"otel_ready":          obs.TracingEnabled(),
+		"otel_via":            obs.OTELVia(s.cfg.OTELEndpoint),
 		"coredump":            mem.CoreDump,
 		"dumpable":            mem.Dumpable,
 		"data_key_mlock":      mem.DataKeyMlock,

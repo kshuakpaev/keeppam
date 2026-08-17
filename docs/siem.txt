@@ -1,6 +1,6 @@
 # KeepPAM: SIEM export
 
-Асинхронный экспорт `audit_events` в syslog / HTTPS webhook / Kafka / NATS. Курсор (`cursor_ts`, `cursor_id`) двигается только после успешной доставки батча.
+Асинхронный экспорт `audit_events` в syslog / HTTPS webhook / Kafka / NATS / OpenSearch `_bulk`. Курсор (`cursor_ts`, `cursor_id`) двигается только после успешной доставки батча.
 
 ## Транспорты
 
@@ -11,8 +11,9 @@
 | `webhook` | HTTPS POST JSON `{source,count,events}` | `webhook_url`, write-only `webhook_auth_header` |
 | `kafka` | один message на событие, key=UUID | `kafka_brokers`, `kafka_topic`, optional SASL PLAIN |
 | `nats` | Publish на subject | `nats_url`, `nats_subject`, optional token |
+| `opensearch` | HTTP `_bulk` NDJSON | `opensearch_url`, `opensearch_index`, auth как у webhook |
 
-Формат тела: `json` (весь AuditEvent) или `cef`.
+Формат тела: `json` (весь AuditEvent), `cef` или `ecs` (Elastic Common Schema, `docs/opensearch.txt`). Транспорт `opensearch` всегда шлёт ECS.
 
 ## Стенд
 
@@ -42,3 +43,4 @@ Kafka на стенде нет (тяжёлый). Прод: брокеры `host:
 - Kafka consumer в KeepPAM
 - JetStream durable
 - mTLS к брокеру
+- Prod 3-node OpenSearch / mTLS (`docs/opensearch.txt` — стенд single-node + Dashboards)

@@ -3,6 +3,7 @@ package obs
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 
@@ -45,9 +46,14 @@ func InitTracing(ctx context.Context, endpoint, service string) (func(context.Co
 	if err != nil {
 		return nil, err
 	}
-	res, err := resource.New(ctx,
-		resource.WithAttributes(semconv.ServiceName(service)),
-	)
+	attrs := []attribute.KeyValue{
+		semconv.ServiceName(service),
+		semconv.ServiceNamespace("keeppam"),
+	}
+	if env := strings.TrimSpace(os.Getenv("KEEPPAM_OTEL_ENV")); env != "" {
+		attrs = append(attrs, attribute.String("deployment.environment", env))
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(attrs...))
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +78,43 @@ func NormalizeOTLPEndpoint(raw string) string {
 	s = strings.TrimSuffix(s, "/")
 	s = strings.TrimSuffix(s, "/v1/traces")
 	return strings.TrimSpace(s)
+}
+
+// OTELVia classifies the OTLP endpoint: collector | tempo | jaeger | otlp | off.
+func OTELVia(raw string) string {
+	e := strings.ToLower(NormalizeOTLPEndpoint(raw))
+	if e == "" {
+		return "off"
+	}
+	if strings.Contains(e, "otel-collector") || strings.Contains(e, "otelcol") {
+		return "collector"
+	}
+	if strings.Contains(e, "tempo") {
+		return "tempo"
+	}
+	if strings.Contains(e, "jaeger") {
+		return "jaeger"
+	}
+	return "otlp"
+}
+
+// StartSessionSpan records a PAM session (SSH worker / API). No secrets in attributes.
+func StartSessionSpan(ctx context.Context, protocol, sessionID, asset string) (context.Context, func()) {
+	if !TracingEnabled() {
+		return ctx, func() {}
+	}
+	if protocol == "" {
+		protocol = "session"
+	}
+	ctx, span := Tracer().Start(ctx, protocol+".session",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("session.id", sessionID),
+			attribute.String("session.protocol", protocol),
+			attribute.String("keeppam.asset", asset),
+		),
+	)
+	return ctx, func() { span.End() }
 }
 
 func HTTPTracing(next http.Handler) http.Handler {

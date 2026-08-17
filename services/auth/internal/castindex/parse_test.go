@@ -49,3 +49,29 @@ func TestInputLinesEmpty(t *testing.T) {
 		t.Fatalf("%v %v", got, err)
 	}
 }
+
+func TestParseCastOutput(t *testing.T) {
+	cast := `{"version":2,"width":80,"height":24}
+[0.1, "o", "prompt$ ls\r\n"]
+[0.2, "i", "l"]
+[0.3, "i", "s"]
+[0.4, "i", "\r"]
+[0.6, "o", "secret.txt\n"]
+[0.7, "o", "secret.txt\r"]
+[0.8, "o", "done\n"]
+[0.9, "o", "$\n"]
+`
+	in, out, err := ParseCast(strings.NewReader(cast))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in) != 1 || in[0].Text != "ls" {
+		t.Fatalf("in %+v", in)
+	}
+	if len(out) != 3 {
+		t.Fatalf("out=%d %+v", len(out), out)
+	}
+	if out[0].Text != "prompt$ ls" || out[1].Text != "secret.txt" || out[2].Text != "done" {
+		t.Fatalf("out %+v", out)
+	}
+}

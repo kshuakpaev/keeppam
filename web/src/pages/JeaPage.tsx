@@ -18,6 +18,8 @@ const emptyPolicyForm = {
   allowed_devices: "",
   allowed_namespaces: "",
   allowed_egress: "",
+  pii_action: "",
+  dlp_patterns: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -25,6 +27,22 @@ const emptyPolicyForm = {
   max_risk: "0",
   risk_action: "deny",
 };
+
+function parseDlpPatterns(text: string): { name: string; pattern: string }[] {
+  const out: { name: string; pattern: string }[] = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const sp = t.indexOf(" ");
+    if (sp <= 0) continue;
+    out.push({ name: t.slice(0, sp).trim(), pattern: t.slice(sp + 1).trim() });
+  }
+  return out;
+}
+
+function formatDlpPatterns(patterns?: { name: string; pattern: string }[]): string {
+  return (patterns || []).map((p) => `${p.name} ${p.pattern}`).join("\n");
+}
 
 function splitCSV(s: string): string[] {
   return s
@@ -503,6 +521,8 @@ export function JeaPage() {
       allowed_devices: (p.allowed_devices || []).join(", "),
       allowed_namespaces: (p.allowed_namespaces || []).join(", "),
       allowed_egress: (p.allowed_egress || []).join(", "),
+      pii_action: p.pii_action || "",
+      dlp_patterns: formatDlpPatterns(p.dlp_patterns),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
       http_policy_pack_id: p.http_policy_pack_id || "",
@@ -539,6 +559,8 @@ export function JeaPage() {
     if ((p.allowed_devices || []).length) bits.push(p.allowed_devices.join(","));
     if ((p.allowed_namespaces || []).length) bits.push("ns:" + p.allowed_namespaces.join(","));
     if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
+    if (p.pii_action) bits.push("pii:" + p.pii_action);
+    if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
     if (p.command_policy_pack_name) bits.push(`ssh:${p.command_policy_pack_name}`);
@@ -568,6 +590,8 @@ export function JeaPage() {
         allowed_devices: splitCSV(policyForm.allowed_devices),
         allowed_namespaces: splitCSV(policyForm.allowed_namespaces),
         allowed_egress: splitCSV(policyForm.allowed_egress),
+        pii_action: policyForm.pii_action || "",
+        dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
       };
@@ -672,6 +696,7 @@ export function JeaPage() {
           allowed_devices: tagRaw.allowed_devices || [],
           allowed_namespaces: tagRaw.allowed_namespaces || [],
           allowed_egress: tagRaw.allowed_egress || [],
+          pii_action: tagRaw.pii_action || "",
           command_policy_pack_id: tagRaw.command_policy_pack_id || null,
           sql_policy_pack_id: tagRaw.sql_policy_pack_id || null,
           http_policy_pack_id: tagRaw.http_policy_pack_id || null,
@@ -1494,6 +1519,26 @@ export function JeaPage() {
                 onChange={(e) => setPolicyForm({ ...policyForm, allowed_egress: e.target.value })}
                 placeholder="10.1.2.0/24:5432, db.prod.local:5432"
               />
+              <label>PII в ответе SQL/HTTP</label>
+              <select
+                value={policyForm.pii_action}
+                onChange={(e) => setPolicyForm({ ...policyForm, pii_action: e.target.value })}
+              >
+                <option value="">выкл.</option>
+                <option value="mask">mask</option>
+                <option value="deny">deny</option>
+              </select>
+              <label>DLP regex (имя и паттерн на строку, до 16)</label>
+              <textarea
+                rows={4}
+                value={policyForm.dlp_patterns}
+                onChange={(e) => setPolicyForm({ ...policyForm, dlp_patterns: e.target.value })}
+                placeholder={"passport \\b[A-Z]{2}\\d{7}\\b\ninternal_id INTERNAL-\\d+"}
+                spellCheck={false}
+              />
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>
+                Встроенные kind: email, pan, phone, snils. Свои regex + PII в SSH stdout, keystroke, OCR screen_text.
+              </p>
               <label>SSH JEA pack</label>
               <select
                 value={policyForm.command_policy_pack_id}

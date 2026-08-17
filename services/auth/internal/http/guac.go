@@ -243,6 +243,7 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 		cfg.Parameters["recording-path"] = recDir
 		cfg.Parameters["create-recording-path"] = "true"
 		cfg.Parameters["recording-name"] = sessID.String()
+		cfg.Parameters["recording-include-keys"] = "true"
 	}
 	if err := stream.Handshake(cfg); err != nil {
 		_ = conn.Close()

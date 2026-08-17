@@ -150,6 +150,8 @@ export type Asset = {
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
+  pam_only?: boolean;
+  firewall_applied_at?: string;
   created_at: string;
   updated_at: string;
   accounts?: AssetAccount[];
@@ -179,6 +181,7 @@ export type AccessBinding = {
   allowed_devices?: string[];
   allowed_namespaces?: string[];
   allowed_egress?: string[];
+  pii_action?: string;
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -335,9 +338,93 @@ export type SSHSettings = {
   updated_at?: string;
 };
 
+export type FirewallProbeAgent = {
+  id: string;
+  name: string;
+  segment: string;
+  probe_url: string;
+  has_token?: boolean;
+  enabled: boolean;
+  last_health_at?: string;
+  last_health_ok?: boolean;
+  last_error?: string;
+};
+
+export type FirewallSettings = {
+  pam_gateway_cidrs: string[];
+  probe_url?: string;
+  probe_quorum?: number;
+  probe_agents?: FirewallProbeAgent[];
+  probe_interval_hours?: number;
+  awx_launch_url?: string;
+  awx_token?: string;
+  has_awx_token?: boolean;
+  awx_auto_push?: boolean;
+  last_probe_at?: string;
+  last_push_at?: string;
+  last_push_error?: string;
+  updated_at?: string;
+};
+
+export type FirewallAssetStatus = {
+  id: string;
+  name: string;
+  address: string;
+  port: number;
+  protocol: string;
+  pam_only: boolean;
+  firewall_applied_at?: string;
+  firewall_probe_at?: string;
+  firewall_probe_reachable?: boolean;
+  gaps?: string[];
+};
+
+export type FirewallStatus = {
+  pam_only_count: number;
+  gateway_cidrs_configured: boolean;
+  gateway_cidrs: string[];
+  unapplied_count: number;
+  non_ip_count: number;
+  probe_reachable_count: number;
+  probe_quorum?: number;
+  probe_agents_total?: number;
+  probe_agents_healthy?: number;
+  last_probe_at?: string;
+  last_push_at?: string;
+  last_push_error?: string;
+  ready: boolean;
+  assets: FirewallAssetStatus[];
+};
+
+export type FirewallProbeReport = {
+  probed_at: string;
+  reachable_count: number;
+  probe_quorum?: number;
+  probe_agents_total?: number;
+  results: {
+    asset_id: string;
+    name: string;
+    address: string;
+    port: number;
+    reachable: boolean;
+    detail?: string;
+    via: string;
+    reachable_agents?: number;
+    quorum?: number;
+    agents?: {
+      agent: string;
+      segment?: string;
+      reachable: boolean;
+      detail?: string;
+      error?: string;
+      healthy: boolean;
+    }[];
+  }[];
+};
+
 export type SIEMSettings = {
   enabled: boolean;
-  transport: "off" | "syslog_udp" | "syslog_tcp" | "webhook" | "kafka" | "nats" | string;
+  transport: "off" | "syslog_udp" | "syslog_tcp" | "webhook" | "kafka" | "nats" | "opensearch" | string;
   syslog_addr: string;
   syslog_tag: string;
   syslog_facility: number;
@@ -353,7 +440,9 @@ export type SIEMSettings = {
   nats_subject?: string;
   nats_token?: string;
   has_nats_token?: boolean;
-  format: "json" | "cef" | string;
+  opensearch_url?: string;
+  opensearch_index?: string;
+  format: "json" | "cef" | "ecs" | string;
   batch_size: number;
   poll_interval_sec: number;
   cursor_ts?: string;
@@ -463,6 +552,7 @@ export type InfraStatus = {
   sbom_components?: number;
   otel_endpoint?: string;
   otel_ready?: boolean;
+  otel_via?: string;
   coredump?: string;
   dumpable?: boolean;
   data_key_mlock?: boolean;
@@ -763,6 +853,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  downloadSIEMBulk: async (limit = 200) => {
+    const res = await fetch(`/api/v1/admin/settings/siem/bulk?limit=${limit}`, { credentials: "include" });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keeppam-audit.ndjson";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   getITSMSettings: () => request<ITSMSettings>("/api/v1/admin/settings/itsm"),
   putITSMSettings: (body: Partial<ITSMSettings>) =>
     request<ITSMSettings>("/api/v1/admin/settings/itsm", {
@@ -774,6 +878,37 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticket_id }),
     }),
+  getFirewallSettings: () => request<FirewallSettings>("/api/v1/admin/settings/firewall"),
+  putFirewallSettings: (body: Partial<FirewallSettings>) =>
+    request<FirewallSettings>("/api/v1/admin/settings/firewall", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  getFirewallStatus: () => request<FirewallStatus>("/api/v1/admin/firewall/status"),
+  markFirewallApplied: (assetId: string) =>
+    request<Asset>(`/api/v1/admin/assets/${assetId}/firewall-applied`, { method: "POST" }),
+  runFirewallProbe: () =>
+    request<FirewallProbeReport>("/api/v1/admin/firewall/probe", { method: "POST" }),
+  putFirewallProbeAgents: (body: {
+    probe_quorum: number;
+    agents: { name: string; segment?: string; probe_url: string; token?: string; enabled: boolean }[];
+  }) =>
+    request<{ probe_quorum: number; agents: FirewallProbeAgent[] }>(
+      "/api/v1/admin/firewall/probe-agents",
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  pushFirewallAWX: () => request<FirewallSettings>("/api/v1/admin/firewall/push", { method: "POST" }),
+  downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
+    const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = format === "nft" ? "keeppam-firewall.nft" : format === "ansible" ? "keeppam-firewall.yml" : "keeppam-firewall.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   getNotifySettings: () => request<NotifySettings>("/api/v1/admin/settings/notify"),
   putNotifySettings: (body: Partial<NotifySettings>) =>
     request<NotifySettings>("/api/v1/admin/settings/notify", {
@@ -935,6 +1070,7 @@ export const api = {
     description?: string;
     tags?: string[];
     approval_stages?: string[];
+    pam_only?: boolean;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -954,6 +1090,7 @@ export const api = {
       status?: string;
       tags?: string[];
       approval_stages?: string[];
+      pam_only?: boolean;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1117,6 +1254,7 @@ export const api = {
       allowed_devices?: string[];
       allowed_namespaces?: string[];
   allowed_egress?: string[];
+  pii_action?: string;
       command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
@@ -1147,6 +1285,7 @@ export const api = {
       allowed_devices?: string[];
       allowed_namespaces?: string[];
   allowed_egress?: string[];
+  pii_action?: string;
       command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
@@ -1271,13 +1410,37 @@ export const api = {
     );
   },
   getSessionTranscript: (id: string) =>
-    request<{ indexed: boolean; protocol: string; lines: TranscriptLine[] }>(
+    request<{
+      indexed: boolean;
+      protocol: string;
+      lines: TranscriptLine[];
+      output?: TranscriptLine[];
+      keystrokes?: TranscriptLine[];
+      screen_text?: TranscriptLine[];
+    }>(`/api/v1/admin/sessions/${id}/transcript`),
+  indexSessionTranscript: (id: string, opts?: { force?: boolean; ocr?: boolean }) =>
+    request<{
+      result: {
+        indexed: boolean;
+        source: string;
+        lines: number;
+        output?: number;
+        keystrokes?: number;
+        skipped?: string;
+      };
+      ocr?: {
+        indexed: boolean;
+        source: string;
+        screen_text: number;
+        skipped?: string;
+      };
+      lines: TranscriptLine[];
+      output?: TranscriptLine[];
+      keystrokes?: TranscriptLine[];
+      screen_text?: TranscriptLine[];
+    }>(
       `/api/v1/admin/sessions/${id}/transcript`,
-    ),
-  indexSessionTranscript: (id: string, force?: boolean) =>
-    request<{ result: { indexed: boolean; source: string; lines: number; skipped?: string }; lines: TranscriptLine[] }>(
-      `/api/v1/admin/sessions/${id}/transcript`,
-      { method: "POST", body: JSON.stringify({ force: !!force }) },
+      { method: "POST", body: JSON.stringify({ force: !!opts?.force, ocr: !!opts?.ocr }) },
     ),
   searchTimeline: (params: {
     user_id?: string;
@@ -1486,6 +1649,35 @@ export const api = {
     const a = document.createElement("a");
     a.href = url;
     a.download = "keeppam-compliance.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  downloadComplianceReportPdf: async (params: {
+    from?: string;
+    to?: string;
+    days?: number;
+    framework?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.days != null) qs.set("days", String(params.days));
+    if (params.framework) qs.set("framework", params.framework);
+    qs.set("limit", String(params.limit ?? 500));
+    qs.set("format", "pdf");
+    const res = await fetch(`/api/v1/admin/compliance/report?${qs.toString()}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keeppam-compliance.pdf";
     a.click();
     URL.revokeObjectURL(url);
   },
@@ -1734,6 +1926,11 @@ export type AppObjectPreview = {
   graphql_fields?: string[];
 };
 
+export type DlpPattern = {
+  name: string;
+  pattern: string;
+};
+
 export type AccessPolicy = {
   id: string;
   name: string;
@@ -1749,6 +1946,8 @@ export type AccessPolicy = {
   allowed_devices: string[];
   allowed_namespaces: string[];
   allowed_egress: string[];
+  pii_action: string;
+  dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -1777,6 +1976,8 @@ export type AccessPolicyInput = {
   allowed_devices?: string[];
   allowed_namespaces?: string[];
   allowed_egress?: string[];
+  pii_action?: string;
+  dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
   http_policy_pack_id?: string;
@@ -1864,6 +2065,7 @@ export type PolicySnapshot = {
   app_object_pack_name?: string;
   allowed_namespaces?: string[];
   allowed_egress?: string[];
+  pii_action?: string;
   tag_acl?: boolean;
   match_tags?: string[];
   match_mode?: string;
@@ -1994,6 +2196,9 @@ export type ComplianceStatus = {
   last_purge_at?: string;
   last_purge_stats?: Record<string, unknown>;
   generated_at: string;
+  pdf_signed?: boolean;
+  pdf_signer?: string;
+  pdf_pades?: string;
 };
 
 export type ComplianceReport = {

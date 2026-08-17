@@ -41,10 +41,21 @@ type EnsureEphemeral func(ctx context.Context, sessionID uuid.UUID, vault assets
 
 // SQLGuard enforces table JEA, DLP export/row limits, and column masking.
 type SQLGuard struct {
-	Allow   func(stmt string) (ok bool, reason string)
-	Mask    func(cols []string, rows [][]string) ([]string, [][]string)
-	MaxRows int
-	DLPDeny bool
+	Allow      func(stmt string) (ok bool, reason string)
+	Mask       func(cols []string, rows [][]string) ([]string, [][]string)
+	FilterRows func(cols []string, rows [][]string) ([][]string, error)
+	MaxRows    int
+	DLPDeny    bool
+}
+
+func (g *SQLGuard) applyRows(cols []string, rows [][]string) ([][]string, error) {
+	if g != nil && g.Mask != nil {
+		_, rows = g.Mask(cols, rows)
+	}
+	if g != nil && g.FilterRows != nil {
+		return g.FilterRows(cols, rows)
+	}
+	return rows, nil
 }
 
 func (g *SQLGuard) rowLimit() int {
@@ -296,8 +307,16 @@ func (g *WireGateway) execAndRecord(ctx context.Context, sessionID, userID uuid.
 	start := time.Now()
 	err := run()
 	ms := time.Since(start).Milliseconds()
-	if errors.Is(err, ErrDLPRowLimit) {
+	if errors.Is(err, ErrDLPRowLimit) || errors.Is(err, ErrPIIContent) {
 		g.denySQL(ctx, sessionID, userID, stmt, err.Error())
+		if errors.Is(err, ErrPIIContent) {
+			_ = g.sessions.AddEvent(ctx, sessionID, "dlp", map[string]any{
+				"reason": err.Error(), "via": "wire",
+			})
+			_ = g.audit.Record(ctx, &userID, "session.dlp.denied", "session", sessionID.String(), "", "dbwire", map[string]any{
+				"reason": err.Error(),
+			})
+		}
 		rec.Record(stmt, ms, 0, err.Error())
 		return
 	}
@@ -354,8 +373,12 @@ func writePGQueryResult(ctx context.Context, client net.Conn, conn *pgx.Conn, st
 		_ = writePGMsg(client, 'Z', []byte{'I'})
 		return fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
 	}
-	if guard != nil && guard.Mask != nil {
-		_, buffered = guard.Mask(colNames, buffered)
+	var ferr error
+	buffered, ferr = guard.applyRows(colNames, buffered)
+	if ferr != nil {
+		_ = writePGMsg(client, 'E', pgErrorBody(ferr.Error()))
+		_ = writePGMsg(client, 'Z', []byte{'I'})
+		return ferr
 	}
 	rd := binary.BigEndian.AppendUint16(nil, uint16(len(fds)))
 	for _, f := range fds {
@@ -435,6 +458,13 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 		*seq++
 		return fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
 	}
+	var ferr error
+	buffered, ferr = guard.applyRows(cols, buffered)
+	if ferr != nil {
+		_ = writeMySQLPacket(client, *seq, mysqlErr(ferr.Error()))
+		*seq++
+		return ferr
+	}
 	_ = writeMySQLPacket(client, *seq, []byte{byte(len(cols))})
 	*seq++
 	for _, c := range cols {
@@ -444,9 +474,6 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 	}
 	_ = writeMySQLPacket(client, *seq, []byte{0xfe, 0, 0, 2, 0})
 	*seq++
-	if guard != nil && guard.Mask != nil {
-		_, buffered = guard.Mask(cols, buffered)
-	}
 	for ri, cells := range buffered {
 		row := []byte{}
 		for i, s := range cells {
@@ -595,13 +622,13 @@ func mysqlColumnDef(name string) []byte {
 	p = appendLenEnc(p, []byte(""))
 	p = appendLenEnc(p, []byte(name))
 	p = appendLenEnc(p, []byte(name))
-	p = append(p, 0x0c) // length of fixed fields
-	p = append(p, 0x21, 0x00) // charset
+	p = append(p, 0x0c)        // length of fixed fields
+	p = append(p, 0x21, 0x00)  // charset
 	p = append(p, 0, 0, 0, 64) // column length
-	p = append(p, 0xfd) // type varchar
-	p = append(p, 0, 0) // flags
-	p = append(p, 0)    // decimals
-	p = append(p, 0, 0) // filler
+	p = append(p, 0xfd)        // type varchar
+	p = append(p, 0, 0)        // flags
+	p = append(p, 0)           // decimals
+	p = append(p, 0, 0)        // filler
 	return p
 }
 

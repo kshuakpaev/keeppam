@@ -25,6 +25,7 @@ func TestOverlayEmptyBindingTakesPolicy(t *testing.T) {
 		CommandPolicyPackID: &pack,
 		MaxRisk:             40,
 		RiskAction:          "require_approval",
+		PIIAction:           "mask",
 	}
 	out := overlayConstraints(aclConstraints{DaysOfWeek: 127, RiskAction: "deny"}, pol, true)
 	if out.TimeStart == nil || !out.TimeStart.Equal(start) {
@@ -36,7 +37,7 @@ func TestOverlayEmptyBindingTakesPolicy(t *testing.T) {
 	if !out.RequireTicket {
 		t.Fatal("ticket")
 	}
-	if len(out.AllowedCIDRs) != 1 || out.CommandPolicyPackID == nil || out.MaxRisk != 40 || out.RiskAction != "require_approval" {
+	if len(out.AllowedCIDRs) != 1 || out.CommandPolicyPackID == nil || out.MaxRisk != 40 || out.RiskAction != "require_approval" || out.PIIAction != "mask" {
 		t.Fatalf("%+v", out)
 	}
 }

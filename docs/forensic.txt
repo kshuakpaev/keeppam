@@ -1,6 +1,6 @@
 # KeepPAM: forensic timeline
 
-Одна лента «что делал пользователь за интервал»: control-plane аудит + data-plane события сессий. Команды SSH — `docs/session-search.txt` (stdin / PTY, не OCR видео).
+Одна лента «что делал пользователь за интервал»: control-plane аудит + data-plane события сессий. Команды SSH и клавиши RDP — `docs/session-search.txt` (не OCR видео).
 
 ## Метаданные сессии
 
@@ -32,7 +32,7 @@
 
 Источники:
 
-- `session_events` сессий этого пользователя (SQL, k8s, команды SSH, JEA, DLP, HTTP ACL, created/ended…)
+- `session_events` … Типы `output`, `keystroke`, `screen_text` в ленте только если задан `q`.
 - `audit_events` с `actor_id` (login, ACL, JIT, OPA, session.denied…)
 
 ## UI
@@ -41,4 +41,4 @@
 
 ## Вне scope
 
-Полнотекст **вывода** SSH и RDP/видео. Готовый отчёт за период — `docs/compliance-report.txt`. Профиль «обычно 3 сервера» — `docs/ueba.txt`.
+Полнотекст **видео** RDP (OCR кадра). Готовый отчёт за период — `docs/compliance-report.txt`. Профиль «обычно 3 сервера» — `docs/ueba.txt`.

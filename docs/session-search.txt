@@ -1,8 +1,10 @@
 # KeepPAM: forensic-поиск по сессиям
 
-Поиск по `session_events`: SQL, kubectl, **команды SSH**, JEA deny, DLP, risk, HTTP/object ACL, **SSH egress**.
+Поиск по `session_events`: SQL, kubectl, **команды SSH**, **вывод SSH**, **клавиши RDP/VNC**, JEA deny, DLP, risk, HTTP/object ACL, **SSH egress**.
 
-SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay (не output, не RDP/видео).
+SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`).
+
+RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео).
 
 Лента «все действия пользователя за день» — `docs/forensic.txt`.
 
@@ -13,25 +15,25 @@ SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу
 | Query | Смысл |
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
-| `type` | пусто = forensic (`sql`, `sql_denied`, `k8s`, `command`, `command_denied`, `command_approval`, `command_approved`, `dlp`, `risk`, `http_denied`, `app_denied`, `app_approval`, `app_approved`, `egress`, `egress_denied`); `all` = любые; иначе точный тип |
+| `type` | пусто = forensic (`sql`, …, `output`, `keystroke`, `screen_text`, `dlp`, …); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 
-`GET /api/v1/admin/sessions/{id}/transcript` — команды этой сессии.  
-`POST .../transcript` `{force?}` — разобрать asciicast (если нет PTY-журнала).
+`GET /api/v1/admin/sessions/{id}/transcript` — команды + `output[]` + `keystrokes[]` + `screen_text[]`.  
+`POST .../transcript` `{force?, ocr?}` — asciicast (SSH), `.guac` keys, опционально OCR (RDP/VNC/isolated).
 
 Оператор видит только свои сессии; `audit.read` / `users.write` — все.
 
-Ответ поиска: `{events: [{snippet, type, ts, session_id, username, asset_name, protocol, …}], total}`. Тела Secret/паролей в payload нет (k8s body_redacted). Ввод пароля в PTY может попасть в индекс как строка — как и в самой записи.
+Ответ поиска: `{events: [{snippet, type, ts, session_id, username, asset_name, protocol, …}], total}`. Тела Secret/паролей в payload нет (k8s body_redacted). Ввод пароля в PTY и текст с экрана могут попасть в индекс — как и в самой записи.
 
 ## UI
 
-Сессии → вкладка **События**. Replay SSH: список команд + «Индексировать команды».
+Сессии → вкладка **События**. Replay SSH: команды + вывод. Replay RDP/VNC: **Клавиши** + **Экран (OCR)**. Кнопки «Индексировать запись» / «OCR экрана».
 
 ## Индекс
 
-Миграция `036`: `pg_trgm` GIN на `payload::text`. Миграция `063`: `sessions.transcript_indexed_at`. До 400 строк / 8 MiB записи, строка ≤ 512 рун.
+До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 20 `screen_text`. Строка ≤ 512 рун.
 
 ## Вне scope
 
-Полнотекст **вывода** asciicast, OCR/RDP/Guacamole, OpenSearch, маскирование паролей в stdin.
+OpenSearch-кластер, маскирование паролей в stdin/stdout/клавишах/OCR, live-индекс до конца сессии, полное видео OCR.

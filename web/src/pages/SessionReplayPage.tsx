@@ -36,7 +36,11 @@ export function SessionReplayPage() {
   const [exportingMp4, setExportingMp4] = useState(false);
   const [ready, setReady] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
+  const [outputLines, setOutputLines] = useState<TranscriptLine[]>([]);
+  const [keystrokes, setKeystrokes] = useState<TranscriptLine[]>([]);
+  const [screenText, setScreenText] = useState<TranscriptLine[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -65,10 +69,15 @@ export function SessionReplayPage() {
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
         setIsolated(!!sess.isolated);
-        if (sess.protocol === "ssh") {
+        if (sess.protocol === "ssh" || sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           try {
             const t = await api.getSessionTranscript(id);
-            if (!cancelled) setTranscript(t.lines || []);
+            if (!cancelled) {
+              setTranscript(t.lines || []);
+              setOutputLines(t.output || []);
+              setKeystrokes(t.keystrokes || []);
+              setScreenText(t.screen_text || []);
+            }
           } catch {
             /* replay still works */
           }
@@ -302,12 +311,30 @@ export function SessionReplayPage() {
     setIndexBusy(true);
     setError("");
     try {
-      const res = await api.indexSessionTranscript(id, true);
+      const res = await api.indexSessionTranscript(id, { force: true });
       setTranscript(res.lines || []);
+      setOutputLines(res.output || []);
+      setKeystrokes(res.keystrokes || []);
+      setScreenText(res.screen_text || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка индекса");
     } finally {
       setIndexBusy(false);
+    }
+  }
+
+  async function ocrScreen() {
+    if (!id) return;
+    setOcrBusy(true);
+    setError("");
+    try {
+      const res = await api.indexSessionTranscript(id, { force: true, ocr: true });
+      setKeystrokes(res.keystrokes || []);
+      setScreenText(res.screen_text || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка OCR");
+    } finally {
+      setOcrBusy(false);
     }
   }
 
@@ -353,9 +380,14 @@ export function SessionReplayPage() {
               {exportingMp4 ? "MP4…" : "Экспорт MP4"}
             </button>
           )}
-          {id && protocol === "ssh" && (
-            <button className="btn secondary" type="button" disabled={indexBusy} onClick={() => void indexTranscript()}>
-              {indexBusy ? "Индекс…" : "Индексировать команды"}
+          {isGuac && (
+            <button className="btn secondary" type="button" disabled={ocrBusy || indexBusy} onClick={() => void ocrScreen()}>
+              {ocrBusy ? "OCR…" : "OCR экрана"}
+            </button>
+          )}
+          {id && (protocol === "ssh" || isGuac) && (
+            <button className="btn secondary" type="button" disabled={indexBusy || ocrBusy} onClick={() => void indexTranscript()}>
+              {indexBusy ? "Индекс…" : "Индексировать запись"}
             </button>
           )}
           {id && (
@@ -384,7 +416,7 @@ export function SessionReplayPage() {
           <span className="mono muted">{formatMs(duration)}</span>
         </div>
       )}
-      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" ? "0.75rem" : 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" || isGuac ? "0.75rem" : 0 }}>
       <div
         ref={hostRef}
         className={isGuac ? undefined : "terminal-host card"}
@@ -405,7 +437,7 @@ export function SessionReplayPage() {
           <h2 style={{ marginTop: 0 }}>Команды</h2>
           <p className="muted">
             {transcript.length === 0
-              ? "Пусто. Для сессий без JEA нажмите «Индексировать команды»."
+              ? "Пусто. Для сессий без JEA нажмите «Индексировать запись»."
               : `${transcript.length} строк`}
           </p>
           <ul className="plain-list">
@@ -415,6 +447,54 @@ export function SessionReplayPage() {
                   {ln.command || ln.type}
                 </span>
                 <span className="muted">{ln.source || ln.type}</span>
+              </li>
+            ))}
+          </ul>
+          <h2>Вывод</h2>
+          <p className="muted">
+            {outputLines.length === 0 ? "Нет проиндексированного stdout." : `${outputLines.length} строк`}
+          </p>
+          <ul className="plain-list">
+            {outputLines.map((ln, i) => (
+              <li key={`o-${ln.ts}-${i}`}>
+                <span className="mono" title="output">
+                  {ln.command || ln.type}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      )}
+      {isGuac && (
+        <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
+          <h2 style={{ marginTop: 0 }}>Клавиши</h2>
+          <p className="muted">
+            {keystrokes.length === 0
+              ? "Нет проиндексированных нажатий. Нажмите «Индексировать запись» (не OCR)."
+              : `${keystrokes.length} строк`}
+          </p>
+          <ul className="plain-list">
+            {keystrokes.map((ln, i) => (
+              <li key={`k-${ln.ts}-${i}`}>
+                <span className="mono" title="keystroke">
+                  {ln.command || ln.type}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <h2>Экран (OCR)</h2>
+          <p className="muted">
+            {screenText.length === 0
+              ? "Нет OCR. Кнопка «OCR экрана» — до 20 кадров через guacenc/Tesseract (не полное видео)."
+              : `${screenText.length} фрагментов`}
+          </p>
+          <ul className="plain-list">
+            {screenText.map((ln, i) => (
+              <li key={`s-${ln.ts}-${i}`}>
+                <span className="mono" title="screen_text">
+                  {ln.offset != null ? `[${ln.offset}s] ` : ""}
+                  {ln.command || ln.type}
+                </span>
               </li>
             ))}
           </ul>

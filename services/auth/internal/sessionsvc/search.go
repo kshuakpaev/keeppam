@@ -92,6 +92,18 @@ func EventSnippet(eventType string, payload map[string]any) string {
 			}
 			return s
 		}
+	case "output":
+		if s := payloadString(payload, "line"); s != "" {
+			return s
+		}
+	case "keystroke":
+		if s := payloadString(payload, "line"); s != "" {
+			return s
+		}
+	case "screen_text":
+		if s := payloadString(payload, "line"); s != "" {
+			return s
+		}
 	case "command_approval":
 		if s := payloadString(payload, "command"); s != "" {
 			return "WAITING " + s
@@ -204,7 +216,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','output','keystroke','screen_text','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))

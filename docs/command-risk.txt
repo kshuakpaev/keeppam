@@ -34,7 +34,14 @@ DLP `scp`/`sftp`/`rsync` тоже через парсер (`sudo scp` по-пр�
 
 ## Решение в сессии
 
-Line-buffer (QuietEcho) включается, если есть command pack **или** `max_risk > 0`. Без пакета опасные команды всё равно режутся порогом риска.
+Line-buffer (QuietEcho) **всегда** на SSH PTY: DLP, JEA pack, live deny, risk.
+
+| Режим | Когда |
+|-------|--------|
+| **Live deny** | `max_risk=0`, нет bypass: `ssh.destructive`, `ssh.firewall`, `ssh.user`, `ssh.chmod777` — **DENY до хоста**, событие `command_denied` kind `live_deny`, audit `session.command.live_denied`. Цепочки `\|`, `&&`, `;` — проверка каждого сегмента (не полный AST). `bash -c` / `sh -c` — unwrap как `su -c`. |
+| **Risk / JEA** | Как раньше при `max_risk > 0` или command pack |
+
+Без пакета и при `max_risk=0` low-risk (`ls`, `systemctl status`) проходят; destructive/firewall/user/chmod777 режутся live deny.
 
 | `risk_action` | Если score > max_risk |
 |---------------|------------------------|
@@ -54,4 +61,4 @@ JEA → SSH → «Проверить команду». Сессии → Собы
 
 ## Вне scope
 
-Полный shell AST / pipes / `bash -c`. Step-up MFA на SSH-команду в PTY.
+Полный shell AST / heredoc / `$()`. Step-up MFA на SSH-команду в PTY.

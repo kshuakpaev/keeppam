@@ -67,6 +67,13 @@ type Config struct {
 	PKCS11URI              string
 	FIPSRequired           bool
 	SBOMFile               string
+	PDFCertFile            string
+	PDFKeyFile             string
+	PDFTSAURL              string
+	PDFLTV                 bool
+	PDFLTVDir              string
+	PDFLTVFetch            bool
+	PDFLTA                 bool
 }
 
 func Load() (Config, error) {
@@ -124,6 +131,13 @@ func Load() (Config, error) {
 		PKCS11URI:              env("KEEPPAM_PKCS11_URI", ""),
 		FIPSRequired:           boolEnv("KEEPPAM_FIPS_REQUIRED", false),
 		SBOMFile:               env("KEEPPAM_SBOM_FILE", ""),
+		PDFCertFile:            env("KEEPPAM_PDF_CERT_FILE", ""),
+		PDFKeyFile:             env("KEEPPAM_PDF_KEY_FILE", ""),
+		PDFTSAURL:              strings.TrimSpace(env("KEEPPAM_PDF_TSA_URL", "")),
+		PDFLTV:                 boolEnv("KEEPPAM_PDF_LTV", false),
+		PDFLTVDir:              strings.TrimSpace(env("KEEPPAM_PDF_LTV_DIR", "")),
+		PDFLTVFetch:            boolEnv("KEEPPAM_PDF_LTV_FETCH", true),
+		PDFLTA:                 boolEnv("KEEPPAM_PDF_LTA", false),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
@@ -169,6 +183,15 @@ func Load() (Config, error) {
 	}
 	if cfg.TLSRequireClientCert && cfg.TLSClientCAFile == "" && cfg.SPIFFEBundleFile == "" {
 		return Config{}, fmt.Errorf("KEEPPAM_TLS_CLIENT_CA_FILE or KEEPPAM_SPIFFE_BUNDLE_FILE required when KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true")
+	}
+	if (cfg.PDFCertFile == "") != (cfg.PDFKeyFile == "") {
+		return Config{}, fmt.Errorf("KEEPPAM_PDF_CERT_FILE and KEEPPAM_PDF_KEY_FILE must both be set")
+	}
+	if cfg.PDFLTV && cfg.PDFTSAURL == "" {
+		return Config{}, fmt.Errorf("KEEPPAM_PDF_LTV requires KEEPPAM_PDF_TSA_URL")
+	}
+	if cfg.PDFLTA && !cfg.PDFLTV {
+		return Config{}, fmt.Errorf("KEEPPAM_PDF_LTA requires KEEPPAM_PDF_LTV")
 	}
 	return cfg, nil
 }

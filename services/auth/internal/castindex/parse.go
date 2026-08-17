@@ -25,15 +25,17 @@ type Line struct {
 
 // InputLines extracts typed SSH lines from an asciicast v2 stream (event type "i").
 func InputLines(r io.Reader) ([]Line, error) {
+	in, _, err := ParseCast(r)
+	return in, err
+}
+
+// ParseCast extracts stdin ("i") and stdout ("o") lines from asciicast v2.
+func ParseCast(r io.Reader) (in, out []Line, err error) {
 	br := bufio.NewReader(io.LimitReader(r, MaxBytes))
-	var buf strings.Builder
-	var lastOff float64
-	var out []Line
+	var inBuf, outBuf strings.Builder
+	var inOff, outOff float64
 	first := true
 	for {
-		if len(out) >= MaxLines {
-			break
-		}
 		raw, err := br.ReadBytes('\n')
 		if len(raw) > 0 {
 			line := strings.TrimRight(string(raw), "\r\n")
@@ -42,22 +44,15 @@ func InputLines(r io.Reader) ([]Line, error) {
 					first = false
 				} else {
 					first = false
-					off, data, ok := parseInputEvent(line)
+					off, kind, data, ok := parseCastEvent(line)
 					if ok {
-						lastOff = off
-						for _, ch := range data {
-							switch ch {
-							case '\r', '\n':
-								if t := CleanLine(buf.String()); t != "" {
-									out = append(out, Line{Offset: lastOff, Text: t})
-									if len(out) >= MaxLines {
-										return out, err
-									}
-								}
-								buf.Reset()
-							default:
-								buf.WriteRune(ch)
-							}
+						switch kind {
+						case "i":
+							inOff = off
+							in = appendRunes(in, &inBuf, inOff, data, false)
+						case "o":
+							outOff = off
+							out = appendRunes(out, &outBuf, outOff, data, true)
 						}
 					}
 				}
@@ -67,34 +62,92 @@ func InputLines(r io.Reader) ([]Line, error) {
 			if err == io.EOF {
 				break
 			}
-			return out, err
+			return in, out, err
+		}
+		if len(in) >= MaxLines && len(out) >= MaxLines {
+			break
 		}
 	}
-	if t := CleanLine(buf.String()); t != "" && len(out) < MaxLines {
-		out = append(out, Line{Offset: lastOff, Text: t})
+	if t := flushLine(&inBuf, false); t != "" && len(in) < MaxLines {
+		in = append(in, Line{Offset: inOff, Text: t})
+	}
+	if t := flushLine(&outBuf, true); t != "" && len(out) < MaxLines {
+		if !dupLast(out, t) {
+			out = append(out, Line{Offset: outOff, Text: t})
+		}
+	}
+	if in == nil {
+		in = []Line{}
 	}
 	if out == nil {
 		out = []Line{}
 	}
-	return out, nil
+	return in, out, nil
 }
 
-func parseInputEvent(line string) (float64, string, bool) {
+func appendRunes(dst []Line, buf *strings.Builder, off float64, data string, output bool) []Line {
+	for _, ch := range data {
+		if len(dst) >= MaxLines {
+			return dst
+		}
+		switch ch {
+		case '\r', '\n':
+			if t := flushLine(buf, output); t != "" {
+				if output && dupLast(dst, t) {
+					continue
+				}
+				dst = append(dst, Line{Offset: off, Text: t})
+			}
+		default:
+			buf.WriteRune(ch)
+		}
+	}
+	return dst
+}
+
+func flushLine(buf *strings.Builder, output bool) string {
+	t := CleanLine(buf.String())
+	buf.Reset()
+	if output && !keepOutput(t) {
+		return ""
+	}
+	return t
+}
+
+func dupLast(dst []Line, t string) bool {
+	return len(dst) > 0 && dst[len(dst)-1].Text == t
+}
+
+func keepOutput(s string) bool {
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "$", "#", "%", ">", "~", "$$":
+		return false
+	}
+	return true
+}
+
+func parseCastEvent(line string) (float64, string, string, bool) {
 	var rec []json.RawMessage
 	if json.Unmarshal([]byte(line), &rec) != nil || len(rec) < 3 {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	var kind string
-	if json.Unmarshal(rec[1], &kind) != nil || kind != "i" {
-		return 0, "", false
+	if json.Unmarshal(rec[1], &kind) != nil {
+		return 0, "", "", false
+	}
+	if kind != "i" && kind != "o" {
+		return 0, "", "", false
 	}
 	var off float64
 	_ = json.Unmarshal(rec[0], &off)
 	var data string
 	if json.Unmarshal(rec[2], &data) != nil {
-		return 0, "", false
+		return 0, "", "", false
 	}
-	return off, data, true
+	return off, kind, data, true
 }
 
 func CleanLine(s string) string {

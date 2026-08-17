@@ -1,10 +1,12 @@
 package compliance
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/fips"
+	"github.com/keeppam/auth/internal/pades"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/sbom"
 	"github.com/keeppam/auth/internal/store"
@@ -29,6 +32,7 @@ type Service struct {
 	recordingsDir string
 	store         recstore.Store
 	dataKeySource string
+	pdf           *pades.Signer
 }
 
 func New(db *store.DB, aud *audit.Service, recordingsDir string, store recstore.Store, dataKeySource string) *Service {
@@ -36,6 +40,51 @@ func New(db *store.DB, aud *audit.Service, recordingsDir string, store recstore.
 		store = &recstore.Local{Root: recordingsDir}
 	}
 	return &Service{db: db, aud: aud, recordingsDir: recordingsDir, store: store, dataKeySource: dataKeySource}
+}
+
+func (s *Service) SetPDFSigner(sig *pades.Signer) {
+	if s != nil {
+		s.pdf = sig
+	}
+}
+
+func (s *Service) PDFSigned() bool {
+	return s != nil && s.pdf != nil
+}
+
+func (s *Service) PDFSignerCN() string {
+	if s == nil || s.pdf == nil {
+		return ""
+	}
+	return s.pdf.CN()
+}
+
+func (s *Service) PDFProfile() string {
+	if s == nil || s.pdf == nil {
+		return ""
+	}
+	return s.pdf.Profile()
+}
+
+func (s *Service) WritePDF(w io.Writer, rep Report) error {
+	var buf bytes.Buffer
+	sigLabel := ""
+	if s.pdf != nil {
+		sigLabel = s.pdf.SignatureLabel()
+	}
+	if err := writeReportPDF(&buf, rep, sigLabel); err != nil {
+		return err
+	}
+	if s.pdf == nil {
+		_, err := w.Write(buf.Bytes())
+		return err
+	}
+	out, err := pades.Sign(buf.Bytes(), s.pdf, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(out)
+	return err
 }
 
 type RetentionPolicy struct {
@@ -92,6 +141,9 @@ type Status struct {
 	LastPurgeAt    *time.Time      `json:"last_purge_at,omitempty"`
 	LastPurgeStats map[string]any  `json:"last_purge_stats,omitempty"`
 	GeneratedAt    time.Time       `json:"generated_at"`
+	PDFSigned      bool            `json:"pdf_signed"`
+	PDFSigner      string          `json:"pdf_signer,omitempty"`
+	PDFPAdES       string          `json:"pdf_pades,omitempty"`
 }
 
 func (s *Service) GetRetention(ctx context.Context) (RetentionPolicy, error) {
@@ -297,7 +349,10 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	st := Status{Retention: ret, GeneratedAt: time.Now().UTC(), Controls: []ControlResult{}, LastPurgeStats: map[string]any{}}
+	st := Status{
+		Retention: ret, GeneratedAt: time.Now().UTC(), Controls: []ControlResult{}, LastPurgeStats: map[string]any{},
+		PDFSigned: s.PDFSigned(), PDFSigner: s.PDFSignerCN(), PDFPAdES: s.PDFProfile(),
+	}
 	var packID *string
 	var applied, lastPurge *time.Time
 	var stats []byte
@@ -332,6 +387,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	st.Controls = append(st.Controls, s.checkFIPS())
 	st.Controls = append(st.Controls, s.checkSBOM())
 	st.Controls = append(st.Controls, s.checkMemory())
+	st.Controls = append(st.Controls, s.checkPAdES())
+	st.Controls = append(st.Controls, s.checkFirewallPAM(ctx))
 	return st, nil
 }
 
@@ -538,6 +595,48 @@ func (s *Service) checkSBOM() ControlResult {
 	}
 	return ControlResult{ID: "sbom", Title: "SBOM (CycloneDX)", Status: "pass",
 		Detail: fmt.Sprintf("%s · %d components · spec %s", src, n, bom.SpecVersion)}
+}
+
+func (s *Service) checkPAdES() ControlResult {
+	if s.pdf == nil {
+		return ControlResult{ID: "pades_pdf", Title: "PAdES PDF signature", Status: "warn",
+			Detail: "KEEPPAM_PDF_CERT_FILE не задан — PDF без подписи"}
+	}
+	return ControlResult{ID: "pades_pdf", Title: "PAdES PDF signature", Status: "pass",
+		Detail: "PAdES-" + s.pdf.Profile() + " · " + s.pdf.CN()}
+}
+
+func (s *Service) checkFirewallPAM(ctx context.Context) ControlResult {
+	var pamOnly int
+	var unapplied int
+	var reachable int
+	var gatewayN int
+	_ = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM assets WHERE status='active' AND COALESCE(pam_only, TRUE)=TRUE`).Scan(&pamOnly)
+	if pamOnly == 0 {
+		return ControlResult{ID: "firewall_pam", Title: "Firewall PAM", Status: "warn", Detail: "нет pam_only активов"}
+	}
+	_ = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM assets
+		WHERE status='active' AND COALESCE(pam_only, TRUE)=TRUE AND firewall_applied_at IS NULL`).Scan(&unapplied)
+	_ = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM assets
+		WHERE status='active' AND COALESCE(pam_only, TRUE)=TRUE AND firewall_probe_reachable IS TRUE`).Scan(&reachable)
+	_ = s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(array_length(pam_gateway_cidrs, 1), 0) FROM firewall_settings WHERE id=1`).Scan(&gatewayN)
+
+	detail := fmt.Sprintf("pam_only=%d unapplied=%d", pamOnly, unapplied)
+	if reachable > 0 {
+		detail += fmt.Sprintf(" probe_reachable=%d", reachable)
+	}
+	if gatewayN == 0 {
+		return ControlResult{ID: "firewall_pam", Title: "Firewall PAM", Status: "fail",
+			Detail: detail + " · gateway CIDR не заданы"}
+	}
+	if unapplied > 0 || reachable > 0 {
+		return ControlResult{ID: "firewall_pam", Title: "Firewall PAM", Status: "warn", Detail: detail}
+	}
+	return ControlResult{ID: "firewall_pam", Title: "Firewall PAM", Status: "pass", Detail: detail}
 }
 
 func ternary(ok bool, a, b string) string {

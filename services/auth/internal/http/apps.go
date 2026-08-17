@@ -215,7 +215,25 @@ func (s *Server) serveAppHTTP(w http.ResponseWriter, r *http.Request, row sessio
 		return
 	}
 
-	proxy, err := appaccess.ReverseProxy(creds, integ, rec, id, prefix)
+	proxy, err := appaccess.ReverseProxy(creds, integ, rec, id, prefix, &appaccess.PIIFilter{
+		DLP: row.PolicySnapshot.ContentDLP(),
+		OnHit: func(kinds []string, denied bool) {
+			ev := map[string]any{"kinds": kinds, "via": via}
+			if denied {
+				ev["denied"] = true
+				_ = s.sessionsvc.AddEvent(r.Context(), id, "dlp", ev)
+				_ = s.audit.Record(r.Context(), &row.UserID, "session.dlp.denied", "session", id.String(), ip, r.UserAgent(), map[string]any{
+					"kinds": kinds, "via": "https",
+				})
+				return
+			}
+			ev["action"] = "mask"
+			_ = s.sessionsvc.AddEvent(r.Context(), id, "dlp", ev)
+			_ = s.audit.Record(r.Context(), &row.UserID, "session.dlp.masked", "session", id.String(), ip, r.UserAgent(), map[string]any{
+				"kinds": kinds, "via": "https",
+			})
+		},
+	})
 	if err != nil {
 		_ = rec.Close()
 		writeErr(w, http.StatusBadRequest, err.Error())

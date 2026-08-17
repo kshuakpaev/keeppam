@@ -36,6 +36,7 @@ services:
       - recordings:/tmp/recordings
       - ./opa/keeppam.rego:/etc/keeppam/policy.rego:ro
       - ./geoip:/var/lib/keeppam/geoip:ro
+      - ./pades:/etc/keeppam/pades:ro
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
@@ -61,7 +62,8 @@ services:
       KEEPPAM_DATA_KEY_SOURCE: "env"
       KEEPPAM_RECORDINGS_BACKEND: "local"
       KEEPPAM_ALERT_WEBHOOK_TOKEN: "keeppam-alert-stand"
-      KEEPPAM_OTEL_ENDPOINT: "http://tempo:4318"
+      KEEPPAM_OTEL_ENDPOINT: "http://otel-collector:4318"
+      KEEPPAM_OTEL_ENV: "stand"
       KEEPPAM_OPA_POLICY: "/etc/keeppam/policy.rego"
       # Prod (см. docs/prod-infra.txt, docs/kms.txt):
       # KEEPPAM_DATA_KEY_SOURCE: "file"
@@ -102,6 +104,9 @@ services:
       # FIPS/SBOM (docs/fips-sbom.txt): стенд = standard Go crypto
       # KEEPPAM_FIPS_REQUIRED: "true"
       # KEEPPAM_SBOM_FILE: "/etc/keeppam/sbom/keeppam-api.cdx.json"
+      # PAdES-B-B (docs/pades.txt): демо self-signed RSA
+      KEEPPAM_PDF_CERT_FILE: "/etc/keeppam/pades/cert.pem"
+      KEEPPAM_PDF_KEY_FILE: "/etc/keeppam/pades/key.pem"
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,7 +116,9 @@ services:
         condition: service_started
       guacenc:
         condition: service_started
-      tempo:
+      firewall-probe:
+        condition: service_started
+      otel-collector:
         condition: service_started
 
   guacd:
@@ -130,6 +137,24 @@ services:
       - recordings:/tmp/recordings
     environment:
       PORT: "8099"
+    restart: unless-stopped
+
+  firewall-probe:
+    image: keeppam-firewall-probe:local
+    build:
+      context: ./firewall-probe
+    environment:
+      PORT: "8100"
+      PROBE_TIMEOUT_SEC: "4"
+    restart: unless-stopped
+
+  firewall-probe-b:
+    image: keeppam-firewall-probe:local
+    environment:
+      PORT: "8101"
+      PROBE_TIMEOUT_SEC: "4"
+    ports:
+      - "8101:8101"
     restart: unless-stopped
 
   session-worker:
@@ -163,12 +188,16 @@ services:
       KEEPPAM_OPA_POLICY: "/etc/keeppam/policy.rego"
       KEEPPAM_GEOIP_DB: "/var/lib/keeppam/geoip/country-demo.mmdb"
       KEEPPAM_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32"
+      KEEPPAM_OTEL_ENDPOINT: "http://otel-collector:4318"
+      KEEPPAM_OTEL_ENV: "stand"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       api:
+        condition: service_started
+      otel-collector:
         condition: service_started
 
   demo-postgres:
@@ -242,6 +271,16 @@ services:
       timeout: 3s
       retries: 20
 
+  otel-collector:
+    image: otel/opentelemetry-collector:0.109.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
   tempo:
     image: grafana/tempo:2.6.1
     user: "0:0"
@@ -268,6 +307,75 @@ services:
     ports:
       - "4222:4222"
     restart: unless-stopped
+
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      discovery.type: single-node
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  opensearch-init:
+    image: curlimages/curl:8.5.0
+    volumes:
+      - ./opensearch:/bootstrap:ro
+    environment:
+      OPENSEARCH_URL: http://opensearch:9200
+      BOOTSTRAP_DIR: /bootstrap
+    entrypoint: ["/bin/sh", "/bootstrap/init-opensearch.sh"]
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: "no"
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.18.0
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    ports:
+      - "5601:5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5601/api/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  opensearch-dashboards-init:
+    image: curlimages/curl:8.5.0
+    volumes:
+      - ./opensearch:/bootstrap:ro
+    environment:
+      DASHBOARDS_URL: http://opensearch-dashboards:5601
+      BOOTSTRAP_DIR: /bootstrap
+    entrypoint: ["/bin/sh", "/bootstrap/init-dashboards.sh"]
+    depends_on:
+      opensearch-dashboards:
+        condition: service_healthy
+    restart: "no"
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -300,3 +408,4 @@ volumes:
   grafanadata:
   amdata:
   tempodata:
+  osdata:

@@ -144,7 +144,7 @@ func (s *Service) Timeline(ctx context.Context, f TimelineFilter) (TimelineResul
 	q := strings.TrimSpace(f.Q)
 	like := likePattern(q)
 
-	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src)
+	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src, q != "")
 	where := ""
 	if q != "" {
 		args = append(args, like)
@@ -206,8 +206,12 @@ func (s *Service) Timeline(ctx context.Context, f TimelineFilter) (TimelineResul
 	}, rows.Err()
 }
 
-func timelineUnionSQL(userID uuid.UUID, from, to time.Time, src string) (string, []any) {
+func timelineUnionSQL(userID uuid.UUID, from, to time.Time, src string, includeOutput bool) (string, []any) {
 	args := []any{userID, from.UTC(), to.UTC()}
+	outFilter := ` AND e.event_type NOT IN ('output','keystroke','screen_text')`
+	if includeOutput {
+		outFilter = ""
+	}
 	sessionPart := `
 		SELECT e.id, e.ts, 'session'::text AS source, e.event_type AS kind, e.payload,
 			e.session_id,
@@ -221,7 +225,7 @@ func timelineUnionSQL(userID uuid.UUID, from, to time.Time, src string) (string,
 		FROM session_events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN assets a ON a.id = s.asset_id
-		WHERE s.user_id=$1 AND e.ts >= $2 AND e.ts <= $3`
+		WHERE s.user_id=$1 AND e.ts >= $2 AND e.ts <= $3` + outFilter
 	auditPart := `
 		SELECT ae.id, ae.ts, 'audit'::text AS source, ae.action AS kind,
 			COALESCE(ae.payload,'{}'::jsonb) || jsonb_build_object('resource_type', ae.resource_type, 'resource_id', ae.resource_id) AS payload,

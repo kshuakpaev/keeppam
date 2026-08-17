@@ -1,0 +1,38 @@
+# KeepPAM: OCR кадра RDP/VNC
+
+Узкий срез: **не** полное видео и не live OCR. После сессии guacenc выбирает до **20 кадров** (~каждые 30 с), Tesseract (`eng`) → `session_events` тип **`screen_text`**.
+
+Отдельно от клавиш opcode `key` (`docs/session-search.txt`).
+
+## Pipeline
+
+1. `.guac` → guacenc → `.m4v` / `.mp4` (как MP4 export).
+2. `POST http://guacenc:8099/ocr` `{"path":"/tmp/recordings/...","max_frames":20}`.
+3. ffmpeg: кадр на timestamp; tesseract `--psm 6`.
+4. API: `castindex.IndexOCR` → payload `{line, source:"guacenc", offset}`.
+
+Авто: `IndexOCRAsync` при конце RDP/VNC/isolated (timeout 15 мин). Клавиши — отдельно, 30 с.
+
+## Лимиты
+
+| | |
+|-|-|
+| Кадров | 20 |
+| Символов / кадр (Python) | 4000 |
+| Событий / сессия (Go) | 20, строка ≤ 512 рун |
+| Пустые / дубли подряд | skip |
+
+## API / UI
+
+`GET .../transcript` — `screen_text[]`.  
+`POST .../transcript` `{force?, ocr?}` — `ocr:true` синхронно запускает OCR (может занять минуты).
+
+Forensic: `type=screen_text`. Timeline без `q` — не показывает (как `output`/`keystroke`).
+
+Replay RDP/VNC: **OCR экрана**, сайдбар **Экран (OCR)**.
+
+Контейнер `guacenc`: `tesseract-ocr`, `tesseract-ocr-eng`. `OCR_LANG=eng` в образе.
+
+## Вне scope
+
+Полный текст каждого кадра, русский OCR, live OCR, OCR SSH stdout, compliance-отчёт, маскирование паролей на экране.

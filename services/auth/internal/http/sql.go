@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -192,6 +193,32 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 				errMsg = qerr.Error()
 			} else if hasSQLPack {
 				res.Columns, res.Rows = policy.MaskSQLResult(sqlPack, res.Columns, res.Rows)
+			}
+			if qerr == nil {
+				dlp := row.PolicySnapshot.ContentDLP()
+				out, deny, kinds := policy.ApplyContentDLPRows(dlp, res.Rows)
+				if deny {
+					reason := "sql result denied by DLP (PII: " + strings.Join(kinds, ",") + ")"
+					denied := map[string]any{
+						"statement": truncateStr(msg.Statement, 8000), "reason": reason, "kinds": kinds, "denied": true,
+					}
+					_ = s.sessionsvc.AddEvent(r.Context(), id, "dlp", denied)
+					s.live.FanoutSQL(r.Context(), id, denied)
+					_ = s.audit.Record(r.Context(), &authSess.UserID, "session.dlp.denied", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
+						"reason": reason, "kinds": kinds,
+					})
+					_ = conn.WriteJSON(map[string]any{"type": "error", "error": reason, "duration_ms": res.Duration})
+					continue
+				}
+				if len(kinds) > 0 {
+					res.Rows = out
+					_ = s.sessionsvc.AddEvent(r.Context(), id, "dlp", map[string]any{
+						"action": "mask", "kinds": kinds, "via": "sql-ws",
+					})
+					_ = s.audit.Record(r.Context(), &authSess.UserID, "session.dlp.masked", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
+						"kinds": kinds,
+					})
+				}
 			}
 			rec.Record(msg.Statement, res.Duration, res.RowCount, errMsg)
 			sqlEv := map[string]any{

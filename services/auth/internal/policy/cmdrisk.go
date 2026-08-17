@@ -36,6 +36,8 @@ func (v SSHLineVerdict) AuditAction() string {
 		return "session.command.approval_required"
 	case SSHKindRisk:
 		return "session.risk.denied"
+	case SSHKindLiveDeny:
+		return "session.command.live_denied"
 	default:
 		return "session.command.denied"
 	}
@@ -95,6 +97,18 @@ func (s *Service) EvaluateSSHLine(ctx context.Context, in AccessCheck, pack Comm
 		v.Kind = SSHKindJEA
 		v.Reason = "denied by JEA pack"
 		return v
+	}
+	if !sshSessionBypass(in) && snapshotMaxRisk(in) <= 0 {
+		for _, op := range SSHOperationsInLine(line) {
+			if !IsLiveDeniedOperation(op) {
+				continue
+			}
+			v.Operation = op
+			v.Points, _ = operationPoints(op)
+			v.Kind = SSHKindLiveDeny
+			v.Reason = "live deny: " + op
+			return v
+		}
 	}
 	op := SSHOperation(line)
 	v.Operation = op

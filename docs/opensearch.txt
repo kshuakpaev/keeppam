@@ -1,0 +1,58 @@
+# KeepPAM: OpenSearch / ECS
+
+Экспорт `audit_events` в Elastic Common Schema и HTTP `_bulk`. На стенде — **single-node OpenSearch + Dashboards** в compose (не prod 3-node).
+
+## Формат ECS
+
+SIEM `format=ecs` (миграция `066`). Поля:
+
+| ECS | Откуда |
+|-----|--------|
+| `@timestamp` | `ts` |
+| `event.action` / `event.id` / `event.dataset=keeppam.audit` | action, UUID |
+| `event.category` | `authentication` / `session` / `iam` |
+| `event.outcome` | success/failure по суффиксу action (иначе пусто) |
+| `user.id` | actor |
+| `source.ip` | IP |
+| `user_agent.original` | UA |
+| `keeppam.resource` / `keeppam.hash` / `keeppam.payload` | resource, hash-цепочка, payload |
+
+Webhook при `format=ecs` шлёт массив ECS-документов. Kafka/NATS/syslog — одно ECS-JSON на событие.
+
+## Транспорт `opensearch`
+
+POST `{url}/_bulk`, `Content-Type: application/x-ndjson`, index default `keeppam-audit`. Auth — тот же header, что webhook (`Authorization: ApiKey …` / Basic). Формат принудительно `ecs`. Курсор как у остальных транспортов: только после HTTP 2xx без `errors: true` в bulk-ответе.
+
+## Стенд (compose)
+
+| Сервис | Порт | Назначение |
+|--------|------|------------|
+| `opensearch` | `:9200` | single-node, security off |
+| `opensearch-dashboards` | `:5601` | дашборд **KeepPAM Audit** |
+| `opensearch-init` | — | index template + ISM 30d |
+| `opensearch-dashboards-init` | — | index pattern + viz |
+
+Миграция `072`: `opensearch_url=http://opensearch:9200`, `format=ecs` (transport по-прежнему `off` — включить в **Конфиг → SIEM**).
+
+Проверка:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d opensearch opensearch-dashboards
+docker compose -f deploy/docker-compose.yml run --rm opensearch-init
+docker compose -f deploy/docker-compose.yml run --rm opensearch-dashboards-init
+# UI: http://localhost:5601 → Dashboards → KeepPAM Audit
+# SIEM: transport OpenSearch, URL http://opensearch:9200, index keeppam-audit, enabled
+curl -s 'http://localhost:9200/keeppam-audit/_search?size=1' | jq .
+```
+
+Хост Linux: при ошибке bootstrap может понадобиться `sudo sysctl -w vm.max_map_count=262144`.
+
+Index template: `deploy/opensearch/index-template.json`. ISM: удаление индексов `keeppam-audit*` через 30d.
+
+## Pull
+
+`GET /api/v1/admin/settings/siem/bulk?limit=200` (`settings.write`) — последние N событий (max 500) NDJSON, курсор не двигается. UI: **Конфиг → SIEM → Скачать ECS bulk**. Аудит `siem.bulk.downloaded`.
+
+## Вне scope
+
+Prod 3-node cluster / mTLS, session_events в индекс, OpenSearch Alerting rules в UI.

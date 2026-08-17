@@ -25,6 +25,7 @@ type aclConstraints struct {
 	AppObjectPackID     *uuid.UUID
 	MaxRisk             int
 	RiskAction          string
+	PIIAction           string
 }
 
 // overlayConstraints fills empty binding fields from a named Policy.
@@ -81,6 +82,9 @@ func overlayConstraints(base aclConstraints, pol aclConstraints, hasPolicy bool)
 		if pol.RiskAction != "" {
 			out.RiskAction = pol.RiskAction
 		}
+	}
+	if out.PIIAction == "" {
+		out.PIIAction = pol.PIIAction
 	}
 	return out
 }

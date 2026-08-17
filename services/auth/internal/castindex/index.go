@@ -3,31 +3,36 @@ package castindex
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/keeppam/auth/internal/guacindex"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
 type Service struct {
-	sess  *sessionsvc.Service
-	store recstore.Store
+	sess       *sessionsvc.Service
+	store      recstore.Store
+	guacencURL string
 }
 
-func New(sess *sessionsvc.Service, store recstore.Store) *Service {
-	return &Service{sess: sess, store: store}
+func New(sess *sessionsvc.Service, store recstore.Store, guacencURL string) *Service {
+	return &Service{sess: sess, store: store, guacencURL: strings.TrimSpace(guacencURL)}
 }
 
 type Result struct {
-	Indexed bool   `json:"indexed"`
-	Source  string `json:"source"`
-	Lines   int    `json:"lines"`
-	Skipped string `json:"skipped,omitempty"`
+	Indexed    bool   `json:"indexed"`
+	Source     string `json:"source"`
+	Lines      int    `json:"lines"`
+	Output     int    `json:"output"`
+	Keystrokes int    `json:"keystrokes,omitempty"`
+	Skipped    string `json:"skipped,omitempty"`
 }
 
-// Index extracts SSH stdin from the asciicast unless PTY JEA already logged commands.
+// Index extracts SSH stdin (unless PTY JEA already logged commands) and stdout from the asciicast.
 func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (Result, error) {
 	if s == nil || s.sess == nil {
 		return Result{Skipped: "unavailable"}, nil
@@ -36,25 +41,48 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	if err != nil {
 		return Result{}, err
 	}
+	if graphicalSession(row) {
+		return s.indexGuac(ctx, sessionID, row, force)
+	}
 	if row.Protocol != "ssh" {
-		return Result{Skipped: "not_ssh"}, nil
+		return Result{Skipped: "unsupported"}, nil
 	}
-	if lines, err := s.sess.ListCommandTranscript(ctx, sessionID); err == nil && ptyLogged(lines) {
-		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
-		return Result{Indexed: true, Source: "pty", Lines: len(lines)}, nil
+	cmdLines, err := s.sess.ListCommandTranscript(ctx, sessionID)
+	if err != nil {
+		return Result{}, err
 	}
-	if !force {
-		if ok, err := s.sess.TranscriptIndexed(ctx, sessionID); err == nil && ok {
-			n, _ := s.sess.ListCommandTranscript(ctx, sessionID)
-			return Result{Indexed: true, Source: "cached", Lines: len(n)}, nil
+	pty := ptyLogged(cmdLines)
+	hasCastCmd := false
+	for _, ln := range cmdLines {
+		if ln.Source == "asciicast" {
+			hasCastCmd = true
+			break
 		}
-	} else {
-		_ = s.sess.DeleteAsciicastCommands(ctx, sessionID)
 	}
+	outN, _ := s.sess.CountOutput(ctx, sessionID)
+	indexed, _ := s.sess.TranscriptIndexed(ctx, sessionID)
+	needCmd := !pty && (force || !hasCastCmd)
+	needOut := force || outN == 0
+	if !force && indexed && !needCmd && !needOut {
+		return Result{Indexed: true, Source: "cached", Lines: len(cmdLines), Output: outN}, nil
+	}
+
+	if force {
+		_ = s.sess.DeleteAsciicastCommands(ctx, sessionID)
+		_ = s.sess.DeleteAsciicastOutput(ctx, sessionID)
+		needCmd = !pty
+		needOut = true
+	}
+
 	if row.RecordingPath == "" {
 		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
-		return Result{Indexed: true, Skipped: "no_recording"}, nil
+		return s.result(ctx, sessionID, pty, "no_recording")
 	}
+	if !needCmd && !needOut {
+		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+		return s.result(ctx, sessionID, pty, "")
+	}
+
 	if s.store != nil {
 		_ = s.store.EnsureLocal(ctx, row.RecordingPath)
 	}
@@ -63,7 +91,7 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 		return Result{}, err
 	}
 	defer f.Close()
-	lines, err := InputLines(f)
+	inLines, outLines, err := ParseCast(f)
 	if err != nil {
 		return Result{}, err
 	}
@@ -71,17 +99,111 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	if row.StartedAt != nil {
 		base = *row.StartedAt
 	}
-	n := 0
-	for _, ln := range lines {
-		ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
-		payload := map[string]any{"command": ln.Text, "source": "asciicast", "offset": ln.Offset}
-		if err := s.sess.AddEventAt(ctx, sessionID, ts, "command", payload); err != nil {
-			return Result{Lines: n}, err
+	if needCmd {
+		for _, ln := range inLines {
+			ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
+			payload := map[string]any{"command": ln.Text, "source": "asciicast", "offset": ln.Offset}
+			if err := s.sess.AddEventAt(ctx, sessionID, ts, "command", payload); err != nil {
+				return Result{}, err
+			}
 		}
-		n++
+	}
+	if needOut {
+		dlp := contentDLP(row)
+		var piiTotal outputPIIStats
+		piiTotal.kinds = map[string]struct{}{}
+		for _, ln := range outLines {
+			text, skip, st := applyContentDLP(dlp, ln.Text)
+			if skip {
+				mergePIIStats(&piiTotal, st)
+				continue
+			}
+			if st != nil {
+				mergePIIStats(&piiTotal, st)
+			}
+			ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
+			payload := map[string]any{"line": text, "source": "asciicast", "offset": ln.Offset}
+			if err := s.sess.AddEventAt(ctx, sessionID, ts, "output", payload); err != nil {
+				return Result{}, err
+			}
+		}
+		if ev := dlpPayload(&piiTotal, "ssh_stdout"); ev != nil {
+			_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
+		}
 	}
 	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
-	return Result{Indexed: true, Source: "asciicast", Lines: n}, nil
+	return s.result(ctx, sessionID, pty, "")
+}
+
+func (s *Service) result(ctx context.Context, sessionID uuid.UUID, pty bool, skipped string) (Result, error) {
+	cmds, _ := s.sess.ListCommandTranscript(ctx, sessionID)
+	outN, _ := s.sess.CountOutput(ctx, sessionID)
+	src := "asciicast"
+	if pty {
+		src = "pty"
+	}
+	return Result{Indexed: true, Source: src, Lines: len(cmds), Output: outN, Skipped: skipped}, nil
+}
+
+func graphicalSession(row sessionsvc.Session) bool {
+	return row.Protocol == "rdp" || row.Protocol == "vnc" || row.Isolated
+}
+
+func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessionsvc.Session, force bool) (Result, error) {
+	n, _ := s.sess.CountKeystrokes(ctx, sessionID)
+	indexed, _ := s.sess.TranscriptIndexed(ctx, sessionID)
+	if !force && indexed && n > 0 {
+		return Result{Indexed: true, Source: "cached", Keystrokes: n}, nil
+	}
+	if force {
+		_ = s.sess.DeleteGuacKeystrokes(ctx, sessionID)
+	}
+	if row.RecordingPath == "" {
+		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+		return Result{Indexed: true, Source: "guac", Skipped: "no_recording"}, nil
+	}
+	path, err := s.sess.RecordingFile(ctx, sessionID)
+	if err != nil {
+		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+		return Result{Indexed: true, Source: "guac", Skipped: "no_recording"}, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return Result{}, err
+	}
+	defer f.Close()
+	lines, err := guacindex.ParseKeys(f)
+	if err != nil {
+		return Result{}, err
+	}
+	base := row.CreatedAt
+	if row.StartedAt != nil {
+		base = *row.StartedAt
+	}
+	dlp := contentDLP(row)
+	var piiTotal outputPIIStats
+	piiTotal.kinds = map[string]struct{}{}
+	for _, ln := range lines {
+		text, skip, st := applyContentDLP(dlp, ln.Text)
+		if skip {
+			mergePIIStats(&piiTotal, st)
+			continue
+		}
+		if st != nil {
+			mergePIIStats(&piiTotal, st)
+		}
+		ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
+		payload := map[string]any{"line": text, "source": "guac", "offset": ln.Offset}
+		if err := s.sess.AddEventAt(ctx, sessionID, ts, "keystroke", payload); err != nil {
+			return Result{}, err
+		}
+	}
+	if ev := dlpPayload(&piiTotal, "keystroke"); ev != nil {
+		_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
+	}
+	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+	n, _ = s.sess.CountKeystrokes(ctx, sessionID)
+	return Result{Indexed: true, Source: "guac", Keystrokes: n}, nil
 }
 
 func ptyLogged(lines []sessionsvc.TranscriptLine) bool {

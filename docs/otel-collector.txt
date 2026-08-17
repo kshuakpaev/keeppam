@@ -1,0 +1,31 @@
+# KeepPAM: OpenTelemetry Collector
+
+Один процесс в compose между API/SSH-worker и Tempo. Не кластер, не дашборды, не metrics-generator.
+
+## Стенд
+
+```
+API / session-worker  --OTLP HTTP-->  otel-collector:4318  --OTLP HTTP-->  tempo:4318
+```
+
+Grafana по-прежнему читает **Tempo** (`:3200`). Collector наружу не публикуется.
+
+| Env | Смысл |
+|-----|--------|
+| `KEEPPAM_OTEL_ENDPOINT` | OTLP HTTP ingest (стенд: `http://otel-collector:4318`) |
+| `KEEPPAM_OTEL_ENV` | `deployment.environment` на SDK (стенд: `stand`) |
+
+Пустой endpoint — трейсы выкл. Прямо в Tempo по-прежнему можно: `http://tempo:4318`.
+
+Конфиг: `deploy/otel-collector/config.yaml` — batch + `service.namespace=keeppam`. Image `otel/opentelemetry-collector:0.109.0`.
+
+## Что в traces
+
+- HTTP spans API (`keeppam-api`), без `/healthz` `/metrics` WebSocket.
+- SSH: span `ssh.session` на worker (`keeppam-ssh`) — `session.id`, `session.protocol`, `keeppam.asset`. Без паролей и тел.
+
+Конфигурация → Инфраструктура: `otel_via=collector|tempo|jaeger|otlp|off`.
+
+## Вне scope
+
+Fan-out в Jaeger (профиль `jaeger` как раньше). Service graph / metrics-generator. Collector HA. Spans на SQL/Redis/k8s upstream. OCR кадра.

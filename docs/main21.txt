@@ -14,12 +14,32 @@
 ~~Пауза SSH PTY до approve — Command Risk require_approval ждёт 60с.~~
 ~~Полнотекст SSH stdin — PTY-журнал + индекс asciicast (не OCR/RDP).~~
 ~~Network PAM — SSH egress allowlist (`direct-tcpip` / `-L`), не firewall.~~
+~~Контентный DLP — PII-паттерны в SQL/HTTP (mask/deny), не классификатор.~~
+~~PDF для аудитора — export compliance-отчёта (`format=pdf`), не PAdES.~~
+~~Полнотекст SSH stdout — индекс `o` из asciicast (тип `output`), не OCR/RDP.~~
+~~OpenSearch — ECS + `_bulk` HTTP (не кластер в compose).~~
+~~Клавиши RDP/VNC — opcode `key` из `.guac` (не OCR видео).~~
+~~PAdES-B-B — подпись compliance-PDF (`ETSI.CAdES.detached`), не TSA/LTV.~~
+~~PAdES-B-T — RFC3161 timestamp token (`KEEPPAM_PDF_TSA_URL`), не LTV/OCSP.~~
+~~PAdES-B-LT — DSS certs/OCSP/CRL (`KEEPPAM_PDF_LTV` + TSA), не B-LTA/qualified.~~
+~~PAdES-B-LTA — archive document timestamp (`KEEPPAM_PDF_LTA` + LTV), не qualified eIDAS.~~
+~~OTEL Collector — один процесс в compose, API/SSH → Tempo (не кластер/дашборды).~~
+~~OCR кадра RDP/VNC — guacenc + Tesseract, тип `screen_text` (не полное видео).~~
+~~PII в SSH stdout — mask/deny при индексе `output` (те же паттерны, не live).~~
+~~Firewall PAM — pam_only + gateway CIDR export (iptables/nft) + блок forward на сервисный порт pam-only актива.~~
+~~Firewall PAM статус — gaps, firewall_applied_at, Ansible export, compliance control.~~
+~~Firewall PAM probe/AWX — drift TCP probe, DB-forward block, AWX launch + auto-push.~~
+~~Firewall PAM probe-agent — compose-сервис + scheduled probe.~~
+~~DLP custom regex — Policy `dlp_patterns` + PII в keystroke/OCR.~~
+~~Shell live deny — PTY блок destructive/firewall/user/chmod777 при max_risk=0; pipes + bash -c.~~
+~~OpenSearch stand — compose single-node + Dashboards + index template/ISM.~~
+~~Firewall probe multi-agent — segments, quorum, health (не NAC).~~
 Сознательно большие / не PAM-MVP:
 
-Полнотекст вывода asciicast и RDP/видео
-Network PAM как firewall / NAC
-Контентный DLP / PII в потоке
+Полнотекст RDP/видео (каждый кадр / live OCR)
+Network PAM как NAC-клиент / VLAN controller
+Полный DLP-классификатор / NLP (свои regex — см. `071`)
 Отдельный движок правил на каждый протокол (единый Policy уже есть)
-Полный shell AST
-OTEL Collector, OpenSearch, PDF для аудитора
-Если скажете «дальше» — логичный следующий из крупного списка: контентный DLP (узкий: PII-паттерны в SQL/HTTP, не полный классификатор). Остальное — ещё больше.
+Полный shell AST / heredoc / `$()`
+OpenSearch prod 3-node / mTLS, квалифицированная подпись eIDAS, Collector HA
+Очередь срезов этого масштаба закрыта. Дальше — только заведомо большее (полное видео OCR, NAC-клиент, …).

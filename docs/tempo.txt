@@ -1,28 +1,29 @@
 # KeepPAM: Tempo (OTLP traces)
 
-Стенд шлёт HTTP spans в **Grafana Tempo**, не в Jaeger. Collector в compose нет: API → OTLP HTTP `:4318` напрямую.
+Стенд: API и SSH-worker шлют HTTP spans в **OpenTelemetry Collector**, тот — в **Grafana Tempo**. Collector — `docs/otel-collector.txt`.
 
 ## Compose
 
 | Сервис | Порт | Роль |
 |--------|------|------|
+| `otel-collector` | внутри `:4318` OTLP HTTP | batch + resource attrs → Tempo |
 | `tempo` | `:3200` (API), внутри `:4318` OTLP HTTP | хранение traces (local WAL/blocks, 48h) |
 | Grafana | `:3001` | datasource **Tempo** (`keeppam-tempo`) |
 
-API: `KEEPPAM_OTEL_ENDPOINT=http://tempo:4318` (пусто = трейсы выкл).
+API/worker: `KEEPPAM_OTEL_ENDPOINT=http://otel-collector:4318` (пусто = трейсы выкл).
 
 Jaeger all-in-one больше не в default stack. Вернуть: `docker compose --profile jaeger up -d jaeger` и переключить endpoint на `http://jaeger:4318` (UI `:16686`).
 
 ## UI
 
-- Grafana Explore → Tempo; TraceQL `{ resource.service.name = "keeppam-api" }`
+- Grafana Explore → Tempo; TraceQL `{ resource.service.name = "keeppam-api" }` или `keeppam-ssh`
 - Аналитика → ссылка «traces»
-- Конфигурация → Инфраструктура: `otel`
+- Конфигурация → Инфраструктура: `otel` / `otel_via`
 
 `/healthz`, `/metrics`, WebSocket по-прежнему без spans. Тела и секреты в spans не пишутся.
 
 ## Не входит
 
-- OpenTelemetry Collector (fan-out Tempo+Jaeger)
+- Collector HA / несколько реплик
 - metrics-generator / service graph в Prometheus
 - spans на SQL/Redis/k8s upstream

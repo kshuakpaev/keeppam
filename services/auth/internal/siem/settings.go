@@ -31,7 +31,9 @@ type Settings struct {
 	NATSSubject          string     `json:"nats_subject"`
 	NATSToken            string     `json:"nats_token,omitempty"` // write-only
 	HasNATSToken         bool       `json:"has_nats_token"`
-	Format               string     `json:"format"` // json|cef
+	OpenSearchURL        string     `json:"opensearch_url"`
+	OpenSearchIndex      string     `json:"opensearch_index"`
+	Format               string     `json:"format"` // json|cef|ecs
 	BatchSize            int        `json:"batch_size"`
 	PollIntervalSec      int        `json:"poll_interval_sec"`
 	CursorTS             *time.Time `json:"cursor_ts,omitempty"`
@@ -53,7 +55,7 @@ func New(db *store.DB, aud *audit.Service, env *crypto.Envelope) *Service {
 
 func validTransport(t string) bool {
 	switch t {
-	case "off", "syslog_udp", "syslog_tcp", "webhook", "kafka", "nats":
+	case "off", "syslog_udp", "syslog_tcp", "webhook", "kafka", "nats", "opensearch":
 		return true
 	default:
 		return false
@@ -69,13 +71,15 @@ func (s *Service) Get(ctx context.Context) (Settings, []byte, error) {
 			webhook_url, webhook_auth_header_enc, format, batch_size, poll_interval_sec,
 			cursor_ts, cursor_id, last_error, last_export_at, updated_at,
 			COALESCE(kafka_brokers,''), COALESCE(kafka_topic,''), COALESCE(kafka_username,''), kafka_password_enc,
-			COALESCE(nats_url,''), COALESCE(nats_subject,''), nats_token_enc
+			COALESCE(nats_url,''), COALESCE(nats_subject,''), nats_token_enc,
+			COALESCE(opensearch_url,''), COALESCE(opensearch_index,'keeppam-audit')
 		FROM siem_settings WHERE id=1`).Scan(
 		&out.Enabled, &out.Transport, &out.SyslogAddr, &out.SyslogTag, &out.SyslogFacility,
 		&out.WebhookURL, &authEnc, &out.Format, &out.BatchSize, &out.PollIntervalSec,
 		&out.CursorTS, &out.CursorID, &out.LastError, &out.LastExportAt, &updatedAt,
 		&out.KafkaBrokers, &out.KafkaTopic, &out.KafkaUsername, &kafkaEnc,
 		&out.NATSURL, &out.NATSSubject, &natsEnc,
+		&out.OpenSearchURL, &out.OpenSearchIndex,
 	)
 	if err != nil {
 		return Settings{}, nil, err
@@ -104,7 +108,7 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in Settings, ip
 	if format == "" {
 		format = "json"
 	}
-	if format != "json" && format != "cef" {
+	if format != "json" && format != "cef" && format != "ecs" {
 		return Settings{}, fmt.Errorf("invalid format")
 	}
 	batch := in.BatchSize
@@ -139,13 +143,21 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in Settings, ip
 	}
 	kafkaBrokers := strings.TrimSpace(in.KafkaBrokers)
 	natsURL := strings.TrimSpace(in.NATSURL)
+	osURL := strings.TrimSpace(in.OpenSearchURL)
+	osIndex := NormalizeIndex(in.OpenSearchIndex)
 
 	enabled := in.Enabled && transport != "off"
+	if transport == "opensearch" {
+		format = "ecs"
+	}
 	if enabled && transport == "kafka" && len(splitBrokers(kafkaBrokers)) == 0 {
 		return Settings{}, fmt.Errorf("kafka_brokers required")
 	}
 	if enabled && transport == "nats" && natsURL == "" {
 		return Settings{}, fmt.Errorf("nats_url required")
+	}
+	if enabled && transport == "opensearch" && osURL == "" {
+		return Settings{}, fmt.Errorf("opensearch_url required")
 	}
 
 	if strings.TrimSpace(in.WebhookAuthHeader) != "" {
@@ -180,12 +192,13 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in Settings, ip
 			webhook_url=$7, webhook_auth_header_enc=$8, format=$9, batch_size=$10, poll_interval_sec=$11,
 			kafka_brokers=$12, kafka_topic=$13, kafka_username=$14, kafka_password_enc=$15,
 			nats_url=$16, nats_subject=$17, nats_token_enc=$18,
-			updated_at=NOW(), updated_by=$19
+			opensearch_url=$19, opensearch_index=$20,
+			updated_at=NOW(), updated_by=$21
 		WHERE id=$1`,
 		1, enabled, transport, strings.TrimSpace(in.SyslogAddr), tag, facility,
 		strings.TrimSpace(in.WebhookURL), authEnc, format, batch, poll,
 		kafkaBrokers, kafkaTopic, strings.TrimSpace(in.KafkaUsername), kafkaEnc,
-		natsURL, natsSubj, natsEnc, actorID)
+		natsURL, natsSubj, natsEnc, osURL, osIndex, actorID)
 	if err != nil {
 		return Settings{}, err
 	}

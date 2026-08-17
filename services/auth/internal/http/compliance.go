@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,6 +20,7 @@ func (s *Server) handleComplianceReport(w http.ResponseWriter, r *http.Request) 
 		From:      q.Get("from"),
 		To:        q.Get("to"),
 		Framework: q.Get("framework"),
+		Format:    q.Get("format"),
 	}
 	if v := q.Get("days"); v != "" {
 		if n, err := parseInt(v); err == nil {
@@ -35,12 +37,23 @@ func (s *Server) handleComplianceReport(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if strings.EqualFold(q.Get("format"), "csv") {
+	switch strings.ToLower(q.Get("format")) {
+	case "csv":
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="keeppam-compliance.csv"`)
 		if err := compliance.WriteReportCSV(w, rep); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 		}
+		return
+	case "pdf":
+		var buf bytes.Buffer
+		if err := s.compliance.WritePDF(&buf, rep); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", `attachment; filename="keeppam-compliance.pdf"`)
+		_, _ = w.Write(buf.Bytes())
 		return
 	}
 	writeJSON(w, http.StatusOK, rep)

@@ -5,3 +5,5 @@ dist/
 .DS_Store
 deploy/auth-server
 deploy/sbom/
+deploy/pades/key.pem
+deploy/pades/cert.pem

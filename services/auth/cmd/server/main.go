@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/fips"
+	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
@@ -35,6 +38,7 @@ import (
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
+	"github.com/keeppam/auth/internal/pades"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/scim"
@@ -78,7 +82,11 @@ func main() {
 	cfg.DataKey = key
 	cfg.DataKeySource = kp.Source()
 
-	traceStop, err := obs.InitTracing(context.Background(), cfg.OTELEndpoint, "keeppam-api")
+	svcName := "keeppam-api"
+	if cfg.Mode == "ssh" {
+		svcName = "keeppam-ssh"
+	}
+	traceStop, err := obs.InitTracing(context.Background(), cfg.OTELEndpoint, svcName)
 	if err != nil {
 		slog.Error("tracing", "err", err)
 		os.Exit(1)
@@ -89,7 +97,7 @@ func main() {
 		_ = traceStop(c)
 	}()
 	if cfg.OTELEndpoint != "" {
-		slog.Info("tracing otlp", "endpoint", obs.NormalizeOTLPEndpoint(cfg.OTELEndpoint))
+		slog.Info("tracing otlp", "endpoint", obs.NormalizeOTLPEndpoint(cfg.OTELEndpoint), "via", obs.OTELVia(cfg.OTELEndpoint), "service", svcName)
 	}
 
 	recStore, err := recstore.NewFromEnv(cfg.RecordingsDir)
@@ -146,6 +154,7 @@ func main() {
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
 	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
+	firewallSvc := firewall.New(db, auditSvc, env)
 	notifySvc := notify.New(db, auditSvc, env)
 	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
 	usersSvc := users.New(db, auditSvc)
@@ -171,12 +180,26 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
-	castIdx := castindex.New(sessSvc, recStore)
+	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
 	live := sessionsvc.NewLiveHub(sessions.Redis())
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
 	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
+	if cfg.PDFCertFile != "" {
+		sig, err := pades.Load(cfg.PDFCertFile, cfg.PDFKeyFile)
+		if err != nil {
+			slog.Error("pades signer", "err", err)
+			os.Exit(1)
+		}
+		sig.TSAURL = cfg.PDFTSAURL
+		sig.LTV = cfg.PDFLTV
+		sig.LTVDir = cfg.PDFLTVDir
+		sig.LTVFetch = cfg.PDFLTVFetch
+		sig.LTA = cfg.PDFLTA
+		complianceSvc.SetPDFSigner(sig)
+		slog.Info("pades signer", "cn", sig.CN(), "profile", sig.Profile(), "tsa", cfg.PDFTSAURL != "", "ltv", cfg.PDFLTV, "lta", cfg.PDFLTA)
+	}
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
@@ -206,8 +229,11 @@ func main() {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
 			}
 		}
-		if protocol == "ssh" {
+		if protocol == "ssh" || protocol == "rdp" || protocol == "vnc" || protocol == "https" {
 			castIdx.IndexAsync(id)
+			if protocol == "rdp" || protocol == "vnc" || protocol == "https" {
+				castIdx.IndexOCRAsync(id)
+			}
 		}
 	})
 	ensureEph := func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (assets.TargetCreds, string, error) {
@@ -252,6 +278,22 @@ func main() {
 				}
 				return policy.MaskSQLResult(p, cols, rows)
 			},
+			FilterRows: func(cols []string, rows [][]string) ([][]string, error) {
+				dlp := row.PolicySnapshot.ContentDLP()
+				out, deny, kinds := policy.ApplyContentDLPRows(dlp, rows)
+				if deny {
+					return rows, fmt.Errorf("%w: %s", dbproxy.ErrPIIContent, strings.Join(kinds, ","))
+				}
+				if len(kinds) > 0 {
+					_ = sessSvc.AddEvent(ctx, sessionID, "dlp", map[string]any{
+						"action": "mask", "kinds": kinds, "via": "wire",
+					})
+					_ = auditSvc.Record(ctx, &row.UserID, "session.dlp.masked", "session", sessionID.String(), "", "dbwire", map[string]any{
+						"kinds": kinds,
+					})
+				}
+				return out, nil
+			},
 			MaxRows: policy.SQLRowLimit(p, hp),
 			DLPDeny: policy.SQLDLPDeny(p, hp),
 		}, nil
@@ -263,6 +305,9 @@ func main() {
 
 	go live.Listen(runCtx)
 	go auditSvc.RunSealer(runCtx)
+	if runHTTP {
+		go firewallSvc.RunProbeScheduler(runCtx)
+	}
 
 	if runHTTP {
 		if err := authSvc.Bootstrap(ctx); err != nil {
@@ -324,7 +369,7 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -412,7 +457,7 @@ func main() {
 	}
 
 	if runSSH {
-		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc)
+		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := gw.ListenAndServe(); err != nil {

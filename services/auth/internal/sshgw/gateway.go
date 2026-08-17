@@ -26,7 +26,9 @@ import (
 	"github.com/keeppam/auth/internal/auth"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/device"
+	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/itsm"
+	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
@@ -47,7 +49,12 @@ type Gateway struct {
 	live        *sessionsvc.LiveHub
 	itsm        *itsm.Service
 	ops         *opapprove.Service
+	firewall    *firewall.Service
 	conns       sync.Map // *ssh.ServerConn → *sshConnState
+
+	targetsMu sync.RWMutex
+	targets   []firewall.Target
+	targetsAt time.Time
 }
 
 const maxEgressForwards = 8
@@ -70,11 +77,13 @@ func New(
 	live *sessionsvc.LiveHub,
 	itsmSvc *itsm.Service,
 	opsSvc *opapprove.Service,
+	firewallSvc *firewall.Service,
 ) *Gateway {
 	return &Gateway{
 		addr: addr, hostKeyPath: hostKeyPath,
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
 		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc, ops: opsSvc,
+		firewall: firewallSvc,
 	}
 }
 
@@ -233,6 +242,15 @@ func (g *Gateway) handleDirectTCPIP(sc *ssh.ServerConn, newCh ssh.NewChannel) {
 		return
 	}
 
+	if reason, deny := g.pamOnlyForwardBlocked(host, port, snap); deny {
+		_ = newCh.Reject(ssh.Prohibited, reason)
+		g.auditEgress(sc, userID, sessID, "session.egress.denied", host, port, reason)
+		_ = g.sessions.AddEvent(context.Background(), sessID, "egress_denied", map[string]any{
+			"host": host, "port": port, "reason": reason, "via": "firewall_pam",
+		})
+		return
+	}
+
 	n := atomic.AddInt32(&st.forwards, 1)
 	if n > maxEgressForwards {
 		atomic.AddInt32(&st.forwards, -1)
@@ -290,6 +308,37 @@ func (g *Gateway) handleDirectTCPIP(sc *ssh.ServerConn, newCh ssh.NewChannel) {
 	_ = conn.Close()
 	_ = ch.Close()
 	<-done
+}
+
+func (g *Gateway) pamOnlyForwardBlocked(host string, port int, snap policy.Snapshot) (string, bool) {
+	if snap.BreakGlass || snap.AdminBypass || g.firewall == nil {
+		return "", false
+	}
+	targets := g.loadFirewallTargets()
+	return firewall.PamOnlyForwardBlocked(host, port, targets)
+}
+
+func (g *Gateway) loadFirewallTargets() []firewall.Target {
+	g.targetsMu.RLock()
+	if time.Since(g.targetsAt) < time.Minute && g.targets != nil {
+		t := g.targets
+		g.targetsMu.RUnlock()
+		return t
+	}
+	g.targetsMu.RUnlock()
+
+	g.targetsMu.Lock()
+	defer g.targetsMu.Unlock()
+	if time.Since(g.targetsAt) < time.Minute && g.targets != nil {
+		return g.targets
+	}
+	list, err := g.firewall.ListTargets(context.Background())
+	if err != nil {
+		return g.targets
+	}
+	g.targets = list
+	g.targetsAt = time.Now()
+	return g.targets
 }
 
 func (g *Gateway) auditEgress(sc *ssh.ServerConn, userID, sessionID uuid.UUID, action, host string, port int, reason string) {
@@ -605,6 +654,8 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	defer bridge.Close()
 
 	_ = g.sessions.MarkActive(ctx, pamSess.ID)
+	ctx, endSpan := obs.StartSessionSpan(ctx, "ssh", pamSess.ID.String(), chosen.AssetName)
+	defer endSpan()
 	_ = g.audit.Record(ctx, &userID, "session.started", "session", pamSess.ID.String(), ip, "ssh", map[string]any{
 		"asset": chosen.AssetName, "account": chosen.AccountName, "via": "sshgw",
 	})

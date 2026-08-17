@@ -25,7 +25,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     LD_LIBRARY_PATH=/usr/local/lib
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates ffmpeg python3 \
+    ca-certificates ffmpeg python3 tesseract-ocr tesseract-ocr-eng \
     libcairo2 libjpeg62-turbo libpng16-16 libossp-uuid16 \
     libavcodec59 libavformat59 libavutil57 libswscale6 \
     libpango-1.0-0 libpangocairo-1.0-0 libwebp7 \

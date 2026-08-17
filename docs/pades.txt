@@ -1,0 +1,38 @@
+# KeepPAM: PAdES подпись compliance-PDF
+
+Узкий срез: `format=pdf` подписывается **PAdES-B-B** … **B-LTA** (полная baseline-линейка до archive timestamp), `SubFilter` `ETSI.CAdES.detached` (+ `ETSI.RFC3161` для archive). Не квалифицированная подпись eIDAS.
+
+Без сертификата PDF тот же unsigned export, что раньше.
+
+## Env
+
+| Переменная | Смысл |
+|------------|--------|
+| `KEEPPAM_PDF_CERT_FILE` | PEM X.509 (можно цепочка после leaf) |
+| `KEEPPAM_PDF_KEY_FILE` | PEM RSA private key |
+| `KEEPPAM_PDF_TSA_URL` | HTTP URL TSA — RFC3161 → **B-T**; prerequisite для B-LT/B-LTA |
+| `KEEPPAM_PDF_LTV` | `true` → **B-LT**: DSS в PDF |
+| `KEEPPAM_PDF_LTV_DIR` | (опц.) `certs/`, `ocsp/`, `crl/` — DER/PEM offline |
+| `KEEPPAM_PDF_LTV_FETCH` | `true` (default) — fetch OCSP/CRL из цепочки |
+| `KEEPPAM_PDF_LTA` | `true` → **B-LTA** (требует LTV+TSA): archive document timestamp |
+
+Цепочка: `LTA → LTV → TSA`, cert+key обязательны.
+
+## Профили
+
+| Профиль | CMS подпись | Signature TS | DSS | Document TS |
+|---------|-------------|--------------|-----|-------------|
+| B-B | CAdES-BES | — | — | — |
+| B-T | CAdES-BES | ✓ | — | — |
+| B-LT | CAdES-BES | ✓ | ✓ | — |
+| B-LTA | CAdES-BES | ✓ | ✓ | ✓ (`ETSI.RFC3161`) |
+
+Document timestamp — второй invisible Sig field, TSA imprint по ByteRange всего PDF (кроме hex Contents).
+
+## API / UI
+
+Аудит: `pades=B-B|B-T|B-LT|B-LTA`. Compliance UI показывает профиль из `pdf_pades`.
+
+## Вне scope
+
+Qualified eIDAS, ECDSA, PKCS#11 для PDF-ключа, подпись CSV/JSON, визуальный штамп.

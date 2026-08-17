@@ -1,0 +1,6 @@
+{
+  "attributes": {
+    "title": "keeppam-audit*",
+    "timeFieldName": "@timestamp"
+  }
+}

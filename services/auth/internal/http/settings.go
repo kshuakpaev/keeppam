@@ -115,6 +115,33 @@ func (s *Server) handlePutSIEMSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleSIEMBulk(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parseInt(v); err == nil {
+			limit = n
+		}
+	}
+	events, err := s.siem.Recent(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg, _, _ := s.siem.Get(r.Context())
+	index := "keeppam-audit"
+	if cfg.OpenSearchIndex != "" {
+		index = cfg.OpenSearchIndex
+	}
+	body := siem.EncodeBulk(index, events)
+	_ = s.audit.Record(r.Context(), &sess.UserID, "siem.bulk.downloaded", "siem_settings", "1", s.clientIP(r), r.UserAgent(), map[string]any{
+		"count": len(events), "index": siem.NormalizeIndex(index),
+	})
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="keeppam-audit.ndjson"`)
+	_, _ = w.Write(body)
+}
+
 func (s *Server) handleGetITSMSettings(w http.ResponseWriter, r *http.Request) {
 	if s.itsm == nil {
 		writeErr(w, http.StatusInternalServerError, "itsm not configured")

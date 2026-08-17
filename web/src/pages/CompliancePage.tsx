@@ -222,6 +222,20 @@ export function CompliancePage() {
     }
   }
 
+  async function downloadReportPdf() {
+    setError("");
+    try {
+      await api.downloadComplianceReportPdf({
+        from: reportFrom,
+        to: reportTo,
+        framework: reportFw,
+        limit: 500,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка PDF");
+    }
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -284,6 +298,9 @@ export function CompliancePage() {
         <p className="muted">
           Кто имел доступ, согласовал, подключался, SQL и команды SSH (stdin), скачивания, изменения и отзывы. Не OCR
           RDP.
+          {status?.pdf_signed
+            ? ` PDF подписывается PAdES-${status.pdf_pades || "B-B"} (${status.pdf_signer || "сертификат"}).`
+            : " PDF без подписи, пока не задан KEEPPAM_PDF_CERT_FILE."}
         </p>
         <form
           className="row"
@@ -318,6 +335,14 @@ export function CompliancePage() {
             onClick={() => void downloadReportCsv()}
           >
             CSV
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void downloadReportPdf()}
+          >
+            {status?.pdf_signed ? `PDF (PAdES-${status.pdf_pades || "B-B"})` : "PDF"}
           </button>
         </form>
 

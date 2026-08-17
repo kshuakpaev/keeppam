@@ -13,12 +13,13 @@
 | `framework` | `iso27001` / `pci` / `soc2` / `nist` / `all` (default) |
 | `limit` | строк evidence, default 200, max 500 |
 | `format=csv` | выгрузка evidence |
+| `format=pdf` | тот же отчёт, многостраничный PDF (Helvetica). Если задан `KEEPPAM_PDF_CERT_FILE` — PAdES-B-B / B-T / B-LT (`docs/pades.txt`) |
 
 Окно не длиннее 90 суток. Framework — подписи контролей, не разные SQL.
 
 JSON: `summary` + `snapshot` (live ACL / активные сессии / JIT pending / break-glass / legal holds) + `evidence[]` + `controls[]`.
 
-Аудит генерации: `compliance.report.generated` (без тела evidence).
+Аудит генерации: `compliance.report.generated` (без тела evidence; `format` = json/csv/pdf; для pdf — `signed` / `pades` / `cert_cn`).
 
 ## Категории
 
@@ -36,8 +37,8 @@ JSON: `summary` + `snapshot` (live ACL / активные сессии / JIT pen
 
 ## UI
 
-Страница **Compliance** — карточка «Отчёт за период»: даты, framework, таблица, CSV.
+Страница **Compliance** — карточка «Отчёт за период»: даты, framework, таблица, CSV, PDF (PAdES, если сертификат задан).
 
 ## Вне scope
 
-Полнотекст записей. Профиль поведения пользователя. Отдельный PDF/подписанный пакет для внешнего аудитора.
+Полнотекст записей. Профиль поведения пользователя. Квалифицированная подпись / TSA / LTV (`docs/pades.txt` — только B-B).

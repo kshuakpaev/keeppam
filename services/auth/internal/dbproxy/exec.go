@@ -17,11 +17,11 @@ import (
 )
 
 type QueryResult struct {
-	Columns  []string   `json:"columns"`
-	Rows     [][]string `json:"rows"`
-	RowCount int        `json:"row_count"`
-	Duration int64      `json:"duration_ms"`
-	Truncated bool      `json:"truncated,omitempty"`
+	Columns   []string   `json:"columns"`
+	Rows      [][]string `json:"rows"`
+	RowCount  int        `json:"row_count"`
+	Duration  int64      `json:"duration_ms"`
+	Truncated bool       `json:"truncated,omitempty"`
 }
 
 const defaultMaxRows = 500
@@ -29,6 +29,7 @@ const maxCell = 512
 
 // ErrDLPRowLimit is returned when dlp_action=deny and the result exceeds max_rows.
 var ErrDLPRowLimit = errors.New("sql result exceeds DLP max_rows")
+var ErrPIIContent = errors.New("sql result denied by DLP (PII)")
 
 func effectiveMaxRows(n int) int {
 	if n <= 0 {

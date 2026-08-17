@@ -214,6 +214,7 @@ func (s *Service) opaInput(ctx context.Context, in AccessCheck, userTags []strin
 	}
 	binding["max_risk"] = res.MaxRisk
 	binding["risk_action"] = res.RiskAction
+	binding["pii_action"] = res.PIIAction
 	if res.AllowedNamespaces == nil {
 		binding["allowed_namespaces"] = []string{}
 	} else {

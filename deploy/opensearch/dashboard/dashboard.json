@@ -1,0 +1,24 @@
+{
+  "attributes": {
+    "title": "KeepPAM Audit",
+    "hits": 0,
+    "description": "Audit events exported via SIEM → OpenSearch (ECS)",
+    "panelsJSON": "[{\"version\":\"2.19.0\",\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":14,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{},\"panelRefName\":\"panel_1\"},{\"version\":\"2.19.0\",\"gridData\":{\"x\":0,\"y\":14,\"w\":24,\"h\":14,\"i\":\"2\"},\"panelIndex\":\"2\",\"embeddableConfig\":{},\"panelRefName\":\"panel_2\"}]",
+    "optionsJSON": "{\"useMargins\":true,\"hidePanelTitles\":false}",
+    "version": 1,
+    "timeRestore": true,
+    "timeTo": "now",
+    "timeFrom": "now-24h",
+    "refreshInterval": {
+      "pause": false,
+      "value": 30000
+    },
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"query\":{\"language\":\"kuery\",\"query\":\"\"},\"filter\":[]}"
+    }
+  },
+  "references": [
+    { "name": "panel_1", "type": "visualization", "id": "keeppam-audit-timeline" },
+    { "name": "panel_2", "type": "visualization", "id": "keeppam-audit-actions" }
+  ]
+}

@@ -29,6 +29,29 @@
 
 Без пакета: truncate на 500 строк.
 
+Колонки `mask_columns` — маска по имени колонки, не по содержимому.
+
+## PII в содержимом (узкий)
+
+На ACL / Policy поле `pii_action`: пусто = выкл., `mask`, `deny`. Overlay как у egress: пустое на ACL берётся из Policy. Снимок на connect. Admin bypass (`users.write`) пропускает.
+
+Встроенные паттерны:
+
+| Kind | Что |
+|------|-----|
+| `email` | адрес |
+| `pan` | карта 13–19 цифр + Luhn (Visa/MC/MIR/Amex) |
+| `phone` | `+` / `8` и 11–15 цифр |
+| `snils` | `XXX-XXX-XXX XX` |
+
+**Свои regex** на именованной Policy (`dlp_patterns`, миграция `071`): до 16 правил, имя `[a-z][a-z0-9_]{0,31}`, RE2. UI: JEA → Policy → textarea «имя regex». Kind в audit = имя правила.
+
+Где: ячейки SQL (web-консоль и native wire); тело HTTPS reverse-proxy; **SSH stdout** (индекс `output`); **keystroke** RDP/VNC (guac); **screen_text** OCR. RDP / k8s body — нет.
+
+Аудит: `session.dlp.masked` / `session.dlp.denied` (только kinds) — SQL, HTTPS, native wire. **SSH stdout / keystroke / OCR:** событие `dlp` при индексе (`via`: `ssh_stdout`, `keystroke`, `screen_text`).
+
+Миграции `065`, `071`. UI: карточка актива и JEA → Policy.
+
 ## RDP / VNC (Guacamole)
 
 Для `rdp`: `disable-copy=true`, `enable-drive=false`, `enable-printing=false` (clipboard/drive/printer). Для `vnc`: `disable-copy=true`. USB не пробрасывается.
@@ -39,4 +62,4 @@
 
 ## Вне scope
 
-Полноценный контентный DLP (классификация PII в потоке), clipboard RDP на уровне протокола без guacd, интерактивный scp без JEA-пакета.
+Полноценный классификатор PII/NLP, clipboard RDP без guacd, интерактивный scp без JEA-пакета, live PII в stdout до индекса.

@@ -45,4 +45,4 @@ Forensic-поиск по умолчанию включает эти типы. UI
 
 ## Вне scope
 
-Полноценный firewall / «запретить прямой доступ в обход PAM». Ephemeral assets из CIDR без регистрации. Remote listen (`-R`). HTTP/k8s port-forward. MITM TLS. Контентный DLP в потоке.
+Ephemeral assets из CIDR без регистрации. Remote listen (`-R`). HTTP/k8s port-forward. MITM TLS. Контентный DLP в потоке. Perimeter firewall — см. `docs/firewall-pam.txt` (экспорт + pam_only forward block).

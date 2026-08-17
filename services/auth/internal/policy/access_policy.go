@@ -39,6 +39,8 @@ type AccessPolicy struct {
 	AppObjectPackName     string     `json:"app_object_pack_name,omitempty"`
 	MaxRisk               int        `json:"max_risk"`
 	RiskAction            string     `json:"risk_action"`
+	PIIAction             string       `json:"pii_action"`
+	DlpPatterns           []DlpPattern `json:"dlp_patterns"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
@@ -63,6 +65,8 @@ type AccessPolicyInput struct {
 	AppObjectPackID     *uuid.UUID `json:"app_object_pack_id"`
 	MaxRisk             int        `json:"max_risk"`
 	RiskAction          string     `json:"risk_action"`
+	PIIAction           string       `json:"pii_action"`
+	DlpPatterns         []DlpPattern `json:"dlp_patterns"`
 }
 
 func (s *Service) ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error) {
@@ -77,6 +81,9 @@ func (s *Service) ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error
 		if err != nil {
 			return nil, err
 		}
+		if err := s.attachDlpPatterns(ctx, &p); err != nil {
+			return nil, err
+		}
 		out = append(out, p)
 	}
 	if out == nil {
@@ -87,7 +94,14 @@ func (s *Service) ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error
 
 func (s *Service) GetAccessPolicy(ctx context.Context, id uuid.UUID) (AccessPolicy, error) {
 	row := s.db.Pool.QueryRow(ctx, accessPolicySelect+" WHERE p.id=$1", id)
-	return scanAccessPolicy(row)
+	p, err := scanAccessPolicy(row)
+	if err != nil {
+		return AccessPolicy{}, err
+	}
+	if err := s.attachDlpPatterns(ctx, &p); err != nil {
+		return AccessPolicy{}, err
+	}
+	return p, nil
 }
 
 func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in AccessPolicyInput, ip, ua string) (AccessPolicy, error) {
@@ -102,14 +116,17 @@ func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in 
 			required_tags, require_ticket, require_reason,
 			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress,
 			command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id,
-			max_risk, risk_action, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW(),NOW(),$21)`,
+			max_risk, risk_action, pii_action, created_at, updated_at, created_by)
+		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW(),NOW(),$22)`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction, actorID)
+		norm.maxRisk, norm.riskAction, norm.piiAction, actorID)
 	if err != nil {
+		return AccessPolicy{}, err
+	}
+	if err := s.ReplaceDlpPatterns(ctx, id, in.DlpPatterns); err != nil {
 		return AccessPolicy{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "access.policy.created", "access_policy", id.String(), ip, ua, map[string]any{
@@ -149,15 +166,20 @@ func (s *Service) UpdateAccessPolicy(ctx context.Context, actorID, id uuid.UUID,
 			required_tags=$7, require_ticket=$8, require_reason=$9,
 			allowed_cidrs=$10, allowed_countries=$11, allowed_devices=$12, allowed_namespaces=$13, allowed_egress=$14,
 			command_policy_pack_id=$15, sql_policy_pack_id=$16, http_policy_pack_id=$17, app_object_pack_id=$18,
-			max_risk=$19, risk_action=$20, updated_at=NOW()
+			max_risk=$19, risk_action=$20, pii_action=$21, updated_at=NOW()
 		WHERE id=$1`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction)
+		norm.maxRisk, norm.riskAction, norm.piiAction)
 	if err != nil {
 		return AccessPolicy{}, err
+	}
+	if in.DlpPatterns != nil {
+		if err := s.ReplaceDlpPatterns(ctx, id, in.DlpPatterns); err != nil {
+			return AccessPolicy{}, err
+		}
 	}
 	_ = s.aud.Record(ctx, &actorID, "access.policy.updated", "access_policy", id.String(), ip, ua, map[string]any{
 		"name": norm.name,
@@ -187,7 +209,7 @@ const accessPolicySelect = `
 			p.sql_policy_pack_id, COALESCE(sp.name,''),
 			p.http_policy_pack_id, COALESCE(hp.name,''),
 			p.app_object_pack_id, COALESCE(ao.name,''),
-			p.max_risk, p.risk_action, p.created_at, p.updated_at
+			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), p.created_at, p.updated_at
 		FROM access_policies p
 		LEFT JOIN command_policy_packs cp ON cp.id = p.command_policy_pack_id
 		LEFT JOIN sql_policy_packs sp ON sp.id = p.sql_policy_pack_id
@@ -203,7 +225,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 		&cidrs, &countries, &devices, &namespaces, &egress,
 		&p.CommandPolicyPackID, &cmdName, &p.SQLPolicyPackID, &sqlName, &p.HTTPPolicyPackID, &httpName,
 		&p.AppObjectPackID, &appName,
-		&p.MaxRisk, &p.RiskAction, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
@@ -226,7 +248,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 }
 
 type normalizedPolicy struct {
-	name, description, riskAction                       string
+	name, description, riskAction, piiAction            string
 	timeStart, timeEnd                                  *string
 	days, maxRisk                                       int
 	tags, cidrs, countries, devices, namespaces, egress []string
@@ -275,8 +297,12 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 	if err != nil {
 		return normalizedPolicy{}, err
 	}
+	piiAction, err := NormalizePIIAction(in.PIIAction)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
 	return normalizedPolicy{
-		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction,
+		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction, piiAction: piiAction,
 		timeStart: in.TimeStart, timeEnd: in.TimeEnd, days: days, maxRisk: in.MaxRisk,
 		tags: normalizeTags(in.RequiredTags), cidrs: cidrs, countries: countries,
 		devices: devices, namespaces: namespaces, egress: egress,

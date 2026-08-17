@@ -96,6 +96,14 @@ func (s *Service) exportOnce(ctx context.Context, cfg Settings, authEnc []byte) 
 		if err := s.sendNATS(ctx, cfg, tok, events); err != nil {
 			return 0, err
 		}
+	case "opensearch":
+		auth, err := s.DecryptAuth(authEnc)
+		if err != nil {
+			return 0, err
+		}
+		if err := s.sendOpenSearch(ctx, cfg, auth, events); err != nil {
+			return 0, err
+		}
 	default:
 		return 0, fmt.Errorf("transport %q disabled", cfg.Transport)
 	}
@@ -146,6 +154,47 @@ func (s *Service) fetchAfter(ctx context.Context, ts *time.Time, id *uuid.UUID, 
 	return out, rows.Err()
 }
 
+// Recent returns the newest audit events (does not move the SIEM cursor).
+func (s *Service) Recent(ctx context.Context, limit int) ([]store.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, ts, actor_id, action, resource_type, resource_id, ip, user_agent, payload, prev_hash, hash
+		FROM audit_events ORDER BY ts DESC, id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var newest []store.AuditEvent
+	for rows.Next() {
+		var e store.AuditEvent
+		var payload []byte
+		if err := rows.Scan(&e.ID, &e.TS, &e.ActorID, &e.Action, &e.ResourceType, &e.ResourceID,
+			&e.IP, &e.UserAgent, &payload, &e.PrevHash, &e.Hash); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(payload, &e.Payload)
+		if e.Payload == nil {
+			e.Payload = map[string]any{}
+		}
+		newest = append(newest, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(newest)-1; i < j; i, j = i+1, j-1 {
+		newest[i], newest[j] = newest[j], newest[i]
+	}
+	if newest == nil {
+		newest = []store.AuditEvent{}
+	}
+	return newest, nil
+}
+
 func (s *Service) sendSyslog(ctx context.Context, network string, cfg Settings, events []store.AuditEvent) error {
 	if strings.TrimSpace(cfg.SyslogAddr) == "" {
 		return fmt.Errorf("syslog_addr required")
@@ -181,7 +230,7 @@ func (s *Service) sendWebhook(ctx context.Context, cfg Settings, authHeader stri
 	body, err := json.Marshal(map[string]any{
 		"source": "keeppam",
 		"count":  len(events),
-		"events": events,
+		"events": webhookEvents(cfg.Format, events),
 	})
 	if err != nil {
 		return err
@@ -213,7 +262,61 @@ func (s *Service) sendWebhook(ctx context.Context, cfg Settings, authHeader stri
 	return nil
 }
 
+func webhookEvents(format string, events []store.AuditEvent) any {
+	if format != "ecs" {
+		return events
+	}
+	out := make([]map[string]any, len(events))
+	for i, e := range events {
+		out[i] = EventECS(e)
+	}
+	return out
+}
+
+func (s *Service) sendOpenSearch(ctx context.Context, cfg Settings, authHeader string, events []store.AuditEvent) error {
+	u := bulkURL(cfg.OpenSearchURL)
+	if u == "" {
+		return fmt.Errorf("opensearch_url required")
+	}
+	body := EncodeBulk(cfg.OpenSearchIndex, events)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("User-Agent", "KeepPAM-SIEM/1.0")
+	if authHeader != "" {
+		if strings.Contains(authHeader, ":") {
+			parts := strings.SplitN(authHeader, ":", 2)
+			req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		} else {
+			req.Header.Set("Authorization", authHeader)
+		}
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("opensearch status %d", resp.StatusCode)
+	}
+	var parsed struct {
+		Errors bool `json:"errors"`
+	}
+	if json.Unmarshal(raw, &parsed) == nil && parsed.Errors {
+		return fmt.Errorf("opensearch bulk item errors")
+	}
+	return nil
+}
+
 func formatEvent(format string, e store.AuditEvent) string {
+	if format == "ecs" {
+		b, _ := json.Marshal(EventECS(e))
+		return string(b)
+	}
 	if format == "cef" {
 		actor := ""
 		if e.ActorID != nil {

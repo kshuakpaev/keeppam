@@ -30,6 +30,8 @@ type Snapshot struct {
 	MatchMode             string     `json:"match_mode,omitempty"`
 	BreakGlass            bool       `json:"break_glass,omitempty"`
 	AdminBypass           bool       `json:"admin_bypass,omitempty"`
+	PIIAction             string       `json:"pii_action,omitempty"`
+	DlpPatterns           []DlpPattern `json:"dlp_patterns,omitempty"`
 }
 
 func FromResult(ev AccessResult) Snapshot {
@@ -60,7 +62,12 @@ func FromResult(ev AccessResult) Snapshot {
 		TagACL:              ev.TagACL,
 		MatchTags:           tags,
 		MatchMode:           ev.MatchMode,
+		PIIAction:           ev.PIIAction,
 	}
+}
+
+func (sn *Snapshot) EffectiveContentDLP() ContentDLP {
+	return sn.ContentDLP()
 }
 
 func (sn Snapshot) toResult() AccessResult {
@@ -80,6 +87,7 @@ func (sn Snapshot) toResult() AccessResult {
 		TagACL:              sn.TagACL,
 		MatchTags:           sn.MatchTags,
 		MatchMode:           sn.MatchMode,
+		PIIAction:           sn.PIIAction,
 	}
 }
 
@@ -89,6 +97,13 @@ func (s *Service) Freeze(ctx context.Context, ev AccessResult, breakGlass, admin
 	sn.AdminBypass = adminBypass
 	s.EnrichSnapshot(ctx, &sn)
 	return sn
+}
+
+func (sn *Snapshot) EffectivePIIAction() string {
+	if sn == nil || sn.AdminBypass {
+		return ""
+	}
+	return sn.PIIAction
 }
 
 func (s *Service) EnrichSnapshot(ctx context.Context, sn *Snapshot) {
@@ -110,4 +125,5 @@ func (s *Service) EnrichSnapshot(ctx context.Context, sn *Snapshot) {
 	if sn.AppObjectPackID != nil && sn.AppObjectPackName == "" {
 		_ = s.db.Pool.QueryRow(ctx, `SELECT name FROM app_object_packs WHERE id=$1`, *sn.AppObjectPackID).Scan(&sn.AppObjectPackName)
 	}
+	s.loadDlpPatternsForSnapshot(ctx, sn)
 }

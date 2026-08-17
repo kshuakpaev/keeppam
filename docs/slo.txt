@@ -9,15 +9,16 @@ In-process метрики + снимок SLO + Prometheus / Alertmanager / Grafa
 3. Карточка **SLO** на странице Аналитика.
 4. Compose: Prometheus `:9090`, Alertmanager `:9093`, Grafana `:3001`, Tempo `:3200`.
 5. `POST /api/v1/alerts/webhook` — Alertmanager → inbox (`audit.read`) + аудит `obs.alert`. Bearer `KEEPPAM_ALERT_WEBHOOK_TOKEN` (пусто = webhook выключен).
-6. OpenTelemetry traces: HTTP spans → OTLP HTTP (`KEEPPAM_OTEL_ENDPOINT`, пусто = выкл). `/healthz`, `/metrics` и WebSocket не трейсятся. Тела запросов и секреты в spans не пишутся. См. `docs/tempo.txt`.
+6. OpenTelemetry traces: HTTP spans API + `ssh.session` на worker → OTLP HTTP через Collector (`docs/otel-collector.txt`). `/healthz`, `/metrics` и WebSocket не трейсятся. Тела и секреты в spans не пишутся.
 
 Стенд:
 
 - Grafana: http://localhost:3001 (anonymous Viewer; admin / `ChangeMeNow!1`) — Prometheus + Tempo
 - Prometheus: http://localhost:9090
 - Alertmanager: http://localhost:9093
-- Tempo: http://localhost:3200 (`service=keeppam-api`, Explore в Grafana)
-- API: `KEEPPAM_OTEL_ENDPOINT=http://tempo:4318`
+- Tempo: http://localhost:3200 (`keeppam-api` / `keeppam-ssh`, Explore в Grafana)
+- Collector: внутри compose `otel-collector:4318` (`docs/otel-collector.txt`)
+- API/worker: `KEEPPAM_OTEL_ENDPOINT=http://otel-collector:4318`
 
 ## Цели (константы, не settings)
 

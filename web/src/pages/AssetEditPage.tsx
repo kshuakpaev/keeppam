@@ -26,6 +26,7 @@ const emptyAclForm = {
   allowed_devices: "",
   allowed_namespaces: "",
   allowed_egress: "",
+  pii_action: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -72,6 +73,7 @@ export function AssetEditPage() {
     status: "active",
     tags: "",
     approval_mode: "one",
+    pam_only: true,
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -133,6 +135,7 @@ export function AssetEditPage() {
         status: a.status,
         tags: (a.tags || []).join(", "),
         approval_mode: (a.approval_stages || []).includes("security") ? "two" : "one",
+        pam_only: a.pam_only !== false,
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -342,6 +345,7 @@ export function AssetEditPage() {
           .map((t) => t.trim())
           .filter(Boolean),
         approval_stages: form.approval_mode === "two" ? ["manager", "security"] : ["manager"],
+        pam_only: form.pam_only,
       });
       setAsset(updated);
       setMsg("Сохранено");
@@ -624,6 +628,7 @@ export function AssetEditPage() {
         allowed_devices: (raw.allowed_devices || []).join(", "),
         allowed_namespaces: (raw.allowed_namespaces || []).join(", "),
         allowed_egress: (raw.allowed_egress || []).join(", "),
+        pii_action: raw.pii_action || "",
         command_policy_pack_id: raw.command_policy_pack_id || "",
         sql_policy_pack_id: raw.sql_policy_pack_id || "",
         http_policy_pack_id: raw.http_policy_pack_id || "",
@@ -660,6 +665,7 @@ export function AssetEditPage() {
         allowed_devices?: string[];
         allowed_namespaces?: string[];
         allowed_egress?: string[];
+        pii_action?: string;
         command_policy_pack_id?: string | null;
         sql_policy_pack_id?: string | null;
         http_policy_pack_id?: string | null;
@@ -699,6 +705,7 @@ export function AssetEditPage() {
         body.allowed_devices = devices;
         body.allowed_namespaces = namespaces;
         body.allowed_egress = egress;
+        body.pii_action = aclForm.pii_action || "";
         body.command_policy_pack_id = aclForm.command_policy_pack_id || null;
         body.sql_policy_pack_id = aclForm.sql_policy_pack_id || null;
         body.http_policy_pack_id = aclForm.http_policy_pack_id || null;
@@ -720,6 +727,7 @@ export function AssetEditPage() {
         if (devices.length) body.allowed_devices = devices;
         if (namespaces.length) body.allowed_namespaces = namespaces;
         if (egress.length) body.allowed_egress = egress;
+        if (aclForm.pii_action) body.pii_action = aclForm.pii_action;
         if (aclForm.command_policy_pack_id) body.command_policy_pack_id = aclForm.command_policy_pack_id;
         if (aclForm.sql_policy_pack_id) body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
         if (aclForm.http_policy_pack_id) body.http_policy_pack_id = aclForm.http_policy_pack_id;
@@ -911,6 +919,43 @@ export function AssetEditPage() {
               SQL-консоль и wire (:15432/:13306) подключаются к этой БД; ephemeral GRANT — только на неё.
             </p>
           </>
+        )}
+        <label className="row" style={{ gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={form.pam_only}
+            onChange={(e) => setForm({ ...form, pam_only: e.target.checked })}
+            disabled={!canWrite}
+          />
+          Только через PAM (firewall export + блок port-forward на сервисный порт)
+        </label>
+        {form.pam_only && (
+          <p className="muted" style={{ marginTop: 0 }}>
+            Firewall:{" "}
+            {asset?.firewall_applied_at
+              ? `правила отмечены ${new Date(asset.firewall_applied_at).toLocaleString()}`
+              : "правила perimeter не отмечены"}
+            {canWrite && asset && (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() =>
+                    void api
+                      .markFirewallApplied(asset.id)
+                      .then((a) => {
+                        setAsset(a);
+                        setMsg("Firewall: правила отмечены применёнными");
+                      })
+                      .catch((err) => setError(err instanceof Error ? err.message : "Ошибка"))
+                  }
+                >
+                  отметить применёнными
+                </button>
+              </>
+            )}
+          </p>
         )}
         <label>Статус</label>
         <select
@@ -1789,6 +1834,7 @@ export function AssetEditPage() {
                   {(b.allowed_devices || []).length ? ` · ${b.allowed_devices!.join(",")}` : ""}
                   {(b.allowed_namespaces || []).length ? ` · ns=${b.allowed_namespaces!.join(",")}` : ""}
                   {(b.allowed_egress || []).length ? ` · egress=${b.allowed_egress!.join(",")}` : ""}
+                  {b.pii_action ? ` · pii=${b.pii_action}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -2054,6 +2100,15 @@ export function AssetEditPage() {
             onChange={(e) => setAclForm({ ...aclForm, allowed_egress: e.target.value })}
             placeholder="10.1.2.0/24:5432, db.prod.local:5432"
           />
+          <label>PII в ответе SQL/HTTP (пусто = выкл.)</label>
+          <select
+            value={aclForm.pii_action}
+            onChange={(e) => setAclForm({ ...aclForm, pii_action: e.target.value })}
+          >
+            <option value="">выкл.</option>
+            <option value="mask">mask (email/PAN/телефон/СНИЛС → ***)</option>
+            <option value="deny">deny (не отдавать результат)</option>
+          </select>
           <label>JEA command pack (SSH, опц.)</label>
           <select
             value={aclForm.command_policy_pack_id}

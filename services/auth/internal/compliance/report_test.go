@@ -89,6 +89,7 @@ func TestEvidenceCategory(t *testing.T) {
 		{"audit", "asset.account.secret_revealed", CatDownloads},
 		{"audit", "session.export_mp4", CatDownloads},
 		{"audit", "session.dlp.denied", CatDownloads},
+		{"audit", "session.dlp.masked", CatDownloads},
 		{"audit", "session.egress.denied", CatDownloads},
 		{"audit", "session.egress.opened", CatDownloads},
 		{"audit", "user.created", CatChanges},
@@ -134,6 +135,100 @@ func TestEvidenceCategory(t *testing.T) {
 	}
 	if IsPrivileged("session", "sql") {
 		t.Fatal("sql not privileged")
+	}
+}
+
+func TestWriteReportPDF(t *testing.T) {
+	var buf bytes.Buffer
+	rep := Report{
+		GeneratedAt: time.Date(2026, 8, 17, 8, 0, 0, 0, time.UTC),
+		From:        time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC),
+		To:          time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+		Framework:   "iso27001",
+		Controls:    FrameworkControls("iso27001"),
+		Summary:     ReportSummary{Access: 3, SQL: 1},
+		Snapshot:    ReportSnapshot{ACLLive: 4, SessionsActive: 1},
+		Evidence: []EvidenceRow{{
+			TS:       time.Date(2026, 8, 16, 10, 0, 0, 0, time.UTC),
+			Category: CatAccess, Source: "audit", Actor: "admin",
+			Action: "asset.acl.granted", Detail: "granted (acl)",
+		}, {
+			TS:       time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC),
+			Category: CatSQL, Actor: "оператор",
+			Action: "sql", Detail: "SELECT 1",
+		}},
+		EvidenceTotal: 2,
+		Notes:         reportNotes(),
+	}
+	if err := WriteReportPDF(&buf, rep); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.HasPrefix(got, "%PDF-1.4") {
+		t.Fatalf("magic %q", got[:min(20, len(got))])
+	}
+	if !strings.Contains(got, "%%EOF") || !strings.Contains(got, "startxref") {
+		t.Fatal("trailer")
+	}
+	if !strings.Contains(got, "KeepPAM Compliance Report") {
+		t.Fatal("title")
+	}
+	if !strings.Contains(got, "iso27001") || !strings.Contains(got, "asset.acl.granted") {
+		t.Fatal("body")
+	}
+	if !strings.Contains(got, pdfLatin("оператор")) {
+		t.Fatalf("cyrillic actor missing, want %q", pdfLatin("оператор"))
+	}
+	if strings.Contains(got, "оператор") {
+		t.Fatal("raw cyrillic in PDF")
+	}
+	if !strings.Contains(got, "/BaseFont /Helvetica") {
+		t.Fatal("font")
+	}
+}
+
+func TestWriteReportPDFPages(t *testing.T) {
+	ev := make([]EvidenceRow, 80)
+	for i := range ev {
+		ev[i] = EvidenceRow{
+			TS:       time.Date(2026, 8, 16, 10, 0, 0, 0, time.UTC),
+			Category: CatCommands, Actor: "admin", Action: "session.command.denied",
+			Detail: "rm -rf /",
+		}
+	}
+	var buf bytes.Buffer
+	if err := WriteReportPDF(&buf, Report{Framework: "all", Evidence: ev, EvidenceTotal: 80, Controls: FrameworkControls("all")}); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "KeepPAM  1/1 confidential") {
+		t.Fatal("expected multi-page")
+	}
+	if !strings.Contains(got, "KeepPAM  1/") {
+		t.Fatal("footer")
+	}
+	if strings.Count(got, " 0 obj") < 7 {
+		t.Fatalf("too few objects: %d", strings.Count(got, " 0 obj"))
+	}
+}
+
+func TestPdfLatin(t *testing.T) {
+	if pdfLatin("оператор") != "operator" {
+		t.Fatal(pdfLatin("оператор"))
+	}
+	if pdfLatin("a(b)") != "a(b)" {
+		t.Fatal(pdfLatin("a(b)"))
+	}
+}
+
+func TestWriteReportPDFSignedNote(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeReportPDF(&buf, Report{Framework: "all", GeneratedAt: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)}, "PAdES-B-B (CAdES detached, no TSA/LTV)"); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "PAdES-B-B") {
+		t.Fatal("signed note")
 	}
 }
 

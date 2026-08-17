@@ -36,8 +36,11 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	output, _ := s.sessionsvc.ListOutputTranscript(r.Context(), id)
+	keys, _ := s.sessionsvc.ListKeystrokeTranscript(r.Context(), id)
+	screen, _ := s.sessionsvc.ListScreenTextTranscript(r.Context(), id)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"indexed": indexed, "protocol": row.Protocol, "lines": lines,
+		"indexed": indexed, "protocol": row.Protocol, "lines": lines, "output": output, "keystrokes": keys, "screen_text": screen,
 	})
 }
 
@@ -66,18 +69,41 @@ func (s *Server) handleIndexTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	force := false
+	ocr := false
 	if r.Body != nil {
 		var body struct {
 			Force bool `json:"force"`
+			OCR   bool `json:"ocr"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		force = body.Force
+		ocr = body.OCR
 	}
 	out, err := s.castidx.Index(r.Context(), id, force)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var ocrOut any
+	if ocr {
+		if row.Protocol == "rdp" || row.Protocol == "vnc" || row.Isolated {
+			ocrRes, ocrErr := s.castidx.IndexOCR(r.Context(), id, force)
+			if ocrErr != nil {
+				writeErr(w, http.StatusBadGateway, ocrErr.Error())
+				return
+			}
+			ocrOut = ocrRes
+		} else {
+			ocrOut = map[string]string{"skipped": "unsupported"}
+		}
+	}
 	lines, _ := s.sessionsvc.ListCommandTranscript(r.Context(), id)
-	writeJSON(w, http.StatusOK, map[string]any{"result": out, "lines": lines})
+	output, _ := s.sessionsvc.ListOutputTranscript(r.Context(), id)
+	keys, _ := s.sessionsvc.ListKeystrokeTranscript(r.Context(), id)
+	screen, _ := s.sessionsvc.ListScreenTextTranscript(r.Context(), id)
+	resp := map[string]any{"result": out, "lines": lines, "output": output, "keystrokes": keys, "screen_text": screen}
+	if ocrOut != nil {
+		resp["ocr"] = ocrOut
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

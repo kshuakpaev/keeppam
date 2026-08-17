@@ -27,6 +27,7 @@ import (
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
@@ -77,12 +78,13 @@ type Server struct {
 	ops        *opapprove.Service
 	scim       *scim.Service
 	castidx    *castindex.Service
+	firewall   *firewall.Service
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc}
 	if sessSvc != nil {
-		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore())
+		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -183,6 +185,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Delete("/settings/saml/idps/{id}", s.handleDeleteSAMLIdP)
 				r.With(s.requirePerm("settings.write")).Get("/settings/siem", s.handleGetSIEMSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/siem", s.handlePutSIEMSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/siem/bulk", s.handleSIEMBulk)
 				r.With(s.requirePerm("settings.write")).Get("/settings/itsm", s.handleGetITSMSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/itsm", s.handlePutITSMSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/notify", s.handleGetNotifySettings)
@@ -191,6 +194,13 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Post("/itsm/validate", s.handleITSMValidate)
 				r.With(s.requirePerm("settings.write")).Get("/settings/ssh", s.handleGetSSHSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/firewall", s.handleGetFirewallSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/firewall", s.handlePutFirewallSettings)
+				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/status", s.handleFirewallStatus)
+				r.With(s.requirePerm("settings.write")).Post("/firewall/probe", s.handleFirewallProbe)
+				r.With(s.requirePerm("settings.write")).Put("/firewall/probe-agents", s.handlePutFirewallProbeAgents)
+				r.With(s.requirePerm("settings.write")).Post("/firewall/push", s.handleFirewallPush)
+				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/export", s.handleExportFirewallRules)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)
 				r.With(s.requireAnyPerm("settings.write", "compliance.read")).Get("/settings/sbom", s.handleSBOM)
 
@@ -250,6 +260,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
+				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/firewall-applied", s.handleMarkFirewallApplied)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}/host-key", s.handleClearAssetHostKey)
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/accounts", s.handleCreateAccount)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}/accounts/{accountId}", s.handleUpdateAccount)

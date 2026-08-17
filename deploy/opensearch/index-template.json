@@ -1,0 +1,64 @@
+{
+  "index_patterns": ["keeppam-audit*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "ecs": {
+          "properties": {
+            "version": { "type": "keyword" }
+          }
+        },
+        "event": {
+          "properties": {
+            "action": { "type": "keyword" },
+            "id": { "type": "keyword" },
+            "dataset": { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "outcome": { "type": "keyword" },
+            "module": { "type": "keyword" },
+            "provider": { "type": "keyword" }
+          }
+        },
+        "user": {
+          "properties": {
+            "id": { "type": "keyword" }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": { "type": "ip" }
+          }
+        },
+        "user_agent": {
+          "properties": {
+            "original": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 512 } } }
+          }
+        },
+        "message": { "type": "text" },
+        "tags": { "type": "keyword" },
+        "keeppam": {
+          "properties": {
+            "hash": { "type": "keyword" },
+            "prev_hash": { "type": "keyword" },
+            "resource": {
+              "properties": {
+                "type": { "type": "keyword" },
+                "id": { "type": "keyword" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "priority": 100,
+  "_meta": {
+    "description": "KeepPAM audit ECS (docs/opensearch.txt)"
+  }
+}

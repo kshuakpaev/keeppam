@@ -1,0 +1,87 @@
+# KeepPAM: Firewall PAM
+
+Запрет прямого доступа к активам **в обход PAM** на периметре сети + блок обхода через SSH port-forward внутри шлюза. Не NAC-клиент и не полный firewall controller — экспорт правил, drift-probe, AWX launch.
+
+## Модель
+
+| Поле | Где | Смысл |
+|------|-----|--------|
+| `pam_only` | `assets` (default `true`) | Актив должен принимать только соединения с PAM-шлюзов |
+| `pam_gateway_cidrs` | `firewall_settings` | CIDR источников KeepPAM (SSH `:2222`, Guacamole, DB/k8s wire) |
+| `firewall_applied_at` | `assets` | Отметка: perimeter-правила применены |
+| `firewall_probe_at` / `firewall_probe_reachable` | `assets` | Последний drift-probe (quorum по агентам) |
+| `probe_segment` | `assets` | Сегмент для выбора probe-agent (пусто = все агенты) |
+| `probe_quorum` | `firewall_settings` | Drift если ≥ N агентов видят TCP reachable (1…16) |
+| `firewall_probe_agents` | таблица | Именованные probe-agent по сегментам |
+| `probe_url` | `firewall_settings` | Legacy один agent (если таблица agents пуста) |
+| `probe_interval_hours` | `firewall_settings` | Периодический drift-probe (0 = выкл.) |
+| `awx_launch_url` / `awx_token_enc` | `firewall_settings` | POST launch job template (Ansible AWX) |
+| `awx_auto_push` | `firewall_settings` | Push AWX при `firewall-applied` |
+
+UI: Config → Firewall PAM; карточка актива → pam_only + «отметить применёнными».
+
+## Probe agents (multi-segment)
+
+`PUT /api/v1/admin/firewall/probe-agents` — `{probe_quorum, agents:[{name, segment, probe_url, token?, enabled}]}` (до 16).
+
+| Поле agent | Смысл |
+|------------|--------|
+| `name` | `[a-z][a-z0-9_-]{0,31}` |
+| `segment` | метка сети (`dmz`, `lab`, …); пусто = глобальный observer |
+| `probe_url` | `http(s)://host:port/probe` |
+| `enabled` | участвует в probe |
+
+Matching: актив с `probe_segment` пуст → все enabled agents; иначе agents с `segment=""` или совпадающим segment.
+
+**Quorum:** для каждого актива считаются reachable от выбранных agents; `firewall_probe_reachable=true` если **≥ probe_quorum** agents видят TCP OK → gap `probe_reachable`.
+
+Health: `GET …/healthz` на agent перед probe; `last_health_ok` в UI.
+
+**Стенд (compose):** `firewall-probe:8100`, `firewall-probe-b:8101`; миграция `073` переносит legacy `probe_url` в agent `default` + опционально `segment-b`.
+
+## Статус / gaps
+
+`GET /api/v1/admin/firewall/status`
+
+| Gap | Смысл |
+|-----|--------|
+| `no_gateway_cidrs` | не заданы PAM gateway CIDR |
+| `rules_not_applied` | `firewall_applied_at` пуст |
+| `non_ip_address` | `address` — hostname, export iptables/nft требует IP |
+| `probe_reachable` | quorum probe: возможный drift |
+
+`ready=true`: gateway CIDR заданы, все pam_only отмечены, IP-адреса, нет `probe_reachable`.
+
+Compliance → control `firewall_pam`.
+
+## Drift probe
+
+`POST /api/v1/admin/firewall/probe`
+
+1. **Agents** — parallel probe каждым enabled agent, quorum, `via: multi_probe`.
+2. **Legacy `probe_url`** — если agents пуст.
+3. **Local** — TCP dial с API (`via: local`).
+
+Audit: `firewall.probe.run`. Ответ: per-asset `agents[]`, `reachable_agents`, `quorum`.
+
+**Расписание:** `probe_interval_hours` 1…168.
+
+## AWX auto-push
+
+`POST /api/v1/admin/firewall/push` — POST `{}` на `awx_launch_url` с Bearer token.
+
+При `awx_auto_push=true` тот же вызов после `POST .../firewall-applied`.
+
+## Экспорт правил
+
+`GET /api/v1/admin/firewall/export?format=iptables|nft|ansible`
+
+Миграции `067`–`073`.
+
+## Enforcement на SSH worker
+
+Port-forward на pam-only актив на сервисный порт — отказ (`via: firewall_pam`).
+
+## Вне scope
+
+NAC-клиент, VLAN controller, ephemeral assets, prod HA firewall controller.

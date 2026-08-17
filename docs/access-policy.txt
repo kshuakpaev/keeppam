@@ -8,7 +8,7 @@
 
 | Объект | Поля |
 |--------|------|
-| `access_policies` | время, дни, tags, ticket/reason, CIDR, geo, device, namespaces, JEA-пакеты, max_risk |
+| `access_policies` | время, дни, tags, ticket/reason, CIDR, geo, device, namespaces, egress, pii_action, JEA-пакеты, max_risk |
 | `asset_access_bindings.access_policy_id` | ссылка; WHO + asset + expires_at |
 
 Ссылка живая: правка политики сразу действует на все ACL. Удаление политики (`ON DELETE SET NULL`) не снимает доступ, только наследование.
@@ -24,6 +24,7 @@
 | time_start / time_end | NULL на ACL → из политики |
 | days_of_week | `127` (все дни, дефолт INSERT) → маска политики |
 | массивы (CIDR, geo, device, ns, egress, tags) | пустой на ACL → из политики |
+| pii_action | пусто на ACL → из политики |
 | require_ticket / require_reason | OR (политика только ужесточает) |
 | JEA pack IDs | NULL на ACL → из политики |
 | max_risk | `0` на ACL → из политики (вместе с risk_action) |
@@ -32,7 +33,7 @@
 
 ## Снимок на сессию
 
-На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, egress, tag ACL, break-glass / admin bypass.
+На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, egress, pii_action, tag ACL, break-glass / admin bypass.
 
 Операции внутри сессии (SQL / HTTP / kubectl / SSH-команда) берут порог риска и pack IDs из снимка, не из live Policy. Правка политики или revoke ACL **не** меняет уже открытую сессию — чтобы оборвать, нужен force-kill.
 
