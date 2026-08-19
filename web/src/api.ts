@@ -190,6 +190,7 @@ export type AccessBinding = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -869,6 +870,16 @@ export const api = {
   deleteSAMLIdP: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/settings/saml/idps/${id}`, { method: "DELETE" }),
   getAuthSettings: () => request<AuthSettings>("/api/v1/admin/settings/auth"),
+  getArchiveSettings: () => request<ArchiveSettings>("/api/v1/admin/settings/archive"),
+  putArchiveSettings: (body: Partial<ArchiveSettings>) =>
+    request<ArchiveSettings>("/api/v1/admin/settings/archive", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  runArchiveSync: () =>
+    request<{ copied: number; skipped: number; failed: number }>("/api/v1/admin/settings/archive/sync", {
+      method: "POST",
+    }),
   putAuthSettings: (body: Partial<AuthSettings>) =>
     request<AuthSettings>("/api/v1/admin/settings/auth", {
       method: "PUT",
@@ -1294,7 +1305,8 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
-      command_policy_pack_id?: string | null;
+  file_transfer?: string;
+  command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
       app_object_pack_id?: string | null;
@@ -1325,7 +1337,8 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
-      command_policy_pack_id?: string | null;
+  file_transfer?: string;
+  command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
       app_object_pack_id?: string | null;
@@ -1606,6 +1619,10 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
+  listSessionFiles: (id: string) =>
+    request<{ files: SessionFile[] }>(`/api/v1/admin/sessions/${id}/files`),
+  getSessionFileUrl: (sessionId: string, fileId: string) =>
+    `/api/v1/admin/sessions/${sessionId}/files/${fileId}`,
   getAppIntegration: (assetId: string) =>
     request<AppIntegration>(`/api/v1/admin/assets/${assetId}/app`),
   putAppIntegration: (assetId: string, body: Partial<AppIntegration> & { oidc_client_secret?: string; clear_oidc_client_secret?: boolean }) =>
@@ -1993,6 +2010,7 @@ export type AccessPolicy = {
   allowed_namespaces: string[];
   allowed_egress: string[];
   pii_action: string;
+  file_transfer: string;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -2023,6 +2041,7 @@ export type AccessPolicyInput = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
@@ -2074,6 +2093,8 @@ export type PamSession = {
   account_username?: string;
   asset_address?: string;
   has_recording: boolean;
+  archived?: boolean;
+  archive_backend?: string;
   isolated?: boolean;
   database_name?: string;
   wire_token?: string;
@@ -2101,6 +2122,24 @@ export type PamSession = {
   supervisor_approved_at?: string;
 };
 
+export type ArchiveSettings = {
+  enabled: boolean;
+  backend: string;
+  age_days: number;
+  interval_minutes: number;
+  delete_local: boolean;
+  nfs_path: string;
+  smb_host: string;
+  smb_share: string;
+  smb_user: string;
+  smb_domain: string;
+  smb_password?: string;
+  has_smb_password: boolean;
+  last_run_at?: string;
+  last_error?: string;
+  last_copied: number;
+};
+
 export type PolicySnapshot = {
   binding_id?: string;
   group_id?: string;
@@ -2119,11 +2158,25 @@ export type PolicySnapshot = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
   tag_acl?: boolean;
   match_tags?: string[];
   match_mode?: string;
   break_glass?: boolean;
   admin_bypass?: boolean;
+};
+
+export type SessionFile = {
+  id: string;
+  session_id: string;
+  filename: string;
+  remote_path: string;
+  protocol: string;
+  direction: string;
+  size_bytes: number;
+  sha256: string;
+  captured: boolean;
+  created_at: string;
 };
 
 export type TimelineEvent = {

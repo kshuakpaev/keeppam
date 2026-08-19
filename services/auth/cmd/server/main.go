@@ -28,6 +28,7 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
@@ -41,6 +42,7 @@ import (
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/pades"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
@@ -167,6 +169,8 @@ func main() {
 
 	auditSvc := audit.New(db)
 	auditSvc.SetMAC(env)
+	archSvc := recarch.New(db, auditSvc, env, recStore)
+	recStore = recarch.Wrap(recStore, archSvc)
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
 	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
@@ -196,6 +200,7 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
 	live := sessionsvc.NewLiveHub(sessions.Redis())
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
@@ -385,7 +390,7 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, life)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -416,6 +421,7 @@ func main() {
 		go siemSvc.Run(runCtx)
 		go discoverySvc.Run(runCtx)
 		go complianceSvc.Run(runCtx)
+		go archSvc.Run(runCtx)
 		if cfg.PostgresWireAddr != "" && cfg.PostgresWireAddr != "off" {
 			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
 			go func() {
@@ -478,7 +484,7 @@ func main() {
 
 	var sshGw *sshgw.Gateway
 	if runSSH {
-		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc)
+		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := sshGw.ListenAndServe(); err != nil {

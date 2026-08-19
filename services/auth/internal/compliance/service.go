@@ -696,7 +696,8 @@ func (s *Service) Purge(ctx context.Context) (PurgeStats, error) {
 			SELECT id, user_id, asset_id, recording_path FROM sessions
 			WHERE status IN ('ended','failed')
 			  AND COALESCE(ended_at, created_at) < $1
-			  AND recording_path <> ''`, cutoff)
+			  AND recording_path <> ''
+			  AND NOT COALESCE(archived, FALSE)`, cutoff)
 		if err != nil {
 			return stats, err
 		}

@@ -11,8 +11,24 @@ import {
   type SIEMSettings,
   type SSHSettings,
   type SAMLIdP,
+  type ArchiveSettings,
 } from "../api";
 import { useAuth } from "../auth";
+
+const emptyArchive: ArchiveSettings = {
+  enabled: false,
+  backend: "nfs",
+  age_days: 7,
+  interval_minutes: 60,
+  delete_local: false,
+  nfs_path: "",
+  smb_host: "",
+  smb_share: "",
+  smb_user: "",
+  smb_domain: "",
+  has_smb_password: false,
+  last_copied: 0,
+};
 
 const empty: AuthSettings = {
   mode: "local",
@@ -164,6 +180,8 @@ export function ConfigPage() {
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
   const [infra, setInfra] = useState<InfraStatus | null>(null);
+  const [archive, setArchive] = useState<ArchiveSettings>(emptyArchive);
+  const [smbPass, setSmbPass] = useState("");
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
   const [radiusSecret, setRadiusSecret] = useState("");
@@ -187,7 +205,7 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, fw, fws, nt, idps] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nt, idps, ar] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
@@ -197,12 +215,14 @@ export function ConfigPage() {
           api.getFirewallStatus().catch(() => null),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
+          api.getArchiveSettings().catch(() => emptyArchive),
         ]);
         setForm({ ...empty, ...s });
         setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
         setSiem({ ...emptySIEM, ...si });
         setSsh({ ...emptySSH, ...sh });
         setInfra(inf);
+        setArchive({ ...emptyArchive, ...ar });
         setItsm({
           ...emptyITSM,
           ...it,
@@ -666,6 +686,159 @@ export function ConfigPage() {
           </p>
         </div>
       )}
+
+      <form
+        className="card"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void (async () => {
+            setBusy(true);
+            setError("");
+            setMsg("");
+            try {
+              const body: Partial<ArchiveSettings> = { ...archive };
+              if (smbPass.trim()) body.smb_password = smbPass.trim();
+              delete body.has_smb_password;
+              const saved = await api.putArchiveSettings(body);
+              setArchive({ ...emptyArchive, ...saved });
+              setSmbPass("");
+              setMsg("Архив сохранён");
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Ошибка");
+            } finally {
+              setBusy(false);
+            }
+          })();
+        }}
+        style={{ maxWidth: 640, marginBottom: "1.25rem" }}
+      >
+        <h2>Архив записей (SMB / NFS)</h2>
+        <p className="muted">
+          Копия recordings старше N дней на NFS mount или SMB2/3. Индекс сессии в БД остаётся. Replay
+          качает с архива, если локального файла нет.{" "}
+          <span className="mono">docs/archive-smb-nfs.txt</span>
+        </p>
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={archive.enabled}
+            onChange={(e) => setArchive({ ...archive, enabled: e.target.checked })}
+          />
+          Включить
+        </label>
+        <label>Backend</label>
+        <select
+          value={archive.backend}
+          onChange={(e) => setArchive({ ...archive, backend: e.target.value })}
+        >
+          <option value="nfs">NFS (каталог в контейнере)</option>
+          <option value="smb">SMB2/3 (CIFS v2–3)</option>
+        </select>
+        <label>Возраст, дней (0 = сразу)</label>
+        <input
+          type="number"
+          min={0}
+          max={3650}
+          value={archive.age_days}
+          onChange={(e) => setArchive({ ...archive, age_days: Number(e.target.value) || 0 })}
+        />
+        <label>Интервал job, мин</label>
+        <input
+          type="number"
+          min={5}
+          max={1440}
+          value={archive.interval_minutes}
+          onChange={(e) => setArchive({ ...archive, interval_minutes: Number(e.target.value) || 60 })}
+        />
+        {archive.backend === "nfs" && (
+          <>
+            <label>Путь NFS (mount в контейнере)</label>
+            <input
+              value={archive.nfs_path}
+              onChange={(e) => setArchive({ ...archive, nfs_path: e.target.value })}
+              placeholder="/var/lib/keeppam/archive"
+            />
+          </>
+        )}
+        {archive.backend === "smb" && (
+          <>
+            <label>Host[:port]</label>
+            <input
+              value={archive.smb_host}
+              onChange={(e) => setArchive({ ...archive, smb_host: e.target.value })}
+              placeholder="files.example:445"
+            />
+            <label>Share</label>
+            <input
+              value={archive.smb_share}
+              onChange={(e) => setArchive({ ...archive, smb_share: e.target.value })}
+              placeholder="keeppam-recordings"
+            />
+            <label>User / domain</label>
+            <div className="row" style={{ gap: "0.5rem" }}>
+              <input
+                value={archive.smb_user}
+                onChange={(e) => setArchive({ ...archive, smb_user: e.target.value })}
+                placeholder="keeppam"
+              />
+              <input
+                value={archive.smb_domain}
+                onChange={(e) => setArchive({ ...archive, smb_domain: e.target.value })}
+                placeholder="AD"
+              />
+            </div>
+            <label>Password {archive.has_smb_password ? "(задан)" : ""}</label>
+            <input
+              type="password"
+              value={smbPass}
+              onChange={(e) => setSmbPass(e.target.value)}
+              autoComplete="off"
+            />
+          </>
+        )}
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={archive.delete_local}
+            onChange={(e) => setArchive({ ...archive, delete_local: e.target.checked })}
+          />
+          Удалять локальную копию после checksum OK
+        </label>
+        {archive.last_run_at && (
+          <p className="muted">
+            Last run: {new Date(archive.last_run_at).toLocaleString()} · copied={archive.last_copied}
+            {archive.last_error ? ` · ${archive.last_error}` : ""}
+          </p>
+        )}
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить архив
+          </button>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy || !archive.enabled}
+            onClick={() => {
+              void (async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  const st = await api.runArchiveSync();
+                  setMsg(`Архив: скопировано ${st.copied}, ошибок ${st.failed}`);
+                  const saved = await api.getArchiveSettings();
+                  setArchive({ ...emptyArchive, ...saved });
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Ошибка sync");
+                } finally {
+                  setBusy(false);
+                }
+              })();
+            }}
+          >
+            Запустить сейчас
+          </button>
+        </div>
+      </form>
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
         <h2>Авторизация</h2>

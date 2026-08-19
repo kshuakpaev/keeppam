@@ -26,6 +26,7 @@ type aclConstraints struct {
 	MaxRisk             int
 	RiskAction          string
 	PIIAction           string
+	FileTransfer        string
 }
 
 // overlayConstraints fills empty binding fields from a named Policy.
@@ -85,6 +86,9 @@ func overlayConstraints(base aclConstraints, pol aclConstraints, hasPolicy bool)
 	}
 	if out.PIIAction == "" {
 		out.PIIAction = pol.PIIAction
+	}
+	if out.FileTransfer == "" {
+		out.FileTransfer = pol.FileTransfer
 	}
 	return out
 }

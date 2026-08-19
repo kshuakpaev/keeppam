@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
-import { api, type PamSession, type TranscriptLine } from "../api";
+import { api, type PamSession, type TranscriptLine, type SessionFile } from "../api";
 import { useI18n } from "../i18n";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
@@ -41,6 +41,7 @@ export function SessionReplayPage() {
   const [outputLines, setOutputLines] = useState<TranscriptLine[]>([]);
   const [keystrokes, setKeystrokes] = useState<TranscriptLine[]>([]);
   const [screenText, setScreenText] = useState<TranscriptLine[]>([]);
+  const [files, setFiles] = useState<SessionFile[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const recordingRef = useRef<{
@@ -71,6 +72,12 @@ export function SessionReplayPage() {
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
         setIsolated(!!sess.isolated);
+        try {
+          const fl = await api.listSessionFiles(id);
+          if (!cancelled) setFiles(fl.files || []);
+        } catch {
+          if (!cancelled) setFiles([]);
+        }
         if (sess.protocol === "ssh" || sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           try {
             const t = await api.getSessionTranscript(id);
@@ -462,6 +469,26 @@ export function SessionReplayPage() {
                 <span className="mono" title="output">
                   {ln.command || ln.type}
                 </span>
+              </li>
+            ))}
+          </ul>
+          <h2>{t("replay.files")}</h2>
+          <p className="muted">
+            {files.length === 0 ? t("replay.emptyFiles") : t("replay.nFiles", { n: files.length })}
+          </p>
+          <ul className="plain-list">
+            {files.map((f) => (
+              <li key={f.id}>
+                <span className="mono" title={f.remote_path || f.filename}>
+                  {f.direction} {f.protocol} {f.filename}
+                </span>
+                {f.captured ? (
+                  <a className="btn secondary" href={api.getSessionFileUrl(id!, f.id)}>
+                    {t("sess.download")}
+                  </a>
+                ) : (
+                  <span className="muted">audit</span>
+                )}
               </li>
             ))}
           </ul>

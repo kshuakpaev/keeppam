@@ -55,6 +55,10 @@ type Session struct {
 	SupervisorUsername   string           `json:"supervisor_username,omitempty"`
 	SupervisorApprovedAt *time.Time       `json:"supervisor_approved_at,omitempty"`
 	WaitingSupervisor    bool             `json:"waiting_supervisor"`
+	Archived             bool             `json:"archived"`
+	ArchiveSHA256        string           `json:"archive_sha256,omitempty"`
+	ArchiveBackend       string           `json:"archive_backend,omitempty"`
+	ArchivedAt           *time.Time       `json:"archived_at,omitempty"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
@@ -357,7 +361,8 @@ const sessionSelect = `
 			COALESCE(s.require_supervisor, FALSE), s.supervisor_group_id, COALESCE(sg.name,''),
 			s.supervisor_id, COALESCE(su.username,''), s.supervisor_approved_at,
 			u.username, a.name, aa.username, a.address,
-			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
+			(s.recording_path <> '' AND (s.status IN ('ended','failed','active') OR COALESCE(s.archived, FALSE))),
+			COALESCE(s.archived, FALSE), COALESCE(s.archive_sha256,''), COALESCE(s.archive_backend,''), s.archived_at
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN assets a ON a.id = s.asset_id
@@ -425,7 +430,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 		if err != nil {
 			return nil, 0, err
 		}
-		if sess.RecordingPath != "" {
+		if sess.Archived {
+			sess.HasRecording = true
+		} else if sess.RecordingPath != "" {
 			if s.store != nil {
 				sess.HasRecording = s.store.Exists(ctx, sess.RecordingPath)
 			} else if _, err := os.Stat(sess.RecordingPath); err == nil {
@@ -503,6 +510,7 @@ func scanSession(row scannable) (Session, error) {
 		&s.RequireSupervisor, &s.SupervisorGroupID, &s.SupervisorGroupName,
 		&s.SupervisorID, &s.SupervisorUsername, &s.SupervisorApprovedAt,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
+		&s.Archived, &s.ArchiveSHA256, &s.ArchiveBackend, &s.ArchivedAt,
 	)
 	if err != nil {
 		return s, err

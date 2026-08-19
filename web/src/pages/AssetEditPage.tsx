@@ -43,6 +43,7 @@ const emptyAclForm = {
   allowed_namespaces: "",
   allowed_egress: "",
   pii_action: "",
+  file_transfer: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -668,6 +669,7 @@ export function AssetEditPage() {
         allowed_namespaces: (raw.allowed_namespaces || []).join(", "),
         allowed_egress: (raw.allowed_egress || []).join(", "),
         pii_action: raw.pii_action || "",
+        file_transfer: raw.file_transfer || "",
         command_policy_pack_id: raw.command_policy_pack_id || "",
         sql_policy_pack_id: raw.sql_policy_pack_id || "",
         http_policy_pack_id: raw.http_policy_pack_id || "",
@@ -705,6 +707,7 @@ export function AssetEditPage() {
         allowed_namespaces?: string[];
         allowed_egress?: string[];
         pii_action?: string;
+        file_transfer?: string;
         command_policy_pack_id?: string | null;
         sql_policy_pack_id?: string | null;
         http_policy_pack_id?: string | null;
@@ -745,6 +748,7 @@ export function AssetEditPage() {
         body.allowed_namespaces = namespaces;
         body.allowed_egress = egress;
         body.pii_action = aclForm.pii_action || "";
+        body.file_transfer = aclForm.file_transfer || "";
         body.command_policy_pack_id = aclForm.command_policy_pack_id || null;
         body.sql_policy_pack_id = aclForm.sql_policy_pack_id || null;
         body.http_policy_pack_id = aclForm.http_policy_pack_id || null;
@@ -767,6 +771,7 @@ export function AssetEditPage() {
         if (namespaces.length) body.allowed_namespaces = namespaces;
         if (egress.length) body.allowed_egress = egress;
         if (aclForm.pii_action) body.pii_action = aclForm.pii_action;
+        if (aclForm.file_transfer) body.file_transfer = aclForm.file_transfer;
         if (aclForm.command_policy_pack_id) body.command_policy_pack_id = aclForm.command_policy_pack_id;
         if (aclForm.sql_policy_pack_id) body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
         if (aclForm.http_policy_pack_id) body.http_policy_pack_id = aclForm.http_policy_pack_id;
@@ -1960,6 +1965,7 @@ export function AssetEditPage() {
                   {(b.allowed_namespaces || []).length ? ` · ns=${b.allowed_namespaces!.join(",")}` : ""}
                   {(b.allowed_egress || []).length ? ` · egress=${b.allowed_egress!.join(",")}` : ""}
                   {b.pii_action ? ` · pii=${b.pii_action}` : ""}
+                  {b.file_transfer && b.file_transfer !== "deny" ? ` · files=${b.file_transfer}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -2233,6 +2239,16 @@ export function AssetEditPage() {
             <option value="">{t("assets.off")}</option>
             <option value="mask">mask (email/PAN/телефон/СНИЛС → ***)</option>
             <option value="deny">deny (не отдавать результат)</option>
+          </select>
+          <label>SCP/SFTP</label>
+          <select
+            value={aclForm.file_transfer}
+            onChange={(e) => setAclForm({ ...aclForm, file_transfer: e.target.value })}
+          >
+            <option value="">из Policy / deny</option>
+            <option value="deny">deny</option>
+            <option value="audit">audit (лог, без байт)</option>
+            <option value="capture">capture (хранить файл)</option>
           </select>
           <label>JEA command pack (SSH, опц.)</label>
           <select

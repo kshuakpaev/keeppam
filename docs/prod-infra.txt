@@ -20,6 +20,8 @@
 
 `KEEPPAM_RECORDINGS_BACKEND=local|s3` (default `local`).
 
+Архив старше N дней на NFS или SMB: `docs/archive-smb-nfs.txt` (не замена S3 WORM).
+
 Для `s3` (MinIO / Ceph / AWS path-style):
 
 - `KEEPPAM_S3_ENDPOINT` — например `http://minio:9000`

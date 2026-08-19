@@ -18,7 +18,7 @@
 - [ ] Запись asciicast; replay в UI; изменение скорости воспроизведения
 - [ ] Kill сессии администратором
 - [ ] Live watch (read-only) активной SSH-сессии
-- [ ] Command risk / live deny destructive (демо `rm -rf` или аналог)
+- [ ] SSH: `scp` на шлюз с `file_transfer=capture` — файл в replay, download совпадает; deny по умолчанию
 
 ## 3. RDP/VNC
 
@@ -41,6 +41,7 @@
 ## 6. Эксплуатация
 
 - [ ] Backup по `docs/dr-runbook.txt` выполнен; restore проверен на копии
+- [ ] Archive: recording старше N дней на SMB/NFS, checksum, replay с шары (`docs/archive-smb-nfs.txt`)
 - [ ] TLS на API (или mTLS по согласованию)
 - [ ] Нет исходящих подключений к вендору в штатном режиме
 - [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, `docs/ha.txt`, admin quick start

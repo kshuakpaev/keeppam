@@ -95,7 +95,7 @@
 | Прозрачный шлюз | A | ✓ |
 | Clipboard/printers/drives RDP | C | DLP off by policy — опция |
 | Любой клиент (PuTTY/RDP client) | A* | SSH ✓; RDP — browser (C для native client) |
-| Запись SFTP/SCP/clipboard файлов | B | DLP deny сейчас |
+| Запись SFTP/SCP/clipboard файлов | B | SCP/SFTP ✓ (`078`); clipboard RDP — нет |
 | Метаданные (процессы, окна, файлы) | B | Частично session_events |
 | Протоколы (Citrix, Telnet, …) | A/C | SSH/RDP/VNC/HTTP/SQL ✓; остальное C |
 | Kerberos SSH | C | |
@@ -108,7 +108,7 @@
 | Kill + policy deny | A | ✓ |
 | Кодировки RU | A/B | UTF-8; CP1251/KOI8 — B |
 | Хранение WORM | A | S3 Object Lock |
-| SMB/NFS archive | B | |
+| SMB/NFS archive | B | ✓ NFS mount / SMB2–3, checksum, replay с шары |
 | RBAC админов на replay | A | permissions |
 | AD/RADIUS/x509 admin auth | A/B | LDAP/SAML/mTLS; RADIUS PAP консоль A; EAP/x509 map B |
 | UEBA + notify | A/B | Baseline A; keystroke/mouse C |
@@ -120,7 +120,7 @@
 «Развёртывание KeepPAM в периметре Заказчика: control plane + session worker, интеграция AD/LDAP, до N активов SSH/RDP, JIT, запись, forensic, SIEM-экспорт. Обучение администраторов. Acceptance по чек-листу `docs/kp-acceptance.txt`.»
 
 **Ограничения (обязательно в КП):**
-«Графические сессии — HTML5-шлюз (RDP/VNC). Native RDP-клиент и Citrix — опциональный модуль. Запись файлов SCP/SFTP — фаза 2. Virtual Appliance — поставка OVA по отдельному SOW.»
+«Графические сессии — HTML5-шлюз (RDP/VNC). Native RDP-клиент и Citrix — опциональный модуль. Virtual Appliance — поставка OVA по отдельному SOW.»
 
 **Соответствие main22:**
 «KeepPAM закрывает функциональные требования main22 уровня A полностью; уровня B — по согласованному roadmap с фиксированными milestone; уровня C — опции или партнёрская интеграция.»
@@ -128,6 +128,9 @@
 ## Связанные документы
 
 - `docs/demo-45min.txt` — демо 45 мин (продажи)
+- `docs/file-transfer.txt` — SCP/SFTP capture
+- `docs/archive-smb-nfs.txt` — архив SMB/NFS
+- `docs/radius-auth.txt` — RADIUS PAP
 - `docs/kp-roadmap.txt` — фазы доработки под КП
 - `docs/main22-plan.txt` — инженерный план реализации по пунктам ТЗ
 - `docs/kp-acceptance.txt` — чек-лист приёмки пилота

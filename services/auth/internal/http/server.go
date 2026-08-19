@@ -28,6 +28,7 @@ import (
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/health"
@@ -38,6 +39,7 @@ import (
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -81,11 +83,13 @@ type Server struct {
 	scim       *scim.Service
 	castidx    *castindex.Service
 	firewall   *firewall.Service
+	archive    *recarch.Service
+	files      *filexfer.Service
 	health     *health.State
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, life *health.State) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, health: life}
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State) http.Handler {
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life}
 	if sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -205,6 +209,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Post("/firewall/push", s.handleFirewallPush)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/export", s.handleExportFirewallRules)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)
+				r.With(s.requirePerm("settings.write")).Get("/settings/archive", s.handleGetArchiveSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/archive", s.handlePutArchiveSettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/archive/sync", s.handleArchiveSync)
 				r.With(s.requireAnyPerm("settings.write", "compliance.read")).Get("/settings/sbom", s.handleSBOM)
 
 				r.With(s.requirePerm("discovery.read")).Get("/discovery/jobs", s.handleListDiscoveryJobs)
@@ -350,6 +357,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/portforward", s.handleK8sPortForwardHTTP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
+				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files", s.handleListSessionFiles)
+				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files/{fileId}", s.handleGetSessionFile)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/transcript", s.handleGetTranscript)
 				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/transcript", s.handleIndexTranscript)
 			})

@@ -2,7 +2,7 @@
 
 Поиск по `session_events`: SQL, kubectl, **команды SSH**, **вывод SSH**, **клавиши RDP/VNC**, JEA deny, DLP, risk, HTTP/object ACL, **SSH egress**.
 
-SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`).
+SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`). Имена файлов SCP/SFTP — тип `file_transfer`.
 
 RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео).
 

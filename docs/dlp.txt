@@ -4,12 +4,14 @@
 
 ## SSH
 
-Запрещено всегда (без JEA-пакета):
+Запрещено **по умолчанию** (`file_transfer=deny` на Policy/ACL). Режимы **audit** / **capture** — `docs/file-transfer.txt`.
 
 | Канал | Поведение |
 |-------|-----------|
-| `scp` / `sftp` / `rsync` через `exec` (в т.ч. `sudo scp`) | `Reply(false)`, аудит `session.dlp.denied` |
-| subsystem `sftp` | отказ + аудит |
+| `scp` exec (legacy `-t`/`-f`) | deny / прокси+аудит / прокси+хранение |
+| subsystem `sftp` | то же |
+| `rsync` exec | всегда deny |
+| `scp`/`sftp`/`rsync` в интерактивном PTY | всегда deny (не перехватывается) |
 | каналы `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
 | `direct-tcpip` | пустой `allowed_egress` — deny (как DLP); иначе allowlist назначений, см. `docs/network-pam.txt` |
 | global/session `tcpip-forward`, `x11-req` | отказ + аудит |

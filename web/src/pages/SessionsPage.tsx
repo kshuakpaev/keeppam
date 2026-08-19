@@ -19,6 +19,7 @@ function snapshotHint(s: PamSession): string {
   if (p.app_object_pack_name) bits.push(`obj:${p.app_object_pack_name}`);
   if ((p.allowed_egress || []).length) bits.push(`egress:${(p.allowed_egress || []).length}`);
   if (p.pii_action) bits.push(`pii:${p.pii_action}`);
+  if (p.file_transfer && p.file_transfer !== "deny") bits.push(`files:${p.file_transfer}`);
   if (p.tag_acl) bits.push(p.match_mode === "any" ? "tag-acl:any" : "tag-acl");
   if (p.admin_bypass) bits.push("bypass");
   return bits.join(" · ");
@@ -218,6 +219,7 @@ export function SessionsPage() {
                 <option value="app_denied">app_denied</option>
                 <option value="app_approval">app_approval</option>
                 <option value="app_approved">app_approved</option>
+                <option value="file_transfer">file_transfer</option>
                 <option value="risk">risk</option>
                 <option value="all">{t("sess.allTypes")}</option>
               </select>
@@ -405,6 +407,11 @@ export function SessionsPage() {
                   {s.break_glass && (
                     <span className="badge locked" style={{ marginLeft: 6 }} title="break-glass session">
                       glass
+                    </span>
+                  )}
+                  {s.archived && (
+                    <span className="badge" style={{ marginLeft: 6 }} title={s.archive_backend || "archive"}>
+                      archive
                     </span>
                   )}
                   {s.supervisor_username && s.supervisor_approved_at && (

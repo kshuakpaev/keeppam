@@ -19,6 +19,7 @@ const emptyPolicyForm = {
   allowed_namespaces: "",
   allowed_egress: "",
   pii_action: "",
+  file_transfer: "deny",
   dlp_patterns: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
@@ -522,6 +523,7 @@ export function JeaPage() {
       allowed_namespaces: (p.allowed_namespaces || []).join(", "),
       allowed_egress: (p.allowed_egress || []).join(", "),
       pii_action: p.pii_action || "",
+      file_transfer: p.file_transfer || "deny",
       dlp_patterns: formatDlpPatterns(p.dlp_patterns),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
@@ -560,6 +562,7 @@ export function JeaPage() {
     if ((p.allowed_namespaces || []).length) bits.push("ns:" + p.allowed_namespaces.join(","));
     if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
     if (p.pii_action) bits.push("pii:" + p.pii_action);
+    if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
     if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
@@ -591,6 +594,7 @@ export function JeaPage() {
         allowed_namespaces: splitCSV(policyForm.allowed_namespaces),
         allowed_egress: splitCSV(policyForm.allowed_egress),
         pii_action: policyForm.pii_action || "",
+        file_transfer: policyForm.file_transfer || "deny",
         dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
@@ -697,6 +701,7 @@ export function JeaPage() {
           allowed_namespaces: tagRaw.allowed_namespaces || [],
           allowed_egress: tagRaw.allowed_egress || [],
           pii_action: tagRaw.pii_action || "",
+          file_transfer: tagRaw.file_transfer || "",
           command_policy_pack_id: tagRaw.command_policy_pack_id || null,
           sql_policy_pack_id: tagRaw.sql_policy_pack_id || null,
           http_policy_pack_id: tagRaw.http_policy_pack_id || null,
@@ -1527,6 +1532,15 @@ export function JeaPage() {
                 <option value="">выкл.</option>
                 <option value="mask">mask</option>
                 <option value="deny">deny</option>
+              </select>
+              <label>SCP/SFTP</label>
+              <select
+                value={policyForm.file_transfer}
+                onChange={(e) => setPolicyForm({ ...policyForm, file_transfer: e.target.value })}
+              >
+                <option value="deny">deny</option>
+                <option value="audit">audit</option>
+                <option value="capture">capture</option>
               </select>
               <label>DLP regex (имя и паттерн на строку, до 16)</label>
               <textarea

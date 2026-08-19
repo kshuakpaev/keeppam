@@ -36,7 +36,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 
 | Статус    | Кол-во | Примеры |
 |-----------|--------|---------|
-| есть      | 21     | T-04 агенты, T-06 2+2, T-11 MFA, T-12 аудит, T-14 offline, T-15 i18n, T-16 quorum |
+| есть      | 22     | T-04 агенты, T-06 2+2, T-14 offline, T-15 i18n, T-16 quorum, T-46 archive, T-48 RADIUS PAP |
 | частично  | 22     | T-01 compose, T-03 NOTICE, T-07 multi-site, T-48 RADIUS (без EAP/x509 map), T-10 OCR |
 | нет       | 10     | T-02 Hyper-V, T-25 AD group, T-33 Citrix/TN3270 |
 
@@ -217,14 +217,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Статус: есть** (SSH menu / portal).
 
 ### T-31. Запись файлов SFTP/SCP/clipboard с восстановлением
-**Сейчас:** DLP deny scp/sftp (`policy/dlp.go`). Записи файлов нет.
-**План (P2, 4–6 нед.) — второй приоритет после T-16:**
-- Policy: `file_transfer = deny | audit | capture`.
-- SSH: проксировать subsystem sftp / scp sink в object store `recordings/files/{session_id}/`.
-- RDP clipboard file: из guac stream, если включён clipboard.
-- UI: список файлов сессии, download (RBAC `sessions.files.read`).
-- WORM: тот же backend, что recordings (S3 lock).
-**DoD:** `scp file user@keeppam:` → файл в UI, download байт-в-байт совпадает; deny-режим по-прежнему работает.
+**Статус: есть (SCP/SFTP)** — политика `file_transfer=deny|audit|capture`, миграция `078`, `docs/file-transfer.txt`. RDP clipboard — не в этом срезе (T-27).
 
 ### T-32. Мониторинг: I/O + метаданные (процессы, окна, файлы)
 **Сейчас:** stdin/stdout/keystroke/screen_text; процессы/окна Windows — нет (нужен агент или глубокий RDP).
@@ -243,7 +236,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 | VNC / SSL       | есть          | — | |
 | X11 over SSH    | частично (SSH) | P2 | не отдельный decoder |
 | HTTP/HTTPS      | есть          | — | |
-| SFTP/SCP        | deny only     | P2 | T-31 |
+| SFTP/SCP        | capture/audit/deny | — | T-31 ✓ (clipboard RDP — нет) |
 | Microsoft SQL   | PG/MySQL wire | P2/P4 | TDS proxy (порт 1433), login inject, query log |
 | Telnet          | нет           | P5 | tty proxy, кодировки T-43 |
 | TN3270          | нет           | P5 / SOW | отдельный decoder |
@@ -299,12 +292,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** распространить на file capture и SMB-копии (шифрование at rest).
 
 ### T-46. Архивация SMB/CIFS v2–4 и NFS
-**Сейчас:** нет (S3/local).
-**План (P3, 3 нед.):**
-- Worker `archive-sync`: rclone/go-smb / NFS mount → copy recordings старше N дней.
-- Settings: URL, creds in vault, schedule, verify checksum.
-- Индекс в БД не удалять (T-37).
-**DoD:** после job файл на Samba share, checksum OK, replay из «архив» качает с share.
+**Статус: есть** (NFS-каталог + SMB2/3, checksum, replay с шары).
+**Реализация:** `docs/archive-smb-nfs.txt`, миграция `077`, worker в API.
+**DoD:** job копирует recording; SHA-256 OK; replay без локального файла.
 
 ### T-47. RBAC админов на replay; без перехвата управления
 **Статус: есть** (permissions на sessions). Take-control не делать.
@@ -356,13 +346,13 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P1.3  i18n EN/RU                                    [T-15]   ✓
   └─ P1.4  JEA list import                               [T-42]
   │
-  ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]
+  ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓ T-31 SSH; T-37 имя файла; T-44 WORM recstore
   ├─ P2.2  OCR rus+eng                                   [T-10]
   ├─ P2.3  Charset CP1251/KOI8                           [T-43]
   └─ P2.4  Dynamic groups auto-match                     [T-20]
   │
   ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
-  ├─ P3.2  SMB/NFS archive                               [T-46]
+  ├─ P3.2  SMB/NFS archive                               [T-46]  ✓
   └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ RADIUS PAP
   │
   ├─ P4.1  MSSQL TDS                                     [T-33]
@@ -418,6 +408,8 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
 - `docs/kp-acceptance.txt` — приёмка пилота (уровень A); расширять по мере закрытия T-xx
 - `docs/jit-workflow.txt` — sequential JIT и кворум N-of-M
 - `docs/session-supervisor.txt` — четыре глаза до старта сессии
+- `docs/demo-45min.txt` — продажи: JIT SSH → RDP/SQL → forensic → PDF
+- `docs/archive-smb-nfs.txt` — архив recordings на NFS/SMB, checksum, replay
 - `docs/radius-auth.txt` — вход консоли/SSH-шлюза по RADIUS PAP
 - `docs/install.txt` — `keeppam-install.sh`, USB без git/registry
 - `docs/offline-update.txt` — USB/ISO `docker load`, upgrade/rollback
