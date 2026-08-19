@@ -369,14 +369,29 @@ export function AccessRequestsPage() {
                     </td>
                     <td>{r.reason || "—"}</td>
                     <td>
-                      <span className="badge">{r.stage || "manager"}</span>
-                      {(r.approval_stages || []).length > 1 ? (
-                        <div className="muted" style={{ fontSize: "0.8rem" }}>
-                          {(r.approval_stages || []).join(" → ")}
-                        </div>
-                      ) : null}
+                      {r.approval_mode === "quorum" ? (
+                        <>
+                          <span className="badge">
+                            кворум {r.quorum_votes || 0}/{r.quorum_n || 1} из {r.quorum_m || 1}
+                          </span>
+                          {r.approver_group_name ? (
+                            <div className="muted" style={{ fontSize: "0.8rem" }}>
+                              группа {r.approver_group_name}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <span className="badge">{r.stage || "manager"}</span>
+                          {(r.approval_stages || []).length > 1 ? (
+                            <div className="muted" style={{ fontSize: "0.8rem" }}>
+                              {(r.approval_stages || []).join(" → ")}
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                       {(r.approvals || []).map((a) => (
-                        <div key={a.stage} className="muted" style={{ fontSize: "0.8rem" }}>
+                        <div key={a.actor_id || a.stage} className="muted" style={{ fontSize: "0.8rem" }}>
                           {a.stage}: {a.username}
                         </div>
                       ))}
@@ -393,16 +408,27 @@ export function AccessRequestsPage() {
                       <div className="row">
                         {r.status === "pending" &&
                           r.requester_id !== user?.id &&
-                          ((r.stage === "security" && canApproveSecurity) ||
-                            ((r.stage || "manager") === "manager" && canApprove)) && (
+                          (r.approval_mode === "quorum"
+                            ? canApprove && !(r.approvals || []).some((a) => a.actor_id === user?.id)
+                            : (r.stage === "security" && canApproveSecurity) ||
+                              ((r.stage || "manager") === "manager" && canApprove)) && (
                           <>
                             <button className="btn" type="button" onClick={() => void onApprove(r.id)}>
-                              Одобрить {r.stage === "security" ? "ИБ" : ""}
+                              {r.approval_mode === "quorum"
+                                ? `Одобрить (${(r.quorum_votes || 0) + 1}/${r.quorum_n || 1})`
+                                : r.stage === "security"
+                                  ? "Одобрить ИБ"
+                                  : "Одобрить"}
                             </button>
                             <button className="btn danger" type="button" onClick={() => void onDeny(r.id)}>
                               Отклонить
                             </button>
                           </>
+                        )}
+                        {r.status === "pending" &&
+                          r.approval_mode === "quorum" &&
+                          (r.approvals || []).some((a) => a.actor_id === user?.id) && (
+                          <span className="muted">ваш голос учтён</span>
                         )}
                         {r.status === "pending" && r.requester_id === user?.id && (
                           <button className="btn secondary" type="button" onClick={() => void onCancel(r.id)}>

@@ -1,0 +1,135 @@
+# KeepPAM: содержание коммерческого предложения (КП)
+
+Документ фиксирует **что мы обещаем заказчику** в КП и как это соотносится с `docs/main22.txt` (типовое ТЗ на PAM класса Fudo) и текущим кодом.
+
+КП строится в три уровня — не обещать всё из main22 одной строкой.
+
+## Позиционирование
+
+**KeepPAM** — on-prem PAM-платформа: шлюз привилегированного доступа, vault, JIT, запись и forensic-поиск, без выдачи постоянных паролей операторам.
+
+| Не мы | Мы |
+|-------|-----|
+| Полный аналог CyberArk/Fudo «из коробки» | Замена jump-хоста + Excel, пилот 20–100 активов |
+| Native RDP-клиент + Citrix ICA + TN3270 | SSH/RDP/VNC/DB/HTTPS/k8s через единый портал и шлюз |
+| Virtual Appliance OVA Day-1 | Docker Compose / Kubernetes; OVA — фаза поставки |
+
+## Уровни обещаний в КП
+
+### Уровень A — «Включено в поставку пилота» (есть сейчас)
+
+Формулировки для КП без оговорок «после доработки»:
+
+- Веб-портал (RU; EN — фаза B, см. roadmap).
+- Доступ к целям **без раскрытия пароля** (inject из vault).
+- MFA: TOTP, WebAuthn; step-up на операцию.
+- IdP: локальные учётки, LDAP/AD, OIDC, SAML (несколько IdP), SCIM inbound.
+- RBAC + ABAC (теги, CIDR, GeoIP, ticket, reason, device).
+- JIT-доступ с согласованием: последовательные этапы (руководитель → ИБ) **или кворум N из M** (2 из 3, 3 из 5).
+- Break-glass с аудитом critical и TTL.
+- SSH-шлюз `:2222` (PuTTY, OpenSSH, SecureCRT и др.).
+- RDP/VNC в браузере (Guacamole); экспорт записи в MP4.
+- Запись из **потока** (asciicast / `.guac`), не «видео с экрана»; replay с изменением скорости.
+- Kill активной сессии; live-watch SSH (read-only).
+- Vault: checkout/reveal, dual-control, ротация SSH / PostgreSQL / MySQL.
+- Command risk + JEA; live deny destructive; DLP PII (SQL/HTTP/SSH/OCR/keystroke).
+- Forensic-поиск по session_events (stdin/stdout/keystroke/screen_text, фильтры).
+- Audit + HMAC-цепочка; SIEM ECS; OpenSearch на стенде; compliance PDF + PAdES до B-LTA.
+- Firewall PAM (pam_only, probe multi-agent, quorum).
+- UEBA baseline (новый актив / spread); risk score на connect.
+- Account discovery (SSH/passwd); network scan.
+- Без агентов на рабочих станциях и целях.
+
+### Уровень B — «Включено в контракт, поставка по roadmap» (фазы 1–2, 3–9 мес.)
+
+Обещаем **явно с датами** в КП (см. `docs/kp-roadmap.txt`):
+
+- Двуязычный портал EN/RU.
+- «Четыре глаза» на **сессию**: назначенный супервайзер до старта.
+- HA: ≥2 control + ≥2 session-worker, документированный failover.
+- Архив записей на SMB/NFS (или S3 как эквивалент WORM — согласовать в контракте).
+- RADIUS для входа администраторов в консоль.
+- Расширенный OCR RDP (rus+eng, больше кадров).
+- MSSQL wire proxy (TDS) — если в scope актива заказчика.
+- Захват файлов SCP/SFTP (audit + storage), не только deny DLP.
+
+### Уровень C — «Roadmap / опция / OEM» (не в базовом КП без доп. SOW)
+
+Не включать в базовую цену без отдельного модуля:
+
+- Virtual Appliance VMware/Hyper-V (OVA/VHDX).
+- Citrix ICA / STA / CGP.
+- Telnet, TN3270.
+- Native Windows RDP client с полным clipboard/printers/drives (противоречит DLP-политике по умолчанию).
+- AD: помещение УЗ в privileged group на время сессии + auto rotate.
+- UEBA: динамика клавиш/мыши, ML.
+- Кластер 3+2 multi-site с auto-heal split-brain для ротации паролей.
+- Лицензия «неограниченно пользователей / 100 ИС / 12 мес поддержки» — **коммерческие условия**, не код.
+
+## Матрица main22 → КП (краткая)
+
+| Блок main22 | Уровень КП | Комментарий |
+|-------------|------------|-------------|
+| Virtual Appliance, VMware/Hyper-V | C | Compose/K8s сейчас; OVA — фаза поставки |
+| Без ПО других производителей | B* | Guacamole/OpenSearch/Tesseract — disclose в КП как runtime; «единый дистрибутив KeepPAM» |
+| Без агентов | A | ✓ |
+| Трафик сессии, не граббинг экрана | A | ✓ поток; OCR — выборочные кадры (B) |
+| Масштабирование модулей без остановки | B | Horiz. scale API/worker — roadmap |
+| HA кластер, multi-site | B/C | B = 2+2; C = 3+2 как в main22 |
+| Интеграция AD/LDAP | A | ✓ |
+| Discovery привилегированных УЗ | A | SSH; AD — B |
+| OCR | B | Кадры post-session; не live full-video |
+| MFA | A | ✓ |
+| Аудит | A | ✓ |
+| Без телеметрии к вендору; offline update | A/B | On-prem; offline update — процесс поставки (B) |
+| Портал EN+RU | B | RU сейчас |
+| Кворум 2/3, 3/5 | A | sequential + quorum N-of-M (`074`) |
+| Sync паролей nix/AD/Oracle/MSSQL/MySQL | B | SSH/PG/MySQL; AD/Oracle — B/C |
+| HA ротации и JIT | B/C | |
+| Динамические группы по тегам/имени | A | Теги + Policy overlay |
+| Авторотация по правилам | A | ✓ |
+| Окно времени | A | ✓ |
+| Четыре глаза на сессию | B | JIT 4-eyes есть; supervisor — B |
+| Break-glass | A | ✓ |
+| AD group on session | C | |
+| Прозрачный шлюз | A | ✓ |
+| Clipboard/printers/drives RDP | C | DLP off by policy — опция |
+| Любой клиент (PuTTY/RDP client) | A* | SSH ✓; RDP — browser (C для native client) |
+| Запись SFTP/SCP/clipboard файлов | B | DLP deny сейчас |
+| Метаданные (процессы, окна, файлы) | B | Частично session_events |
+| Протоколы (Citrix, Telnet, …) | A/C | SSH/RDP/VNC/HTTP/SQL ✓; остальное C |
+| Kerberos SSH | C | |
+| Live view + kill | A | SSH watch; RDP status |
+| Forensic search | A | ✓ |
+| Replay speed | A | ✓ |
+| Список команд | A | ✓ |
+| Запись upstream/downstream | A | ✓ |
+| Export video | A | MP4 |
+| Kill + policy deny | A | ✓ |
+| Кодировки RU | A/B | UTF-8; CP1251/KOI8 — B |
+| Хранение WORM | A | S3 Object Lock |
+| SMB/NFS archive | B | |
+| RBAC админов на replay | A | permissions |
+| AD/RADIUS/x509 admin auth | A/B | LDAP/SAML/mTLS; RADIUS B |
+| UEBA + notify | A/B | Baseline A; keystroke/mouse C |
+| Лицензия 100 ИС, 3+2, 12 мес | C | Контракт |
+
+## Типовые формулировки для текста КП
+
+**Scope пилота (12 недель):**
+«Развёртывание KeepPAM в периметре Заказчика: control plane + session worker, интеграция AD/LDAP, до N активов SSH/RDP, JIT, запись, forensic, SIEM-экспорт. Обучение администраторов. Acceptance по чек-листу `docs/kp-acceptance.txt`.»
+
+**Ограничения (обязательно в КП):**
+«Графические сессии — HTML5-шлюз (RDP/VNC). Native RDP-клиент и Citrix — опциональный модуль. Запись файлов SCP/SFTP — фаза 2. Virtual Appliance — поставка OVA по отдельному SOW.»
+
+**Соответствие main22:**
+«KeepPAM закрывает функциональные требования main22 уровня A полностью; уровня B — по согласованному roadmap с фиксированными milestone; уровня C — опции или партнёрская интеграция.»
+
+## Связанные документы
+
+- `docs/kp-roadmap.txt` — фазы доработки под КП
+- `docs/main22-plan.txt` — инженерный план реализации по пунктам ТЗ
+- `docs/kp-acceptance.txt` — чек-лист приёмки пилота
+- `docs/main22.txt` — исходное ТЗ заказчика
+- `docs/prod-infra.txt` — prod hardening
+- `docs/arch.txt` — архитектура для приложения к КП

@@ -42,4 +42,4 @@ Network PAM как NAC-клиент / VLAN controller
 Отдельный движок правил на каждый протокол (единый Policy уже есть)
 Полный shell AST / heredoc / `$()`
 OpenSearch prod 3-node / mTLS, квалифицированная подпись eIDAS, Collector HA
-Очередь срезов этого масштаба закрыта. Дальше — только заведомо большее (полное видео OCR, NAC-клиент, …).
+Очередь срезов этого масштаба закрыта. Дальше — **только roadmap под КП** (`docs/kp.txt`, `docs/kp-roadmap.txt`), не ad-hoc фичи.

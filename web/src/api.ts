@@ -147,6 +147,11 @@ export type Asset = {
   status: string;
   tags: string[];
   approval_stages?: string[];
+  approval_mode?: string;
+  quorum_n?: number;
+  quorum_m?: number;
+  approver_group_id?: string;
+  approver_group_name?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -251,6 +256,12 @@ export type AccessRequest = {
   risk_score?: number;
   risk_factors?: string[];
   approval_stages?: string[];
+  approval_mode?: string;
+  quorum_n?: number;
+  quorum_m?: number;
+  quorum_votes?: number;
+  approver_group_id?: string;
+  approver_group_name?: string;
   stage?: string;
   approvals?: { stage: string; actor_id: string; username: string; created_at: string }[];
 };
@@ -1070,6 +1081,10 @@ export const api = {
     description?: string;
     tags?: string[];
     approval_stages?: string[];
+    approval_mode?: string;
+    quorum_n?: number;
+    quorum_m?: number;
+    approver_group_id?: string | null;
     pam_only?: boolean;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
@@ -1090,6 +1105,10 @@ export const api = {
       status?: string;
       tags?: string[];
       approval_stages?: string[];
+      approval_mode?: string;
+      quorum_n?: number;
+      quorum_m?: number;
+      approver_group_id?: string | null;
       pam_only?: boolean;
     },
   ) =>

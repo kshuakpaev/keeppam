@@ -105,6 +105,36 @@ func (s *Service) UsersWithPermission(ctx context.Context, perm string) ([]uuid.
 	return ids, rows.Err()
 }
 
+func (s *Service) UsersInGroupTree(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error) {
+	if groupID == uuid.Nil {
+		return nil, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id FROM groups WHERE id=$1
+			UNION ALL
+			SELECT g.id FROM groups g
+			JOIN tree t ON g.parent_id = t.id
+		)
+		SELECT DISTINCT m.user_id
+		FROM user_group_members m
+		JOIN tree t ON m.group_id = t.id
+		JOIN users u ON u.id = m.user_id AND u.status = 'active'`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Notification, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -159,14 +189,25 @@ func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (s *Service) OnJITCreated(ctx context.Context, req policy.AccessRequest) {
-	perm := policy.StagePermission(req.Stage)
-	ids, err := s.UsersWithPermission(ctx, perm)
+	var ids []uuid.UUID
+	var err error
+	title := "Новый JIT-запрос"
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		title = fmt.Sprintf("Новый JIT-запрос (кворум %d из %d)", req.QuorumN, req.QuorumM)
+		if req.ApproverGroupID != nil {
+			ids, err = s.UsersInGroupTree(ctx, *req.ApproverGroupID)
+		} else {
+			ids, err = s.UsersWithPermission(ctx, "access.approve")
+		}
+	} else {
+		perm := policy.StagePermission(req.Stage)
+		ids, err = s.UsersWithPermission(ctx, perm)
+		if len(req.ApprovalStages) > 1 {
+			title = "Новый JIT-запрос (этап " + req.Stage + ")"
+		}
+	}
 	if err != nil {
 		return
-	}
-	title := "Новый JIT-запрос"
-	if len(req.ApprovalStages) > 1 {
-		title = "Новый JIT-запрос (этап " + req.Stage + ")"
 	}
 	body := fmt.Sprintf("%s запросил доступ к %s на %d мин",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
@@ -181,8 +222,20 @@ func (s *Service) OnJITStage(ctx context.Context, req policy.AccessRequest) {
 	if req.Status != "pending" {
 		return
 	}
-	perm := policy.StagePermission(req.Stage)
-	ids, err := s.UsersWithPermission(ctx, perm)
+	var ids []uuid.UUID
+	var err error
+	title := "JIT: этап " + req.Stage
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		title = fmt.Sprintf("JIT: кворум %d/%d", req.QuorumVotes, req.QuorumN)
+		if req.ApproverGroupID != nil {
+			ids, err = s.UsersInGroupTree(ctx, *req.ApproverGroupID)
+		} else {
+			ids, err = s.UsersWithPermission(ctx, "access.approve")
+		}
+	} else {
+		perm := policy.StagePermission(req.Stage)
+		ids, err = s.UsersWithPermission(ctx, perm)
+	}
 	if err != nil {
 		return
 	}
@@ -194,10 +247,14 @@ func (s *Service) OnJITStage(ctx context.Context, req policy.AccessRequest) {
 	for _, x := range exclude {
 		to = FilterRecipients(to, x)
 	}
-	title := "JIT: этап " + req.Stage
 	body := fmt.Sprintf("%s → %s, нужен %s",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()), req.Stage)
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		body = fmt.Sprintf("%s → %s, кворум %d из %d",
+			nonEmpty(req.RequesterUsername, req.RequesterID.String()),
+			nonEmpty(req.AssetName, req.AssetID.String()), req.QuorumN, req.QuorumM)
+	}
 	s.insert(ctx, to, "jit.stage", title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload("jit.stage", req))
 	s.fireMail(ctx, to, title, body)
@@ -319,7 +376,11 @@ func JITPayload(event string, req policy.AccessRequest) map[string]any {
 		"ticket_id":          req.TicketID,
 		"status":             req.Status,
 		"stage":              req.Stage,
+		"approval_mode":      req.ApprovalMode,
 		"approval_stages":    req.ApprovalStages,
+		"quorum_n":           req.QuorumN,
+		"quorum_m":           req.QuorumM,
+		"quorum_votes":       req.QuorumVotes,
 		"approver_id":        approver,
 		"ts":                 time.Now().UTC().Format(time.RFC3339),
 	}

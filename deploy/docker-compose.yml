@@ -153,8 +153,6 @@ services:
     environment:
       PORT: "8101"
       PROBE_TIMEOUT_SEC: "4"
-    ports:
-      - "8101:8101"
     restart: unless-stopped
 
   session-worker:

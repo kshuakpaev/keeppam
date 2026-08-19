@@ -1,0 +1,54 @@
+# KeepPAM: чек-лист приёмки пилота (КП уровень A)
+
+Использовать как приложение к контракту / акту внедрения. Все пункты — pass/fail на стенде Заказчика.
+
+## 1. Identity и доступ
+
+- [ ] Вход local / LDAP / OIDC / SAML (минимум 2 источника из согласованных)
+- [ ] MFA TOTP или WebAuthn обязателен для привилегированных ролей
+- [ ] JIT: заявка → согласование (этап manager/security **или** кворум N из M) → временный ACL → истечение binding
+- [ ] Break-glass: открытие с reason ≥20 символов, audit critical, TTL ≤60 мин
+- [ ] Deny-by-default: без ACL сессия невозможна
+
+## 2. SSH
+
+- [ ] `ssh -p 2222 user@keeppam` → меню целей / прямой target
+- [ ] Пароль целевой УЗ оператору не показывается
+- [ ] Запись asciicast; replay в UI; изменение скорости воспроизведения
+- [ ] Kill сессии администратором
+- [ ] Live watch (read-only) активной SSH-сессии
+- [ ] Command risk / live deny destructive (демо `rm -rf` или аналог)
+
+## 3. RDP/VNC
+
+- [ ] Подключение из портала (HTML5)
+- [ ] Запись `.guac`; экспорт MP4
+- [ ] Keystroke index; OCR screen_text (≥1 кадр на тестовой сессии)
+
+## 4. Vault и секреты
+
+- [ ] Секрет учётки в vault (не plaintext в БД UI)
+- [ ] Checkout / check-in; rotate SSH или PostgreSQL/MySQL (один тип из scope)
+
+## 5. Audit и compliance
+
+- [ ] События login, session start/end, JIT, break-glass в audit log
+- [ ] Forensic search по session_events (команда SSH найдена)
+- [ ] Compliance report PDF; при настроенном cert — подпись PAdES (B-B минимум)
+- [ ] SIEM: событие audit уходит в настроенный sink (OpenSearch/syslog/NATS)
+
+## 6. Эксплуатация
+
+- [ ] Backup по `docs/dr-runbook.txt` выполнен; restore проверен на копии
+- [ ] TLS на API (или mTLS по согласованию)
+- [ ] Нет исходящих подключений к вендору в штатном режиме
+- [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, admin quick start
+
+## 7. Явные исключения (не fail, если в КП оговорено)
+
+- Native RDP client, Citrix, TN3270
+- Virtual Appliance OVA
+- EN locale UI (если не фаза 1.3)
+- AD group membership on session
+
+Подпись Заказчик / Исполнитель: _______________  Дата: _______________

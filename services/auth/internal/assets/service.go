@@ -52,6 +52,11 @@ type Asset struct {
 	Status             string     `json:"status"`
 	Tags               []string   `json:"tags"`
 	ApprovalStages     []string   `json:"approval_stages"`
+	ApprovalMode       string     `json:"approval_mode"`
+	QuorumN            int        `json:"quorum_n,omitempty"`
+	QuorumM            int        `json:"quorum_m,omitempty"`
+	ApproverGroupID    *uuid.UUID `json:"approver_group_id,omitempty"`
+	ApproverGroupName  string     `json:"approver_group_name,omitempty"`
 	HostKeyAlgo        string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt   *time.Time `json:"host_key_learned_at,omitempty"`
@@ -97,32 +102,40 @@ type Account struct {
 }
 
 type CreateAssetInput struct {
-	Name           string   `json:"name"`
-	AssetType      string   `json:"asset_type"`
-	Hostname       string   `json:"hostname"`
-	Address        string   `json:"address"`
-	Port           int      `json:"port"`
-	Protocol       string   `json:"protocol"`
-	DatabaseName   string   `json:"database_name"`
-	Description    string   `json:"description"`
-	Tags           []string `json:"tags"`
-	ApprovalStages []string `json:"approval_stages"`
-	PamOnly        *bool    `json:"pam_only"`
+	Name            string     `json:"name"`
+	AssetType       string     `json:"asset_type"`
+	Hostname        string     `json:"hostname"`
+	Address         string     `json:"address"`
+	Port            int        `json:"port"`
+	Protocol        string     `json:"protocol"`
+	DatabaseName    string     `json:"database_name"`
+	Description     string     `json:"description"`
+	Tags            []string   `json:"tags"`
+	ApprovalStages  []string   `json:"approval_stages"`
+	ApprovalMode    string     `json:"approval_mode"`
+	QuorumN         int        `json:"quorum_n"`
+	QuorumM         int        `json:"quorum_m"`
+	ApproverGroupID *uuid.UUID `json:"approver_group_id"`
+	PamOnly         *bool      `json:"pam_only"`
 }
 
 type UpdateAssetInput struct {
-	Name           *string   `json:"name"`
-	AssetType      *string   `json:"asset_type"`
-	Hostname       *string   `json:"hostname"`
-	Address        *string   `json:"address"`
-	Port           *int      `json:"port"`
-	Protocol       *string   `json:"protocol"`
-	DatabaseName   *string   `json:"database_name"`
-	Description    *string   `json:"description"`
-	Status         *string   `json:"status"`
-	Tags           *[]string `json:"tags"`
-	ApprovalStages *[]string `json:"approval_stages"`
-	PamOnly        *bool     `json:"pam_only"`
+	Name            *string    `json:"name"`
+	AssetType       *string    `json:"asset_type"`
+	Hostname        *string    `json:"hostname"`
+	Address         *string    `json:"address"`
+	Port            *int       `json:"port"`
+	Protocol        *string    `json:"protocol"`
+	DatabaseName    *string    `json:"database_name"`
+	Description     *string    `json:"description"`
+	Status          *string    `json:"status"`
+	Tags            *[]string  `json:"tags"`
+	ApprovalStages  *[]string  `json:"approval_stages"`
+	ApprovalMode    *string    `json:"approval_mode"`
+	QuorumN         *int       `json:"quorum_n"`
+	QuorumM         *int       `json:"quorum_m"`
+	ApproverGroupID *uuid.UUID `json:"approver_group_id"`
+	PamOnly         *bool      `json:"pam_only"`
 }
 
 type CreateAccountInput struct {
@@ -160,10 +173,13 @@ type UpdateAccountInput struct {
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
-			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}'), COALESCE(pam_only, TRUE), firewall_applied_at
-		FROM assets ORDER BY name`)
+		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
+			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
+			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
+			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, '')
+		FROM assets a
+		LEFT JOIN groups g ON g.id = a.approver_group_id
+		ORDER BY a.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -186,10 +202,13 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 	row := s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, asset_type, hostname, address, port, protocol, COALESCE(database_name,''), description, status,
-			host_key_algo, host_key_blob, host_key_fp, host_key_learned_at,
-			created_at, updated_at, created_by, COALESCE(approval_stages, '{manager}'), COALESCE(pam_only, TRUE), firewall_applied_at
-		FROM assets WHERE id=$1`, id)
+		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
+			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
+			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
+			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, '')
+		FROM assets a
+		LEFT JOIN groups g ON g.id = a.approver_group_id
+		WHERE a.id=$1`, id)
 	a, err := scanAsset(row)
 	if err != nil {
 		return Asset{}, err
@@ -226,6 +245,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 		Protocol: in.Protocol, DatabaseName: dbName, Description: in.Description, Status: "active",
 		Tags: in.Tags, ApprovalStages: assetApprovalStages(in.ApprovalStages), PamOnly: true, CreatedAt: now, UpdatedAt: now, CreatedBy: &actorID,
 	}
+	if err := applyAssetApproval(&a, in.ApprovalMode, in.ApprovalStages, in.QuorumN, in.QuorumM, in.ApproverGroupID); err != nil {
+		return Asset{}, err
+	}
 	if in.PamOnly != nil {
 		a.PamOnly = *in.PamOnly
 	}
@@ -235,9 +257,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -305,8 +327,29 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 		a.HostKeyLearnedAt = nil
 		a.FirewallAppliedAt = nil
 	}
-	if in.ApprovalStages != nil {
-		a.ApprovalStages = assetApprovalStages(*in.ApprovalStages)
+	if in.ApprovalMode != nil || in.QuorumN != nil || in.QuorumM != nil || in.ApprovalStages != nil {
+		mode := a.ApprovalMode
+		if in.ApprovalMode != nil {
+			mode = *in.ApprovalMode
+		}
+		qn, qm := a.QuorumN, a.QuorumM
+		if in.QuorumN != nil {
+			qn = *in.QuorumN
+		}
+		if in.QuorumM != nil {
+			qm = *in.QuorumM
+		}
+		stages := a.ApprovalStages
+		if in.ApprovalStages != nil {
+			stages = *in.ApprovalStages
+		}
+		gid := a.ApproverGroupID
+		if in.ApprovalMode != nil {
+			gid = in.ApproverGroupID
+		}
+		if err := applyAssetApproval(&a, mode, stages, qn, qm, gid); err != nil {
+			return Asset{}, err
+		}
 	}
 	if in.PamOnly != nil {
 		a.PamOnly = *in.PamOnly
@@ -325,10 +368,12 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			host_key_algo=$12, host_key_blob=$13, host_key_fp=$14, host_key_learned_at=$15,
 			approval_stages=$16, pam_only=$17, firewall_applied_at=$18,
 			firewall_probe_at=CASE WHEN $19 THEN NULL ELSE firewall_probe_at END,
-			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END
+			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END,
+			approval_mode=$20, quorum_n=$21, quorum_m=$22, approver_group_id=$23
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
-		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged)
+		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
+		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -833,14 +878,46 @@ func scanAsset(row scannable) (Asset, error) {
 	err := row.Scan(&a.ID, &a.Name, &a.AssetType, &a.Hostname, &a.Address, &a.Port,
 		&a.Protocol, &a.DatabaseName, &a.Description, &a.Status,
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
-		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt)
+		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt,
+		&a.ApprovalMode, &a.QuorumN, &a.QuorumM, &a.ApproverGroupID, &a.ApproverGroupName)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}
 	if len(a.ApprovalStages) == 0 {
 		a.ApprovalStages = []string{"manager"}
 	}
+	if a.ApprovalMode == "" {
+		a.ApprovalMode = "sequential"
+	}
 	return a, err
+}
+
+func applyAssetApproval(a *Asset, mode string, stages []string, n, m int, gid *uuid.UUID) error {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "sequential" {
+		a.ApprovalMode = "sequential"
+		a.ApprovalStages = assetApprovalStages(stages)
+		a.QuorumN = 1
+		a.QuorumM = 1
+		a.ApproverGroupID = nil
+		return nil
+	}
+	if mode != "quorum" {
+		return fmt.Errorf("approval_mode must be sequential or quorum")
+	}
+	if n < 1 || n > 16 || m < 1 || m > 16 || n > m {
+		return fmt.Errorf("quorum: 1 ≤ N ≤ M ≤ 16")
+	}
+	a.ApprovalMode = "quorum"
+	a.ApprovalStages = []string{"manager"}
+	a.QuorumN = n
+	a.QuorumM = m
+	if gid != nil && *gid == uuid.Nil {
+		a.ApproverGroupID = nil
+	} else {
+		a.ApproverGroupID = gid
+	}
+	return nil
 }
 
 func assetApprovalStages(in []string) []string {

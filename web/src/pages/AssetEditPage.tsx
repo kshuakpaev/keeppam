@@ -73,6 +73,9 @@ export function AssetEditPage() {
     status: "active",
     tags: "",
     approval_mode: "one",
+    quorum_n: 2,
+    quorum_m: 3,
+    approver_group_id: "",
     pam_only: true,
   });
   const [accForm, setAccForm] = useState({
@@ -134,12 +137,16 @@ export function AssetEditPage() {
         description: a.description || "",
         status: a.status,
         tags: (a.tags || []).join(", "),
-        approval_mode: (a.approval_stages || []).includes("security") ? "two" : "one",
+        approval_mode:
+          a.approval_mode === "quorum" ? "quorum" : (a.approval_stages || []).includes("security") ? "two" : "one",
+        quorum_n: a.quorum_n || 2,
+        quorum_m: a.quorum_m || 3,
+        approver_group_id: a.approver_group_id || "",
         pam_only: a.pam_only !== false,
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
-      if (canACL || canUsers) {
+      if (canACL || canUsers || canWrite) {
         const r = await api.listRoles();
         setRoles(r.roles || []);
         try {
@@ -345,6 +352,10 @@ export function AssetEditPage() {
           .map((t) => t.trim())
           .filter(Boolean),
         approval_stages: form.approval_mode === "two" ? ["manager", "security"] : ["manager"],
+        approval_mode: form.approval_mode === "quorum" ? "quorum" : "sequential",
+        quorum_n: form.approval_mode === "quorum" ? Number(form.quorum_n) || 2 : 1,
+        quorum_m: form.approval_mode === "quorum" ? Number(form.quorum_m) || 3 : 1,
+        approver_group_id: form.approval_mode === "quorum" && form.approver_group_id ? form.approver_group_id : null,
         pam_only: form.pam_only,
       });
       setAsset(updated);
@@ -984,7 +995,67 @@ export function AssetEditPage() {
         >
           <option value="one">Только руководитель (access.approve)</option>
           <option value="two">Руководитель + ИБ (access.approve.security)</option>
+          <option value="quorum">Кворум N из M (2 из 3, 3 из 5)</option>
         </select>
+        {form.approval_mode === "quorum" && (
+          <>
+            <label>Кворум N из M</label>
+            <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                style={{ width: "4rem" }}
+                value={form.quorum_n}
+                onChange={(e) => setForm({ ...form, quorum_n: Number(e.target.value) })}
+                disabled={!canWrite}
+              />
+              <span className="muted">из</span>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                style={{ width: "4rem" }}
+                value={form.quorum_m}
+                onChange={(e) => setForm({ ...form, quorum_m: Number(e.target.value) })}
+                disabled={!canWrite}
+              />
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!canWrite}
+                onClick={() => setForm({ ...form, quorum_n: 2, quorum_m: 3 })}
+              >
+                2 из 3
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!canWrite}
+                onClick={() => setForm({ ...form, quorum_n: 3, quorum_m: 5 })}
+              >
+                3 из 5
+              </button>
+            </div>
+            <label>Группа согласующих</label>
+            <select
+              value={form.approver_group_id}
+              onChange={(e) => setForm({ ...form, approver_group_id: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="">Любой с правом access.approve</option>
+              {pamGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                  {g.member_count != null ? ` (${g.member_count})` : ""}
+                </option>
+              ))}
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Заявка одобряется, когда N разных участников группы проголосовали. Любой из них может отклонить.
+            </p>
+          </>
+        )}
         <label>Описание</label>
         <input
           value={form.description}
