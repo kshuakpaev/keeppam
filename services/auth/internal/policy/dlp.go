@@ -87,6 +87,12 @@ func ExportDenied(statement string) (bool, string) {
 	if strings.Contains(u, "INTO OUTFILE") || strings.Contains(u, "INTO DUMPFILE") {
 		return true, "sql export denied by DLP (OUTFILE)"
 	}
+	if strings.Contains(u, "BULK INSERT") || strings.Contains(u, "OPENROWSET") || strings.Contains(u, "OPENDATASOURCE") {
+		return true, "sql export denied by DLP (BULK/OPENROWSET)"
+	}
+	if strings.Contains(u, "XP_CMDSHELL") {
+		return true, "sql denied by DLP (xp_cmdshell)"
+	}
 	verb, _ := ClassifySQL(statement)
 	if verb == "EXPORT" {
 		return true, "sql export denied by DLP (COPY/LOAD)"

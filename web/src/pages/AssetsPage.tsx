@@ -4,7 +4,7 @@ import { api, hasPerm, type Asset } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl"];
 const TYPES = ["host", "db", "k8s", "api"];
 
 export function AssetsPage() {
@@ -179,13 +179,13 @@ export function AssetsPage() {
               />
             </div>
           </div>
-          {(form.protocol === "postgres" || form.protocol === "mysql") && (
+          {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
             <>
               <label>Database</label>
               <input
                 value={form.database_name}
                 onChange={(e) => setForm({ ...form, database_name: e.target.value })}
-                placeholder={form.protocol === "postgres" ? "postgres" : "(optional)"}
+                placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional)"}
               />
             </>
           )}

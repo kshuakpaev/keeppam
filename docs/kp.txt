@@ -78,7 +78,7 @@
 | HA кластер, multi-site | B/C | B = 2+2; C = 3+2 как в main22 |
 | Интеграция AD/LDAP | A | ✓ |
 | Discovery привилегированных УЗ | A | SSH; AD — B |
-| OCR | B | Кадры post-session; не live full-video |
+| OCR | B | rus+eng, interval в Policy, до 120 кадров; не live full-video |
 | MFA | A | ✓ |
 | Аудит | A | ✓ |
 | Без телеметрии к вендору; offline update | A/B | On-prem; offline update — процесс поставки (B) |
@@ -127,6 +127,7 @@
 
 ## Связанные документы
 
+- `docs/ocr-rdp.txt` — OCR RDP rus+eng
 - `docs/demo-45min.txt` — демо 45 мин (продажи)
 - `docs/file-transfer.txt` — SCP/SFTP capture
 - `docs/archive-smb-nfs.txt` — архив SMB/NFS

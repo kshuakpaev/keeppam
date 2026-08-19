@@ -32,6 +32,9 @@ type Snapshot struct {
 	AdminBypass           bool         `json:"admin_bypass,omitempty"`
 	PIIAction             string       `json:"pii_action,omitempty"`
 	FileTransfer          string       `json:"file_transfer,omitempty"`
+	OCRLang               string       `json:"ocr_lang,omitempty"`
+	OCRIntervalSec        int          `json:"ocr_interval_sec,omitempty"`
+	OCRMaxFrames          int          `json:"ocr_max_frames,omitempty"`
 	DlpPatterns           []DlpPattern `json:"dlp_patterns,omitempty"`
 }
 
@@ -129,4 +132,31 @@ func (s *Service) EnrichSnapshot(ctx context.Context, sn *Snapshot) {
 		_ = s.db.Pool.QueryRow(ctx, `SELECT name FROM app_object_packs WHERE id=$1`, *sn.AppObjectPackID).Scan(&sn.AppObjectPackName)
 	}
 	s.loadDlpPatternsForSnapshot(ctx, sn)
+	s.loadOCRForSnapshot(ctx, sn)
+}
+
+func (s *Service) loadOCRForSnapshot(ctx context.Context, sn *Snapshot) {
+	if sn == nil {
+		return
+	}
+	if sn.AccessPolicyID != nil && (sn.OCRLang == "" || sn.OCRIntervalSec == 0 || sn.OCRMaxFrames == 0) {
+		var lang string
+		var iv, n int
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(ocr_lang,''), COALESCE(ocr_interval_sec,0), COALESCE(ocr_max_frames,0)
+			FROM access_policies WHERE id=$1`, *sn.AccessPolicyID).Scan(&lang, &iv, &n)
+		if err == nil {
+			if sn.OCRLang == "" {
+				sn.OCRLang = lang
+			}
+			if sn.OCRIntervalSec == 0 {
+				sn.OCRIntervalSec = iv
+			}
+			if sn.OCRMaxFrames == 0 {
+				sn.OCRMaxFrames = n
+			}
+		}
+	}
+	opt := sn.OCR()
+	sn.OCRLang, sn.OCRIntervalSec, sn.OCRMaxFrames = opt.Lang, opt.IntervalSec, opt.MaxFrames
 }

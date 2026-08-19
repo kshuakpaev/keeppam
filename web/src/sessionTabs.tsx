@@ -63,9 +63,13 @@ export function pathForTab(tab: SessionTab): string {
   return `/sessions/${tab.id}/${tab.kind}?title=${title}`;
 }
 
+export function isSQLProtocol(protocol: string): boolean {
+  return protocol === "postgres" || protocol === "mysql" || protocol === "mssql";
+}
+
 export function kindForProtocol(protocol: string, isolated?: boolean): SessionTabKind {
   if (protocol === "rdp" || protocol === "vnc") return "desktop";
-  if (protocol === "postgres" || protocol === "mysql") return "sql";
+  if (isSQLProtocol(protocol)) return "sql";
   if (protocol === "https") return isolated ? "desktop" : "app";
   if (protocol === "kubectl") return "k8s";
   return "terminal";

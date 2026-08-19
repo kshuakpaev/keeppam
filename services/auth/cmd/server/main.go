@@ -438,6 +438,14 @@ func main() {
 				}
 			}()
 		}
+		if cfg.MSSQLWireAddr != "" && cfg.MSSQLWireAddr != "off" {
+			msWire := dbproxy.NewWireGateway(cfg.MSSQLWireAddr, "mssql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			go func() {
+				if err := msWire.ListenAndServe(runCtx); err != nil {
+					slog.Error("mssql wire", "err", err)
+				}
+			}()
+		}
 		go func() {
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()

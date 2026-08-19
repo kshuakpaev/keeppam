@@ -19,6 +19,9 @@ func ResolveDatabase(protocol, sessionDB, assetDB string) string {
 	if protocol == "postgres" {
 		return "postgres"
 	}
+	if protocol == "mssql" {
+		return "master"
+	}
 	return ""
 }
 
@@ -45,6 +48,25 @@ func MySQLDSN(creds assets.TargetCreds, database string) string {
 		return base + "?parseTime=true&timeout=15s"
 	}
 	return base + db + "?parseTime=true&timeout=15s"
+}
+
+func MSSQLDSN(creds assets.TargetCreds, database string) string {
+	db := strings.TrimSpace(database)
+	if db == "" {
+		db = "master"
+	}
+	u := &url.URL{
+		Scheme: "sqlserver",
+		User:   url.UserPassword(creds.Account.Username, creds.Secret),
+		Host:   fmt.Sprintf("%s:%d", creds.Asset.Address, creds.Asset.Port),
+	}
+	q := url.Values{}
+	q.Set("database", db)
+	q.Set("encrypt", "true")
+	q.Set("TrustServerCertificate", "true")
+	q.Set("dial timeout", "15")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func MySQLDSNMulti(creds assets.TargetCreds, database string) string {

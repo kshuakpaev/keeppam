@@ -67,6 +67,9 @@ func TestExportDenied(t *testing.T) {
 	if ok, _ := ExportDenied("LOAD DATA INFILE '/tmp/x' INTO TABLE t"); !ok {
 		t.Fatal("load")
 	}
+	if ok, _ := ExportDenied("BULK INSERT t FROM 'x'"); !ok {
+		t.Fatal("bulk")
+	}
 	if ok, _ := AllowSQL(SQLPack{}, false, "COPY t TO STDOUT"); ok {
 		t.Fatal("copy without pack")
 	}

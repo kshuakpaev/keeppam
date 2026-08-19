@@ -41,6 +41,9 @@ type AccessPolicy struct {
 	RiskAction            string       `json:"risk_action"`
 	PIIAction             string       `json:"pii_action"`
 	FileTransfer          string       `json:"file_transfer"`
+	OCRLang               string       `json:"ocr_lang"`
+	OCRIntervalSec        int          `json:"ocr_interval_sec"`
+	OCRMaxFrames          int          `json:"ocr_max_frames"`
 	DlpPatterns           []DlpPattern `json:"dlp_patterns"`
 	CreatedAt             time.Time    `json:"created_at"`
 	UpdatedAt             time.Time    `json:"updated_at"`
@@ -68,6 +71,9 @@ type AccessPolicyInput struct {
 	RiskAction          string       `json:"risk_action"`
 	PIIAction           string       `json:"pii_action"`
 	FileTransfer        string       `json:"file_transfer"`
+	OCRLang             string       `json:"ocr_lang"`
+	OCRIntervalSec      int          `json:"ocr_interval_sec"`
+	OCRMaxFrames        int          `json:"ocr_max_frames"`
 	DlpPatterns         []DlpPattern `json:"dlp_patterns"`
 }
 
@@ -118,13 +124,13 @@ func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in 
 			required_tags, require_ticket, require_reason,
 			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress,
 			command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id,
-			max_risk, risk_action, pii_action, file_transfer, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,NOW(),NOW(),$23)`,
+			max_risk, risk_action, pii_action, file_transfer, ocr_lang, ocr_interval_sec, ocr_max_frames, created_at, updated_at, created_by)
+		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,NOW(),NOW(),$26)`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer, actorID)
+		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames, actorID)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
@@ -168,13 +174,14 @@ func (s *Service) UpdateAccessPolicy(ctx context.Context, actorID, id uuid.UUID,
 			required_tags=$7, require_ticket=$8, require_reason=$9,
 			allowed_cidrs=$10, allowed_countries=$11, allowed_devices=$12, allowed_namespaces=$13, allowed_egress=$14,
 			command_policy_pack_id=$15, sql_policy_pack_id=$16, http_policy_pack_id=$17, app_object_pack_id=$18,
-			max_risk=$19, risk_action=$20, pii_action=$21, file_transfer=$22, updated_at=NOW()
+			max_risk=$19, risk_action=$20, pii_action=$21, file_transfer=$22,
+			ocr_lang=$23, ocr_interval_sec=$24, ocr_max_frames=$25, updated_at=NOW()
 		WHERE id=$1`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer)
+		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
@@ -211,7 +218,9 @@ const accessPolicySelect = `
 			p.sql_policy_pack_id, COALESCE(sp.name,''),
 			p.http_policy_pack_id, COALESCE(hp.name,''),
 			p.app_object_pack_id, COALESCE(ao.name,''),
-			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), COALESCE(p.file_transfer,'deny'), p.created_at, p.updated_at
+			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), COALESCE(p.file_transfer,'deny'),
+			COALESCE(p.ocr_lang,'rus+eng'), COALESCE(p.ocr_interval_sec,15), COALESCE(p.ocr_max_frames,60),
+			p.created_at, p.updated_at
 		FROM access_policies p
 		LEFT JOIN command_policy_packs cp ON cp.id = p.command_policy_pack_id
 		LEFT JOIN sql_policy_packs sp ON sp.id = p.sql_policy_pack_id
@@ -227,7 +236,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 		&cidrs, &countries, &devices, &namespaces, &egress,
 		&p.CommandPolicyPackID, &cmdName, &p.SQLPolicyPackID, &sqlName, &p.HTTPPolicyPackID, &httpName,
 		&p.AppObjectPackID, &appName,
-		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.FileTransfer, &p.CreatedAt, &p.UpdatedAt)
+		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.FileTransfer, &p.OCRLang, &p.OCRIntervalSec, &p.OCRMaxFrames, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
@@ -250,12 +259,12 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 }
 
 type normalizedPolicy struct {
-	name, description, riskAction, piiAction, fileTransfer string
-	timeStart, timeEnd                                     *string
-	days, maxRisk                                          int
-	tags, cidrs, countries, devices, namespaces, egress    []string
-	requireTicket, requireReason                           bool
-	cmdPack, sqlPack, httpPack, appPack                    *uuid.UUID
+	name, description, riskAction, piiAction, fileTransfer, ocrLang string
+	timeStart, timeEnd                                              *string
+	days, maxRisk, ocrInterval, ocrFrames                           int
+	tags, cidrs, countries, devices, namespaces, egress             []string
+	requireTicket, requireReason                                    bool
+	cmdPack, sqlPack, httpPack, appPack                             *uuid.UUID
 }
 
 func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normalizedPolicy, error) {
@@ -307,8 +316,34 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 	if err != nil {
 		return normalizedPolicy{}, err
 	}
+	ocrLangIn := in.OCRLang
+	ocrIv, ocrN := in.OCRIntervalSec, in.OCRMaxFrames
+	if cur.ID != uuid.Nil {
+		if strings.TrimSpace(ocrLangIn) == "" {
+			ocrLangIn = cur.OCRLang
+		}
+		if ocrIv == 0 {
+			ocrIv = cur.OCRIntervalSec
+		}
+		if ocrN == 0 {
+			ocrN = cur.OCRMaxFrames
+		}
+	}
+	ocrLang, err := NormalizeOCRLang(ocrLangIn)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
+	ocrInterval, err := NormalizeOCRInterval(ocrIv)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
+	ocrFrames, err := NormalizeOCRMaxFrames(ocrN)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
 	return normalizedPolicy{
 		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction, piiAction: piiAction, fileTransfer: fileTransfer,
+		ocrLang: ocrLang, ocrInterval: ocrInterval, ocrFrames: ocrFrames,
 		timeStart: in.TimeStart, timeEnd: in.TimeEnd, days: days, maxRisk: in.MaxRisk,
 		tags: normalizeTags(in.RequiredTags), cidrs: cidrs, countries: countries,
 		devices: devices, namespaces: namespaces, egress: egress,

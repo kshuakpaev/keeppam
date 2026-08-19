@@ -21,7 +21,7 @@ function fromLocalInput(s: string) {
 function sessionHref(e: TimelineEvent) {
   if (!e.session_id) return "";
   const p = e.protocol || "";
-  if (p === "postgres" || p === "mysql") return `/sessions/${e.session_id}/sql`;
+  if (p === "postgres" || p === "mysql" || p === "mssql") return `/sessions/${e.session_id}/sql`;
   if (p === "kubectl") return `/sessions/${e.session_id}/k8s`;
   if (p === "rdp" || p === "vnc") return `/sessions/${e.session_id}/desktop`;
   if (p === "https") return `/sessions/${e.session_id}/app`;

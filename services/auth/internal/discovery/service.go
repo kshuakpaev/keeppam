@@ -36,19 +36,19 @@ type Job struct {
 }
 
 type Candidate struct {
-	ID                 uuid.UUID       `json:"id"`
-	JobID              uuid.UUID       `json:"job_id"`
-	Address            string          `json:"address"`
-	Port               int             `json:"port"`
-	Protocol           string          `json:"protocol"`
-	Username           string          `json:"username,omitempty"`
-	SourceAssetID      *uuid.UUID      `json:"source_asset_id,omitempty"`
-	ImportedAssetID    *uuid.UUID      `json:"imported_asset_id,omitempty"`
-	ImportedAccountID  *uuid.UUID      `json:"imported_account_id,omitempty"`
-	Details            json.RawMessage `json:"details,omitempty"`
-	Privileged         bool            `json:"privileged"`
-	CreatedAt          time.Time       `json:"created_at"`
-	AlreadyKnown       bool            `json:"already_known"`
+	ID                uuid.UUID       `json:"id"`
+	JobID             uuid.UUID       `json:"job_id"`
+	Address           string          `json:"address"`
+	Port              int             `json:"port"`
+	Protocol          string          `json:"protocol"`
+	Username          string          `json:"username,omitempty"`
+	SourceAssetID     *uuid.UUID      `json:"source_asset_id,omitempty"`
+	ImportedAssetID   *uuid.UUID      `json:"imported_asset_id,omitempty"`
+	ImportedAccountID *uuid.UUID      `json:"imported_account_id,omitempty"`
+	Details           json.RawMessage `json:"details,omitempty"`
+	Privileged        bool            `json:"privileged"`
+	CreatedAt         time.Time       `json:"created_at"`
+	AlreadyKnown      bool            `json:"already_known"`
 }
 
 type CreateJobInput struct {
@@ -215,14 +215,14 @@ func (s *Service) importHostCandidate(ctx context.Context, actorID uuid.UUID, c 
 	name := fmt.Sprintf("%s-%s-%d", c.Address, c.Protocol, c.Port)
 	name = strings.ReplaceAll(name, ":", "-")
 	asset, err := s.assets.Create(ctx, actorID, assets.CreateAssetInput{
-		Name:      name,
-		AssetType: "host",
-		Hostname:  c.Address,
-		Address:   c.Address,
-		Port:      c.Port,
-		Protocol:  c.Protocol,
+		Name:        name,
+		AssetType:   "host",
+		Hostname:    c.Address,
+		Address:     c.Address,
+		Port:        c.Port,
+		Protocol:    c.Protocol,
 		Description: fmt.Sprintf("Imported from discovery job %s", c.JobID.String()[:8]),
-		Tags:      []string{"discovered"},
+		Tags:        []string{"discovered"},
 	}, ip, ua)
 	if err != nil {
 		name2 := fmt.Sprintf("%s-%s", name, store.NewID().String()[:8])
@@ -300,6 +300,8 @@ func protocolForPort(port int) string {
 		return "postgres"
 	case 3306:
 		return "mysql"
+	case 1433:
+		return "mssql"
 	case 443:
 		return "https"
 	default:

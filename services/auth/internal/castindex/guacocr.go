@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
-)
 
-const ocrMaxFrames = 20
+	"github.com/keeppam/auth/internal/policy"
+)
 
 type ocrFrame struct {
 	Offset float64 `json:"offset"`
@@ -25,11 +25,26 @@ type ocrResponse struct {
 	Frames []ocrFrame `json:"frames"`
 }
 
-func (s *Service) fetchOCR(ctx context.Context, guacPath string) ([]ocrFrame, error) {
+func (s *Service) fetchOCR(ctx context.Context, guacPath string, opt policy.OCROpts) ([]ocrFrame, error) {
 	if s == nil || strings.TrimSpace(s.guacencURL) == "" {
 		return nil, fmt.Errorf("guacenc not configured")
 	}
-	body, _ := json.Marshal(map[string]any{"path": guacPath, "max_frames": ocrMaxFrames})
+	if opt.Lang == "" {
+		opt.Lang = policy.OCRDefaultLang
+	}
+	if opt.IntervalSec <= 0 {
+		opt.IntervalSec = policy.OCRDefaultInterval
+	}
+	if opt.MaxFrames <= 0 {
+		opt.MaxFrames = policy.OCRDefaultFrames
+	}
+	if opt.MaxFrames > policy.OCRMaxFramesCap {
+		opt.MaxFrames = policy.OCRMaxFramesCap
+	}
+	body, _ := json.Marshal(map[string]any{
+		"path": guacPath, "max_frames": opt.MaxFrames,
+		"interval_sec": opt.IntervalSec, "lang": opt.Lang,
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.guacencURL, "/")+"/ocr", bytes.NewReader(body))
 	if err != nil {
 		return nil, err

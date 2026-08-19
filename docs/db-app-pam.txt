@@ -9,9 +9,9 @@
 
 ## Модель объектов
 
-- Asset `db` + protocol `postgres|mysql` — инстанс БД.
-- Asset account — vault-логин (ротация уже есть).
-- Session `postgres|mysql` — проксированная DB-сессия (Web SQL + native wire).
+- Asset `db` + protocol `postgres|mysql|mssql` — инстанс БД.
+- Asset account — vault-логин (ротация PG/MySQL; MSSQL — T-17 позже).
+- Session `postgres|mysql|mssql` — проксированная DB-сессия (Web SQL + native wire).
 - Asset `api`/`https` — приложение.
 - Asset `k8s` + protocol `kubectl` — кластер; lease kubeconfig/SA token или TokenRequest (см. `docs/k8s-pam.txt`).
 - `app_integrations` — OIDC / vault_password / header_inject + recording_mode.
@@ -46,7 +46,7 @@ Parse failure: allow + raw audit (strict_sql_parse не требуется в MV
 ## Дорожная карта
 
 - DB-1: Web SQL console + statement audit — реализовано (`/sessions/{id}/sql`)
-- DB-2: native wire proxy — реализовано (`:15432` postgres, `:13306` mysql; user=session UUID, password=wire_token)
+- DB-2: native wire proxy — реализовано (`:15432` postgres, `:13306` mysql, `:11433` mssql; user=session UUID, password=wire_token). MSSQL: `docs/mssql-wire.txt`.
 - DB-3: целевая БД (`assets.database_name` / `sessions.database_name`) — реализовано; ephemeral GRANT и dial на выбранную БД
 - App-A: app_integrations + credential lease / OIDC broker — реализовано
 - App-B: HTTPS reverse-proxy + metadata recording — реализовано (`recording_mode=full`)

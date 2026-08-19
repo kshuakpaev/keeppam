@@ -41,6 +41,8 @@ spec:
               containerPort: 15432
             - name: mysqlwire
               containerPort: 13306
+            - name: mssqlwire
+              containerPort: 11433
             - name: k8sapi
               containerPort: 16443
           env:
@@ -131,6 +133,9 @@ spec:
     - name: mysqlwire
       port: {{ .Values.service.mysqlwire.port }}
       targetPort: mysqlwire
+    - name: mssqlwire
+      port: {{ .Values.service.mssqlwire.port }}
+      targetPort: mssqlwire
     - name: k8sapi
       port: {{ .Values.service.k8sapi.port }}
       targetPort: k8sapi

@@ -250,6 +250,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	if dbName == "" && (in.Protocol == "postgres") {
 		dbName = "postgres"
 	}
+	if dbName == "" && in.Protocol == "mssql" {
+		dbName = "master"
+	}
 	a := Asset{
 		ID: store.NewID(), Name: in.Name, AssetType: in.AssetType,
 		Hostname: in.Hostname, Address: in.Address, Port: in.Port,
@@ -968,6 +971,8 @@ func defaultPort(protocol string) int {
 		return 5432
 	case "mysql":
 		return 3306
+	case "mssql":
+		return 1433
 	case "kubectl":
 		return 6443
 	default:

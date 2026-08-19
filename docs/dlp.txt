@@ -20,7 +20,7 @@
 
 ## SQL
 
-`COPY` / `LOAD` / `INTO OUTFILE` / `INTO DUMPFILE` запрещены всегда (Web SQL и native wire), даже без SQL-пакета. Аудит `session.sql.denied`.
+`COPY` / `LOAD` / `INTO OUTFILE` / `INTO DUMPFILE` / `BULK INSERT` / `OPENROWSET` / `xp_cmdshell` запрещены всегда (Web SQL и native wire), даже без SQL-пакета. Аудит `session.sql.denied`.
 
 На пакете (`sql_policy_packs`, миграция `044`):
 

@@ -42,6 +42,7 @@ services:
       - "8080:8080"
       - "15432:15432"
       - "13306:13306"
+      - "11433:11433"
       - "16443:16443"
     healthcheck:
       test: ["CMD", "/app/auth-server", "readyz"]
@@ -54,6 +55,7 @@ services:
       KEEPPAM_HTTP_ADDR: ":8080"
       KEEPPAM_PG_WIRE_ADDR: ":15432"
       KEEPPAM_MYSQL_WIRE_ADDR: ":13306"
+      KEEPPAM_MSSQL_WIRE_ADDR: ":11433"
       KEEPPAM_K8S_API_ADDR: ":16443"
       KEEPPAM_K8S_PUBLIC_URL: "https://localhost:16443"
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
@@ -142,6 +144,9 @@ services:
       - recordings:/tmp/recordings
     environment:
       PORT: "8099"
+      OCR_LANG: "rus+eng"
+      OCR_INTERVAL_SEC: "15"
+      MAX_OCR_FRAMES: "120"
     restart: unless-stopped
 
   firewall-probe:

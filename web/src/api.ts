@@ -2011,6 +2011,9 @@ export type AccessPolicy = {
   allowed_egress: string[];
   pii_action: string;
   file_transfer: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -2042,6 +2045,9 @@ export type AccessPolicyInput = {
   allowed_egress?: string[];
   pii_action?: string;
   file_transfer?: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
@@ -2159,6 +2165,9 @@ export type PolicySnapshot = {
   allowed_egress?: string[];
   pii_action?: string;
   file_transfer?: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
   tag_acl?: boolean;
   match_tags?: string[];
   match_mode?: string;

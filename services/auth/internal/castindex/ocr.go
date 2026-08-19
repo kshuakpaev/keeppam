@@ -7,12 +7,23 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/keeppam/auth/internal/policy"
 )
 
 const (
 	ocrMaxLine = 512
-	ocrMaxEv   = 20
 )
+
+func ocrStoreCap(n int) int {
+	if n <= 0 {
+		return policy.OCRDefaultFrames
+	}
+	if n > policy.OCRMaxFramesCap {
+		return policy.OCRMaxFramesCap
+	}
+	return n
+}
 
 type OCRResult struct {
 	Indexed    bool   `json:"indexed"`
@@ -52,7 +63,11 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 	if s.store != nil {
 		_ = s.store.EnsureLocal(ctx, row.RecordingPath)
 	}
-	frames, err := s.fetchOCR(ctx, path)
+	opt := policy.OCROpts{Lang: policy.OCRDefaultLang, IntervalSec: policy.OCRDefaultInterval, MaxFrames: policy.OCRDefaultFrames}
+	if row.PolicySnapshot != nil {
+		opt = row.PolicySnapshot.OCR()
+	}
+	frames, err := s.fetchOCR(ctx, path, opt)
 	if err != nil {
 		return OCRResult{}, err
 	}
@@ -67,7 +82,7 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 	piiTotal.kinds = map[string]struct{}{}
 	for _, fr := range frames {
 		line := cleanOCRLine(fr.Text)
-		if line == "" || line == last || stored >= ocrMaxEv {
+		if line == "" || line == last || stored >= ocrStoreCap(opt.MaxFrames) {
 			continue
 		}
 		text, skip, st := applyContentDLP(dlp, line)

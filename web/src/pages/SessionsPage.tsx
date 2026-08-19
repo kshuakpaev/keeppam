@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, hasPerm, type PamSession, type SessionEventHit } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { kindForProtocol, useSessionTabs } from "../sessionTabs";
+import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 
 const PAGE_SIZE = 50;
 
@@ -20,6 +20,7 @@ function snapshotHint(s: PamSession): string {
   if ((p.allowed_egress || []).length) bits.push(`egress:${(p.allowed_egress || []).length}`);
   if (p.pii_action) bits.push(`pii:${p.pii_action}`);
   if (p.file_transfer && p.file_transfer !== "deny") bits.push(`files:${p.file_transfer}`);
+  if (p.ocr_lang) bits.push(`ocr:${p.ocr_lang}`);
   if (p.tag_acl) bits.push(p.match_mode === "any" ? "tag-acl:any" : "tag-acl");
   if (p.admin_bypass) bits.push("bypass");
   return bits.join(" · ");
@@ -315,7 +316,7 @@ export function SessionsPage() {
                       </Link>
                     )}
                     {(e.status === "ended" || e.status === "failed") &&
-                      (e.protocol === "postgres" || e.protocol === "mysql" || e.protocol === "kubectl" ? (
+                      (e.protocol === "postgres" || e.protocol === "mysql" || e.protocol === "mssql" || e.protocol === "kubectl" ? (
                         <a className="btn secondary" href={api.getRecordingUrl(e.session_id)}>
                           Recording
                         </a>
@@ -462,7 +463,7 @@ export function SessionsPage() {
                         >
                           {s.protocol === "rdp" || s.protocol === "vnc" || s.isolated
                             ? "Desktop"
-                            : s.protocol === "postgres" || s.protocol === "mysql"
+                            : isSQLProtocol(s.protocol)
                               ? "SQL"
                               : s.protocol === "https"
                                 ? "App"

@@ -71,6 +71,7 @@ services:
       - "2222:2222"
       - "15432:15432"
       - "13306:13306"
+      - "11433:11433"
       - "16443:16443"
     volumes:
       - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

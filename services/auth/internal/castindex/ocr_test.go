@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/keeppam/auth/internal/policy"
 )
 
 func TestCleanOCRLine(t *testing.T) {
@@ -14,5 +16,14 @@ func TestCleanOCRLine(t *testing.T) {
 	}
 	if cleanOCRLine("  hi  ") != "hi" {
 		t.Fatal()
+	}
+}
+
+func TestOCRStoreCap(t *testing.T) {
+	if ocrStoreCap(0) != policy.OCRDefaultFrames {
+		t.Fatal("default")
+	}
+	if ocrStoreCap(999) != policy.OCRMaxFramesCap {
+		t.Fatal("cap")
 	}
 }

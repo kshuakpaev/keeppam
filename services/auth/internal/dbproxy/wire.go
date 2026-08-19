@@ -159,7 +159,7 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		return
 	}
 	ephRole := ""
-	if g.ensureEph != nil {
+	if g.ensureEph != nil && UsesEphemeralDBRole(g.protocol) {
 		ephCreds, roleName, eerr := g.ensureEph(ctx, sessionID, creds, row.DBPrivilege)
 		if eerr != nil {
 			_ = g.sendAuthFail(client, "ephemeral role: "+eerr.Error())
@@ -170,7 +170,7 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		ephRole = roleName
 	}
 
-	if err := g.sendAuthOK(client); err != nil {
+	if err := g.sendAuthOK(client, wantDB); err != nil {
 		return
 	}
 	_ = client.SetDeadline(time.Time{})
@@ -193,6 +193,8 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		g.servePostgres(ctx, client, creds, sessionID, row.UserID, rec)
 	case "mysql":
 		g.serveMySQL(ctx, client, creds, sessionID, row.UserID, rec)
+	case "mssql":
+		g.serveMSSQL(ctx, client, creds, sessionID, row.UserID, rec)
 	}
 	_ = g.sessions.MarkEnded(ctx, sessionID, "")
 	ClearWireToken(ctx, g.rdb, sessionID)
@@ -496,29 +498,41 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 }
 
 func (g *WireGateway) clientAuth(c net.Conn) (uuid.UUID, string, string, error) {
-	if g.protocol == "postgres" {
+	switch g.protocol {
+	case "postgres":
 		return g.authPostgres(c)
+	case "mssql":
+		return g.authMSSQL(c)
+	default:
+		id, tok, err := g.authMySQL(c)
+		return id, tok, "", err
 	}
-	id, tok, err := g.authMySQL(c)
-	return id, tok, "", err
 }
 
 func (g *WireGateway) sendAuthFail(c net.Conn, msg string) error {
-	if g.protocol == "postgres" {
+	switch g.protocol {
+	case "postgres":
 		return writePGMsg(c, 'E', pgErrorBody(msg))
+	case "mssql":
+		return sendMSSQLFail(c, msg)
+	default:
+		return writeMySQLPacket(c, 2, mysqlErr(msg))
 	}
-	return writeMySQLPacket(c, 2, mysqlErr(msg))
 }
 
-func (g *WireGateway) sendAuthOK(c net.Conn) error {
-	if g.protocol == "postgres" {
+func (g *WireGateway) sendAuthOK(c net.Conn, database string) error {
+	switch g.protocol {
+	case "postgres":
 		if err := writePGMsg(c, 'R', []byte{0, 0, 0, 0}); err != nil {
 			return err
 		}
 		_ = writePGMsg(c, 'S', append([]byte("server_version\x00"), []byte("14.0-keeppam\x00")...))
 		return writePGMsg(c, 'Z', []byte{'I'})
+	case "mssql":
+		return sendMSSQLOK(c, database)
+	default:
+		return writeMySQLPacket(c, 2, []byte{0, 0, 0, 2, 0, 0, 0})
 	}
-	return writeMySQLPacket(c, 2, []byte{0, 0, 0, 2, 0, 0, 0})
 }
 
 func (g *WireGateway) authPostgres(c net.Conn) (uuid.UUID, string, string, error) {

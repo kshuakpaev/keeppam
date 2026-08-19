@@ -20,6 +20,9 @@ const emptyPolicyForm = {
   allowed_egress: "",
   pii_action: "",
   file_transfer: "deny",
+  ocr_lang: "rus+eng",
+  ocr_interval_sec: "15",
+  ocr_max_frames: "60",
   dlp_patterns: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
@@ -524,6 +527,9 @@ export function JeaPage() {
       allowed_egress: (p.allowed_egress || []).join(", "),
       pii_action: p.pii_action || "",
       file_transfer: p.file_transfer || "deny",
+      ocr_lang: p.ocr_lang || "rus+eng",
+      ocr_interval_sec: String(p.ocr_interval_sec || 15),
+      ocr_max_frames: String(p.ocr_max_frames || 60),
       dlp_patterns: formatDlpPatterns(p.dlp_patterns),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
@@ -563,6 +569,7 @@ export function JeaPage() {
     if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
     if (p.pii_action) bits.push("pii:" + p.pii_action);
     if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
+    if (p.ocr_lang) bits.push("ocr:" + p.ocr_lang + "/" + (p.ocr_interval_sec || 15) + "s");
     if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
@@ -595,6 +602,9 @@ export function JeaPage() {
         allowed_egress: splitCSV(policyForm.allowed_egress),
         pii_action: policyForm.pii_action || "",
         file_transfer: policyForm.file_transfer || "deny",
+        ocr_lang: policyForm.ocr_lang || "rus+eng",
+        ocr_interval_sec: Number(policyForm.ocr_interval_sec) || 15,
+        ocr_max_frames: Number(policyForm.ocr_max_frames) || 60,
         dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
@@ -1542,6 +1552,34 @@ export function JeaPage() {
                 <option value="audit">audit</option>
                 <option value="capture">capture</option>
               </select>
+              <label>OCR RDP/VNC (язык)</label>
+              <select
+                value={policyForm.ocr_lang}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_lang: e.target.value })}
+              >
+                <option value="rus+eng">rus+eng</option>
+                <option value="eng">eng</option>
+                <option value="rus">rus</option>
+              </select>
+              <label>OCR интервал кадров (сек, 5–120)</label>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={policyForm.ocr_interval_sec}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_interval_sec: e.target.value })}
+              />
+              <label>OCR макс. кадров (1–120)</label>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={policyForm.ocr_max_frames}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_max_frames: e.target.value })}
+              />
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>
+                Не live OCR каждого кадра. Post-session Tesseract, индекс screen_text.
+              </p>
               <label>DLP regex (имя и паттерн на строку, до 16)</label>
               <textarea
                 rows={4}

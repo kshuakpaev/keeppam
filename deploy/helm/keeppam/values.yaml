@@ -30,6 +30,8 @@ service:
     port: 15432
   mysqlwire:
     port: 13306
+  mssqlwire:
+    port: 11433
   k8sapi:
     port: 16443
 

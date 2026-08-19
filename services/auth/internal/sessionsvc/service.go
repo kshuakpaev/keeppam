@@ -152,7 +152,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if in.Protocol == "rdp" || in.Protocol == "vnc" {
 		recPath = filepath.Join(s.recordingsDir, "guac", id.String())
 	}
-	if in.Protocol == "postgres" || in.Protocol == "mysql" {
+	if in.Protocol == "postgres" || in.Protocol == "mysql" || in.Protocol == "mssql" {
 		recPath = filepath.Join(s.recordingsDir, "sql", id.String()+".jsonl")
 	}
 	if in.Protocol == "https" {
@@ -176,6 +176,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	dbName := strings.TrimSpace(in.DatabaseName)
 	if dbName == "" && in.Protocol == "postgres" {
 		dbName = "postgres"
+	}
+	if dbName == "" && in.Protocol == "mssql" {
+		dbName = "master"
 	}
 	ns := in.K8sNamespaces
 	if ns == nil {

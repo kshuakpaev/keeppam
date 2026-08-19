@@ -26,8 +26,8 @@
 | 1.4 | **RADIUS** auth admin console | п.75 | ✓ PAP, миграция `076` |
 | 1.5 | **Archive SMB/NFS** worker для recordings | п.73 | ✓ миграция `077` |
 | 1.6 | **SCP/SFTP file capture** (storage + UI) вместо только deny | п.37, 71 | ✓ миграция `078` |
-| 1.7 | **OCR rus+eng**, больше кадров / настраиваемый interval | п.13 | 2 нед. |
-| 1.8 | **MSSQL wire** proxy (если в scope заказчика) | п.50 | 4–6 нед. |
+| 1.7 | **OCR rus+eng**, больше кадров / настраиваемый interval | п.13 | ✓ миграция `079` |
+| 1.8 | **MSSQL wire** proxy (если в scope заказчика) | п.50 | ✓ миграция `080`, TDS `:11433` |
 | 1.9 | **Replay metadata**: имена файлов transfer events | п.40, 60 | 2 нед. |
 
 ## Фаза КП-2 — enterprise (6–12 мес., опция)
@@ -58,4 +58,4 @@
 
 ## Следующий шаг реализации
 
-**КП-1.7 OCR rus+eng**, больше кадров / настраиваемый interval.
+**КП-1.9 Replay metadata**: имена файлов transfer events.

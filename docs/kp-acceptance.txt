@@ -24,7 +24,7 @@
 
 - [ ] Подключение из портала (HTML5)
 - [ ] Запись `.guac`; экспорт MP4
-- [ ] Keystroke index; OCR screen_text (≥1 кадр на тестовой сессии)
+- [ ] Keystroke index; OCR screen_text rus+eng (≥1 кадр; на экране «пароль»)
 
 ## 4. Vault и секреты
 

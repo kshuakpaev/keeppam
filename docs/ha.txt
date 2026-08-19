@@ -11,7 +11,7 @@ cd deploy
 docker compose -f docker-compose.yml -f compose.ha.yml up -d
 ```
 
-Снаружи как раньше: HTTP `:8080`, SSH `:2222`, SQL wire, k8s API — всё на **edge** (HAProxy).
+Снаружи как раньше: HTTP `:8080`, SSH `:2222`, SQL wire (`:15432`/`:13306`/`:11433`), k8s API — всё на **edge** (HAProxy).
 
 | Сервис | Реплики | Health |
 |--------|---------|--------|

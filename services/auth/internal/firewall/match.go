@@ -44,7 +44,7 @@ func PamOnlyForwardBlocked(host string, port int, targets []Target) (reason stri
 			continue
 		}
 		switch t.Protocol {
-		case "ssh", "rdp", "vnc", "https", "kubectl", "postgres", "mysql":
+		case "ssh", "rdp", "vnc", "https", "kubectl", "postgres", "mysql", "mssql":
 			return fmt.Sprintf("pam-only asset %q: connect via PAM, not port-forward", t.Name), true
 		}
 	}

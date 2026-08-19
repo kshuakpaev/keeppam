@@ -203,8 +203,8 @@ export const catalog = {
   "assets.acl": { ru: "Доступ (ACL)", en: "Access (ACL)" },
   "assets.connect": { ru: "Подключение", en: "Connect" },
   "assets.dbHint": {
-    ru: "SQL-консоль и wire (:15432/:13306) подключаются к этой БД; ephemeral GRANT — только на неё.",
-    en: "SQL console and wire (:15432/:13306) connect to this database; ephemeral GRANT applies only there.",
+    ru: "SQL-консоль и wire (:15432/:13306/:11433) подключаются к этой БД. Ephemeral GRANT — только PostgreSQL/MySQL.",
+    en: "SQL console and wire (:15432/:13306/:11433) connect to this database. Ephemeral GRANT is PostgreSQL/MySQL only.",
   },
   "assets.pamOnly": {
     ru: "Только через PAM (firewall export + блок port-forward на сервисный порт)",

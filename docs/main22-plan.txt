@@ -109,9 +109,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** в тестовом AD видны Domain Admins, не заведённые в KeepPAM.
 
 ### T-10. Встроенный OCR
-**Сейчас:** post-session кадры guacenc + Tesseract, `screen_text` (`docs/ocr-rdp.txt`).
-**План (P2):** rus+eng, interval в Policy, больше кадров, индекс в forensic. Не live OCR каждого кадра.
-**DoD:** на тестовом RDP с текстом «пароль» — hit в session_events.
+**Статус: есть** — rus+eng, interval/max_frames в Policy (`079`), `docs/ocr-rdp.txt`. Не live OCR каждого кадра.
 
 ### T-11. MFA
 **Статус: есть** (TOTP, WebAuthn, step-up).
@@ -209,7 +207,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Статус: есть.**
 
 ### T-29. Любой клиент (PuTTY, Windows RDP, Royal TSX)
-**Сейчас:** любой SSH-клиент на :2222; RDP — только браузер.
+**Сейчас:** любой SSH-клиент на :2222; RDPСпаси — только браузер.
 **План (P4/P5):** RDP gateway (RDG/HTTPS или TCP 3389 terminate → inject creds → target). Сложность высокая; конфликт с T-27 DLP.
 **DoD SSH:** PuTTY/SecureCRT/Royal TSX — уже. DoD RDP: mstsc → KeepPAM → target без пароля в клиенте. Citrix — T-33.
 
@@ -237,12 +235,12 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 | X11 over SSH    | частично (SSH) | P2 | не отдельный decoder |
 | HTTP/HTTPS      | есть          | — | |
 | SFTP/SCP        | capture/audit/deny | — | T-31 ✓ (clipboard RDP — нет) |
-| Microsoft SQL   | PG/MySQL wire | P2/P4 | TDS proxy (порт 1433), login inject, query log |
+| Microsoft SQL   | TDS wire `:11433` | — | T-33 ✓ login inject + SQL batch log; TLS client→PAM нет |
 | Telnet          | нет           | P5 | tty proxy, кодировки T-43 |
 | TN3270          | нет           | P5 / SOW | отдельный decoder |
 | Citrix ICA/CGP/STA | нет        | P5 / SOW | отдельный модуль, не guac |
 
-**MSSQL (первый из «нет» в таблице):** worker `protocol=mssql`, pre-login/TLS, TDS login с vault password, запись SQL batch в session_events. Оценка 4–6 нед.
+**MSSQL:** worker `protocol=mssql`, pre-login без TLS до PAM, LOGIN7 с session UUID + wire token, vault password на цель, SQL batch в `session_events`. `docs/mssql-wire.txt`. RPC/SSPI — нет.
 
 ### T-34. Приложения RDS / Citrix
 **RDS RemoteApp:** P4 вместе с T-33 RDP.
@@ -347,7 +345,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   └─ P1.4  JEA list import                               [T-42]
   │
   ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓ T-31 SSH; T-37 имя файла; T-44 WORM recstore
-  ├─ P2.2  OCR rus+eng                                   [T-10]
+  ├─ P2.2  OCR rus+eng                                   [T-10]  ✓
   ├─ P2.3  Charset CP1251/KOI8                           [T-43]
   └─ P2.4  Dynamic groups auto-match                     [T-20]
   │
@@ -355,7 +353,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P3.2  SMB/NFS archive                               [T-46]  ✓
   └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ RADIUS PAP
   │
-  ├─ P4.1  MSSQL TDS                                     [T-33]
+  ├─ P4.1  MSSQL TDS                                     [T-33]  ✓ wire `:11433`
   ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09, T-17, T-25]
   └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27, T-29]
   │

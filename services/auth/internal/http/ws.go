@@ -68,7 +68,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if creds.Asset.Protocol != "ssh" && creds.Asset.Protocol != "rdp" && creds.Asset.Protocol != "vnc" &&
-		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "https" &&
+		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "mssql" && creds.Asset.Protocol != "https" &&
 		creds.Asset.Protocol != "kubectl" {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
@@ -123,7 +123,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var sqlPackID, httpPackID, appPackID *uuid.UUID
 	var k8sNS []string
-	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
+	if dbproxy.IsSQLProtocol(creds.Asset.Protocol) {
 		if ev.OK && ev.SQLPolicyPackID != nil {
 			sqlPackID = ev.SQLPolicyPackID
 		}
@@ -172,14 +172,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if created.WaitingSupervisor && s.notify != nil {
 		s.notify.OnSupervisorWait(r.Context(), created)
 	}
-	if !created.WaitingSupervisor && (created.Protocol == "postgres" || created.Protocol == "mysql") {
+	if !created.WaitingSupervisor && dbproxy.IsSQLProtocol(created.Protocol) {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
 		if err == nil {
 			out["wire_token"] = tok
-			if created.Protocol == "postgres" {
+			switch created.Protocol {
+			case "postgres":
 				out["wire_addr"] = s.cfg.PostgresWireAddr
-			} else {
+			case "mysql":
 				out["wire_addr"] = s.cfg.MySQLWireAddr
+			default:
+				out["wire_addr"] = s.cfg.MSSQLWireAddr
 			}
 			out["wire_user"] = created.ID.String()
 			dbHint := created.DatabaseName
@@ -486,7 +489,7 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 	if row.Protocol == "rdp" || row.Protocol == "vnc" {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", id.String()+".guac"))
-	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "https" || row.Protocol == "kubectl" {
+	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "mssql" || row.Protocol == "https" || row.Protocol == "kubectl" {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", id.String()+".jsonl"))
 	} else {

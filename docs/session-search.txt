@@ -32,7 +32,7 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 
 ## Индекс
 
-До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 20 `screen_text`. Строка ≤ 512 рун.
+До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 120 `screen_text` (Policy, default 60). Строка ≤ 512 рун.
 
 ## Вне scope
 

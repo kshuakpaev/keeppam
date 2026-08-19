@@ -44,7 +44,7 @@ function isDesktop(s: PamSession | null): boolean {
 }
 
 function isSQL(s: PamSession | null): boolean {
-  return s?.protocol === "postgres" || s?.protocol === "mysql";
+  return s?.protocol === "postgres" || s?.protocol === "mysql" || s?.protocol === "mssql";
 }
 
 function canKillSession(userId: string | undefined, perms: string[] | undefined, sess: PamSession): boolean {

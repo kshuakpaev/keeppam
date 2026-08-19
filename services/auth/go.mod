@@ -16,6 +16,7 @@ require (
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/maxmind/mmdbwriter v1.0.0
+	github.com/microsoft/go-mssqldb v1.8.2
 	github.com/nats-io/nats.go v1.37.0
 	github.com/open-policy-agent/opa v0.68.0
 	github.com/oschwald/maxminddb-golang v1.13.1
@@ -56,6 +57,8 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
+	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
+	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/google/go-tpm v0.9.3 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.23.0 // indirect

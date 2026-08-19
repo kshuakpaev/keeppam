@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/microsoft/go-mssqldb"
 
 	"github.com/keeppam/auth/internal/assets"
 )
@@ -55,6 +56,8 @@ func DialAndQuery(ctx context.Context, creds assets.TargetCreds, statement strin
 		res, err = queryPostgres(ctx, creds, statement, limit, dlpDeny)
 	case "mysql":
 		res, err = queryMySQL(ctx, creds, statement, limit, dlpDeny)
+	case "mssql":
+		res, err = queryMSSQL(ctx, creds, statement, limit, dlpDeny)
 	default:
 		return QueryResult{}, fmt.Errorf("unsupported db protocol: %s", creds.Asset.Protocol)
 	}
@@ -109,6 +112,57 @@ func queryMySQL(ctx context.Context, creds assets.TargetCreds, statement string,
 	db := ResolveDatabase("mysql", "", creds.Asset.DatabaseName)
 	dsn := MySQLDSN(creds, db)
 	dbConn, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	defer dbConn.Close()
+	dbConn.SetConnMaxLifetime(30 * time.Second)
+
+	rows, err := dbConn.QueryContext(ctx, statement)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return QueryResult{}, err
+	}
+	out := QueryResult{Columns: cols, Rows: [][]string{}}
+	raw := make([]sql.NullString, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range raw {
+		ptrs[i] = &raw[i]
+	}
+	for rows.Next() {
+		if len(out.Rows) >= limit {
+			out.Truncated = true
+			break
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return out, err
+		}
+		row := make([]string, len(cols))
+		for i, v := range raw {
+			if v.Valid {
+				row[i] = truncateCell(v.String)
+			} else {
+				row[i] = "NULL"
+			}
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	if out.Truncated && dlpDeny {
+		return QueryResult{}, fmt.Errorf("%w (%d)", ErrDLPRowLimit, limit)
+	}
+	out.RowCount = len(out.Rows)
+	return out, rows.Err()
+}
+
+func queryMSSQL(ctx context.Context, creds assets.TargetCreds, statement string, limit int, dlpDeny bool) (QueryResult, error) {
+	dbName := ResolveDatabase("mssql", "", creds.Asset.DatabaseName)
+	dsn := MSSQLDSN(creds, dbName)
+	dbConn, err := sql.Open("sqlserver", dsn)
 	if err != nil {
 		return QueryResult{}, err
 	}

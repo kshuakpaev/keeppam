@@ -3,10 +3,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, hasPerm, type AccessBinding, type AccessPolicy, type AppIntegration, type AppLease, type AppObjectPack, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type PamGroup, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { kindForProtocol, useSessionTabs } from "../sessionTabs";
+import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl"];
 const TYPES = ["host", "db", "k8s", "api"];
 const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
 
@@ -254,10 +254,13 @@ export function AssetEditPage() {
       }
       const title = `${asset.name} · ${acc.username}`;
       const kind = kindForProtocol(asset.protocol, appForm.recording_mode === "isolated");
-      if (asset.protocol === "postgres" || asset.protocol === "mysql") {
+      if (isSQLProtocol(asset.protocol)) {
         if (sess.wire_token) {
+          const fallback =
+            asset.protocol === "mysql" ? ":13306" : asset.protocol === "mssql" ? ":11433" : ":15432";
+          const dbn = sess.database_name || asset.database_name || (asset.protocol === "mssql" ? "master" : "postgres");
           setMsg(
-            `Wire: host=PAM port=${sess.wire_addr || (asset.protocol === "mysql" ? ":13306" : ":15432")} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${sess.database_name || asset.database_name || "postgres"}`,
+            `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`,
           );
         }
       }
@@ -948,14 +951,14 @@ export function AssetEditPage() {
             />
           </div>
         </div>
-        {(form.protocol === "postgres" || form.protocol === "mysql") && (
+        {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
           <>
             <label>Database</label>
             <input
               value={form.database_name}
               onChange={(e) => setForm({ ...form, database_name: e.target.value })}
               disabled={!canWrite}
-              placeholder={form.protocol === "postgres" ? "postgres" : "(optional schema)"}
+              placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional schema)"}
             />
             <p className="muted" style={{ marginTop: 0 }}>
               {t("assets.dbHint")}
@@ -1556,7 +1559,7 @@ export function AssetEditPage() {
                                 ? "…"
                                 : asset.protocol === "ssh"
                                   ? t("assets.connectSsh")
-                                  : asset.protocol === "postgres" || asset.protocol === "mysql"
+                                  : isSQLProtocol(asset.protocol)
                                     ? t("assets.connectSql")
                                     : t("assets.connectOpen", { proto: asset.protocol.toUpperCase() })}
                             </button>
