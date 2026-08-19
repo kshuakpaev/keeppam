@@ -14,6 +14,7 @@ import (
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -271,6 +272,42 @@ func (s *Service) OnJITDecided(ctx context.Context, req policy.AccessRequest) {
 	s.insert(ctx, []uuid.UUID{req.RequesterID}, kind, title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload(kind, req))
 	s.fireMail(ctx, []uuid.UUID{req.RequesterID}, title, body)
+}
+
+func (s *Service) OnSupervisorWait(ctx context.Context, sess sessionsvc.Session) {
+	if s == nil {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "sessions.supervise")
+	if err != nil {
+		return
+	}
+	if sess.SupervisorGroupID != nil {
+		if gids, gerr := s.UsersInGroupTree(ctx, *sess.SupervisorGroupID); gerr == nil && len(gids) > 0 {
+			ids = gids
+		}
+	}
+	to := FilterRecipients(ids, sess.UserID)
+	title := "Сессия ждёт супервайзера"
+	body := fmt.Sprintf("%s → %s (%s)", nonEmpty(sess.Username, sess.UserID.String()),
+		nonEmpty(sess.AssetName, sess.AssetID.String()), sess.Protocol)
+	s.insert(ctx, to, "session.supervisor", title, body, "session", sess.ID.String())
+	s.fireMail(ctx, to, title, body)
+}
+
+func (s *Service) OnSupervisorDecided(ctx context.Context, sess sessionsvc.Session, approved bool) {
+	if s == nil {
+		return
+	}
+	kind := "session.supervisor.approved"
+	title := "Сессия разрешена супервайзером"
+	if !approved {
+		kind = "session.supervisor.denied"
+		title = "Сессия отклонена супервайзером"
+	}
+	body := fmt.Sprintf("%s: %s", nonEmpty(sess.AssetName, sess.AssetID.String()), sess.Protocol)
+	s.insert(ctx, []uuid.UUID{sess.UserID}, kind, title, body, "session", sess.ID.String())
+	s.fireMail(ctx, []uuid.UUID{sess.UserID}, title, body)
 }
 
 func (s *Service) OnOpApproval(ctx context.Context, rec opapprove.Approval) {

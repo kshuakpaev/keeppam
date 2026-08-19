@@ -7,6 +7,7 @@
 - [ ] Вход local / LDAP / OIDC / SAML (минимум 2 источника из согласованных)
 - [ ] MFA TOTP или WebAuthn обязателен для привилегированных ролей
 - [ ] JIT: заявка → согласование (этап manager/security **или** кворум N из M) → временный ACL → истечение binding
+- [ ] Четыре глаза: актив с `require_supervisor` — SSH/RDP не стартует без Authorize другого пользователя; deny/timeout 15 мин закрывает сессию
 - [ ] Break-glass: открытие с reason ≥20 символов, audit critical, TTL ≤60 мин
 - [ ] Deny-by-default: без ACL сессия невозможна
 

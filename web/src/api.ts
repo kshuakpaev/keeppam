@@ -152,6 +152,9 @@ export type Asset = {
   quorum_m?: number;
   approver_group_id?: string;
   approver_group_name?: string;
+  require_supervisor?: boolean;
+  supervisor_group_id?: string;
+  supervisor_group_name?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -1085,6 +1088,8 @@ export const api = {
     quorum_n?: number;
     quorum_m?: number;
     approver_group_id?: string | null;
+    require_supervisor?: boolean;
+    supervisor_group_id?: string | null;
     pam_only?: boolean;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
@@ -1109,6 +1114,8 @@ export const api = {
       quorum_n?: number;
       quorum_m?: number;
       approver_group_id?: string | null;
+      require_supervisor?: boolean;
+      supervisor_group_id?: string | null;
       pam_only?: boolean;
     },
   ) =>
@@ -1346,6 +1353,7 @@ export const api = {
     request<{
       pending_approve: number;
       pending_ops: number;
+      pending_supervise?: number;
       my_pending: number;
       my_recent_decisions: AccessRequest[];
     }>("/api/v1/admin/access-requests/summary"),
@@ -1395,6 +1403,7 @@ export const api = {
     status?: string;
     protocol?: string;
     q?: string;
+    waiting_supervisor?: boolean;
     limit?: number;
     offset?: number;
   }) => {
@@ -1402,6 +1411,7 @@ export const api = {
     if (params?.status) qs.set("status", params.status);
     if (params?.protocol) qs.set("protocol", params.protocol);
     if (params?.q) qs.set("q", params.q);
+    if (params?.waiting_supervisor) qs.set("waiting_supervisor", "1");
     if (params?.limit != null) qs.set("limit", String(params.limit));
     if (params?.offset != null) qs.set("offset", String(params.offset));
     const q = qs.toString();
@@ -1410,6 +1420,10 @@ export const api = {
     );
   },
   getSession: (id: string) => request<PamSession>(`/api/v1/admin/sessions/${id}`),
+  approveSupervisor: (id: string) =>
+    request<PamSession>(`/api/v1/admin/sessions/${id}/supervisor/approve`, { method: "POST" }),
+  denySupervisor: (id: string) =>
+    request<PamSession>(`/api/v1/admin/sessions/${id}/supervisor/deny`, { method: "POST" }),
   searchSessionEvents: (params?: {
     q?: string;
     type?: string;
@@ -2065,6 +2079,13 @@ export type PamSession = {
   access_policy_id?: string;
   client_country?: string;
   policy_snapshot?: PolicySnapshot;
+  require_supervisor?: boolean;
+  waiting_supervisor?: boolean;
+  supervisor_group_id?: string;
+  supervisor_group_name?: string;
+  supervisor_id?: string;
+  supervisor_username?: string;
+  supervisor_approved_at?: string;
 };
 
 export type PolicySnapshot = {

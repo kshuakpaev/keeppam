@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type SecretCheckoutRequest } from "../api";
+import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type PamSession, type SecretCheckoutRequest } from "../api";
 import { useAuth } from "../auth";
 
 export function AccessRequestsPage() {
@@ -9,6 +9,7 @@ export function AccessRequestsPage() {
   const [checkouts, setCheckouts] = useState<SecretCheckoutRequest[]>([]);
   const [glasses, setGlasses] = useState<BreakGlassEvent[]>([]);
   const [ops, setOps] = useState<OpApproval[]>([]);
+  const [waitingSessions, setWaitingSessions] = useState<PamSession[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("pending");
   const [error, setError] = useState("");
@@ -17,6 +18,7 @@ export function AccessRequestsPage() {
   const canApproveSecurity = hasPerm(user, "access.approve.security");
   const canVault = hasPerm(user, "assets.write");
   const canBreakGlass = hasPerm(user, "access.breakglass");
+  const canSupervise = hasPerm(user, "sessions.supervise");
 
   const load = useCallback(async () => {
     try {
@@ -40,21 +42,25 @@ export function AccessRequestsPage() {
         const op = await api.listOpApprovals();
         setOps(op.approvals || []);
       }
+      if (canSupervise) {
+        const wait = await api.listSessions({ waiting_supervisor: true, limit: 100 });
+        setWaitingSessions(wait.sessions || []);
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
     }
-  }, [status, canVault, canRequest, canApprove, canApproveSecurity, canBreakGlass]);
+  }, [status, canVault, canRequest, canApprove, canApproveSecurity, canBreakGlass, canSupervise]);
 
   useEffect(() => {
-    if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass) void load();
-  }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, load]);
+    if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass || canSupervise) void load();
+  }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, canSupervise, load]);
 
   useEffect(() => {
-    if (!(canApprove || canApproveSecurity)) return;
+    if (!(canApprove || canApproveSecurity || canSupervise)) return;
     const id = window.setInterval(() => void load(), 4000);
     return () => window.clearInterval(id);
-  }, [canApprove, canApproveSecurity, load]);
+  }, [canApprove, canApproveSecurity, canSupervise, load]);
 
   async function onApprove(id: string) {
     setError("");
@@ -126,7 +132,27 @@ export function AccessRequestsPage() {
     }
   }
 
-  if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass) {
+  async function onApproveSupervisor(id: string) {
+    setError("");
+    try {
+      await api.approveSupervisor(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось разрешить сессию");
+    }
+  }
+
+  async function onDenySupervisor(id: string) {
+    setError("");
+    try {
+      await api.denySupervisor(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось отклонить сессию");
+    }
+  }
+
+  if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass && !canSupervise) {
     return <p className="error">Недостаточно прав</p>;
   }
 
@@ -135,7 +161,7 @@ export function AccessRequestsPage() {
       <div className="toolbar">
         <div>
           <h1>Запросы доступа</h1>
-          <p className="muted">JIT к активам, операции в сессии (object ACL), dual-control checkout и break-glass</p>
+          <p className="muted">JIT к активам, супервайзер сессии, операции в сессии (object ACL), dual-control checkout и break-glass</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
           Обновить
@@ -143,6 +169,64 @@ export function AccessRequestsPage() {
       </div>
 
       {error && <p className="error">{error}</p>}
+
+      {canSupervise && (
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <h2>Сессии ждут супервайзера</h2>
+          <p className="muted">
+            Четыре глаза: подключение к цели не начинается, пока другой пользователь с правом sessions.supervise
+            не разрешит. Свою сессию одобрить нельзя. Таймаут 15 мин.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Когда</th>
+                <th>Кто</th>
+                <th>Актив</th>
+                <th>Протокол</th>
+                <th>Группа</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {waitingSessions.map((s) => (
+                <tr key={s.id}>
+                  <td className="mono">{new Date(s.created_at).toLocaleString()}</td>
+                  <td>{s.username || s.user_id}</td>
+                  <td>
+                    <Link to={`/assets/${s.asset_id}`}>{s.asset_name || s.asset_id}</Link>
+                    <div className="muted mono">{s.account_username}</div>
+                  </td>
+                  <td className="mono">{s.protocol}</td>
+                  <td>{s.supervisor_group_name || "любой супервайзер"}</td>
+                  <td>
+                    <div className="row">
+                      {s.user_id !== user?.id && (
+                        <>
+                          <button className="btn" type="button" onClick={() => void onApproveSupervisor(s.id)}>
+                            Разрешить
+                          </button>
+                          <button className="btn danger" type="button" onClick={() => void onDenySupervisor(s.id)}>
+                            Отклонить
+                          </button>
+                        </>
+                      )}
+                      {s.user_id === user?.id && <span className="muted">своя сессия</span>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {waitingSessions.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    Нет сессий, ждущих супервайзера.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {(canApprove || canApproveSecurity) && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>

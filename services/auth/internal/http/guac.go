@@ -66,6 +66,10 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a graphical session", http.StatusBadRequest)
 		return
 	}
+	if row.IsWaitingSupervisor() {
+		http.Error(w, "waiting for supervisor", http.StatusConflict)
+		return
+	}
 
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
 	if err != nil {

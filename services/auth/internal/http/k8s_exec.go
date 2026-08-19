@@ -57,6 +57,9 @@ func (s *Server) handleK8sExecWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusGone, "session ended")
 		return
 	}
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 
 	ns := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	pod := strings.TrimSpace(r.URL.Query().Get("pod"))
@@ -137,6 +140,9 @@ func (s *Server) handleK8sAttachWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if row.Status != "pending" && row.Status != "active" {
 		writeErr(w, http.StatusGone, "session ended")
+		return
+	}
+	if s.rejectIfWaitingSupervisor(w, row) {
 		return
 	}
 

@@ -172,6 +172,11 @@ func (s *Server) handleAccessRequestsSummary(w http.ResponseWriter, r *http.Requ
 			sum.PendingOps = n
 		}
 	}
+	if s.sessionsvc != nil && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+		if n, err := s.sessionsvc.CountWaitingSupervisor(r.Context()); err == nil {
+			sum.PendingSupervise = n
+		}
+	}
 	writeJSON(w, http.StatusOK, sum)
 }
 

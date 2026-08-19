@@ -32,6 +32,7 @@ export function AppLayout() {
   );
   const [pendingApprove, setPendingApprove] = useState(0);
   const [pendingOps, setPendingOps] = useState(0);
+  const [pendingSupervise, setPendingSupervise] = useState(0);
   const [myPending, setMyPending] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
   const [inbox, setInbox] = useState<InboxNotification[]>([]);
@@ -39,6 +40,7 @@ export function AppLayout() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const prevPending = useRef(0);
   const prevOps = useRef(0);
+  const prevSupervise = useRef(0);
   const notifyAsked = useRef(false);
 
   useEffect(() => {
@@ -47,7 +49,8 @@ export function AppLayout() {
       !(
         hasPerm(user, "access.request") ||
         hasPerm(user, "access.approve") ||
-        hasPerm(user, "access.approve.security")
+        hasPerm(user, "access.approve.security") ||
+        hasPerm(user, "sessions.supervise")
       )
     )
       return;
@@ -59,6 +62,7 @@ export function AppLayout() {
         if (cancelled) return;
         setPendingApprove(sum.pending_approve || 0);
         setPendingOps(sum.pending_ops || 0);
+        setPendingSupervise(sum.pending_supervise || 0);
         setMyPending(sum.my_pending || 0);
 
         if (
@@ -90,6 +94,14 @@ export function AppLayout() {
         }
         prevPending.current = sum.pending_approve || 0;
         prevOps.current = sum.pending_ops || 0;
+        if (hasPerm(user, "sessions.supervise") && (sum.pending_supervise || 0) > prevSupervise.current && prevSupervise.current >= 0) {
+          const msg = `Сессии ждут супервайзера: ${sum.pending_supervise}`;
+          setToasts((t) => [...t, msg].slice(-5));
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("KeepPAM", { body: msg });
+          }
+        }
+        prevSupervise.current = sum.pending_supervise || 0;
 
         const seen = loadSeen();
         const fresh = (sum.my_recent_decisions || []).filter((d: AccessRequest) => !seen.has(d.id));
@@ -156,7 +168,12 @@ export function AppLayout() {
     nav("/login");
   }
 
-  const badge = pendingApprove + pendingOps > 0 ? pendingApprove + pendingOps : myPending > 0 ? myPending : 0;
+  const badge =
+    pendingApprove + pendingOps + pendingSupervise > 0
+      ? pendingApprove + pendingOps + pendingSupervise
+      : myPending > 0
+        ? myPending
+        : 0;
 
   return (
     <div className="shell">
@@ -231,7 +248,8 @@ export function AppLayout() {
           hasPerm(user, "access.approve") ||
           hasPerm(user, "access.approve.security") ||
           hasPerm(user, "access.breakglass") ||
-          hasPerm(user, "assets.write") ? (
+          hasPerm(user, "assets.write") ||
+          hasPerm(user, "sessions.supervise") ? (
             <NavLink to="/access-requests">
               Запросы
               {badge > 0 && <span className="nav-badge">{badge > 99 ? "99+" : badge}</span>}

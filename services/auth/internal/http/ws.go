@@ -166,8 +166,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"has_recording": created.HasRecording, "ticket_id": created.TicketID, "reason": created.Reason,
 		"db_privilege": created.DBPrivilege, "database_name": created.DatabaseName, "isolated": created.Isolated,
 		"break_glass": created.BreakGlass, "k8s_namespaces": created.K8sNamespaces,
+		"require_supervisor": created.RequireSupervisor, "waiting_supervisor": created.WaitingSupervisor,
+		"supervisor_group_id": created.SupervisorGroupID, "supervisor_group_name": created.SupervisorGroupName,
 	}
-	if created.Protocol == "postgres" || created.Protocol == "mysql" {
+	if created.WaitingSupervisor && s.notify != nil {
+		s.notify.OnSupervisorWait(r.Context(), created)
+	}
+	if !created.WaitingSupervisor && (created.Protocol == "postgres" || created.Protocol == "mysql") {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
 		if err == nil {
 			out["wire_token"] = tok
@@ -184,7 +189,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
 		}
 	}
-	if created.Protocol == "kubectl" {
+	if created.Protocol == "kubectl" && !created.WaitingSupervisor {
 		if kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), created.ID); err == nil {
 			out["kubeconfig"] = kube
 			out["k8s_addr"] = addr
@@ -323,8 +328,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			f.Offset = n
 		}
 	}
-	// Admin/auditor see all; others (operator) see own.
-	if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
+	// Admin/auditor see all; supervisors see waiting four-eyes queue; others see own.
+	if r.URL.Query().Get("waiting_supervisor") == "1" && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+		f.WaitingSupervisor = true
+	} else if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
 		f.OnlyUser = &sess.UserID
 	}
 	list, total, err := s.sessionsvc.List(r.Context(), f)
@@ -382,6 +389,9 @@ func (s *Server) handleGetKubeconfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusGone, "session ended")
 		return
 	}
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 	kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -426,6 +436,13 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if row.UserID == sess.UserID && !rbac.HasPermission(sess.Permissions, "sessions.connect") {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if row.UserID != sess.UserID &&
+		!rbac.HasPermission(sess.Permissions, "users.write") &&
+		!rbac.HasPermission(sess.Permissions, "audit.read") &&
+		!rbac.HasPermission(sess.Permissions, "sessions.supervise") {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -482,7 +499,8 @@ func canViewSession(perms []string, viewer, owner uuid.UUID) bool {
 	if viewer == owner {
 		return true
 	}
-	return rbac.HasPermission(perms, "users.write") || rbac.HasPermission(perms, "audit.read")
+	return rbac.HasPermission(perms, "users.write") || rbac.HasPermission(perms, "audit.read") ||
+		rbac.HasPermission(perms, "sessions.supervise")
 }
 
 func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
@@ -523,6 +541,9 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 	if row.Status != "pending" && row.Status != "active" {
 		writeErr(w, http.StatusBadRequest, "session not startable")
+		return
+	}
+	if s.rejectIfWaitingSupervisor(w, row) {
 		return
 	}
 

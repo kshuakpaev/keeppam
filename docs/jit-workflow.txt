@@ -36,3 +36,5 @@ Request
 Любой из пула может отклонить заявку до набора кворума. После N голосов создаётся binding; лишний голос не нужен.
 
 Audit: `access.request.quorum_vote` на каждый голос, `access.request.approved` при достижении N.
+
+Связано: супервайзер **сессии** (четыре глаза до connect) — `docs/session-supervisor.txt`, не JIT.

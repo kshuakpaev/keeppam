@@ -593,6 +593,14 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
 		return
 	}
+	if pamSess.IsWaitingSupervisor() {
+		_, _ = fmt.Fprintf(ch, "Waiting for supervisor authorization (four eyes). Session %s\r\n", pamSess.ID.String()[:8])
+		if err := g.sessions.WaitSupervisor(ctx, pamSess.ID, 0); err != nil {
+			_, _ = fmt.Fprintf(ch, "supervisor: %v\r\n", err)
+			return
+		}
+		pamSess, _ = g.sessions.Get(ctx, pamSess.ID)
+	}
 	if v, ok := g.conns.Load(sc); ok {
 		st := v.(*sshConnState)
 		st.mu.Lock()

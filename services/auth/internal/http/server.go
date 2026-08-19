@@ -328,6 +328,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions", s.handleCreateSession)
 				r.Post("/sessions/{id}/end", s.handleEndSession)
+				r.With(s.requirePerm("sessions.supervise")).Post("/sessions/{id}/supervisor/approve", s.handleApproveSupervisor)
+				r.With(s.requirePerm("sessions.supervise")).Post("/sessions/{id}/supervisor/deny", s.handleDenySupervisor)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/op-stepup", s.handleGetOpStepUp)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)

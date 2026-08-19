@@ -13,6 +13,8 @@ In-app inbox + опциональный webhook + SMTP на заявки дос�
 | JIT approve/deny | requester (только финальный approve/deny, не промежуточный этап) |
 | Dual-control checkout create | все с `assets.write`, кроме requester |
 | Checkout approve/deny | requester |
+| Сессия ждёт супервайзера | все с `sessions.supervise` (или члены группы супервайзеров), кроме оператора |
+| Supervisor approve/deny | оператор сессии |
 
 Cancel / expire — без уведомлений.
 

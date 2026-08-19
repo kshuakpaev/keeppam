@@ -11,7 +11,7 @@
 ## Kill
 
 - Своя сессия: `POST /sessions/{id}/end` при `sessions.connect`.
-- Чужая: `users.write` или `audit.read`.
+- Чужая: `users.write`, `audit.read` или `sessions.supervise` (супервайзер четырёх глаз).
 - Redis канал `keeppam:session:kill` рвёт SSH/SQL/Guac/wire на API и session-worker.
 
 Forensic-поиск по `session_events`: Сессии → **События** (`docs/session-search.txt`).

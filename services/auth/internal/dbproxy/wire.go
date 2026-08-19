@@ -139,6 +139,10 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		_ = g.sendAuthFail(client, "session not active")
 		return
 	}
+	if row.IsWaitingSupervisor() {
+		_ = g.sendAuthFail(client, "waiting for supervisor")
+		return
+	}
 	if row.Protocol != g.protocol {
 		_ = g.sendAuthFail(client, "protocol mismatch")
 		return

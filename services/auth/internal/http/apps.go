@@ -197,6 +197,9 @@ func (s *Server) handleIsoApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveAppHTTP(w http.ResponseWriter, r *http.Request, row sessionsvc.Session, roles []string, ip, prefix, via string) {
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 	id := row.ID
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
 	if err != nil {

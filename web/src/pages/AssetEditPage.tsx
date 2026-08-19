@@ -9,6 +9,23 @@ const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"]
 const TYPES = ["host", "db", "k8s", "api"];
 const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 
+const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
+
+async function waitForSupervisor(sessionId: string) {
+  const deadline = Date.now() + SUPERVISOR_WAIT_MS;
+  while (Date.now() < deadline) {
+    const row = await api.getSession(sessionId);
+    if (!row.waiting_supervisor) {
+      if (row.status === "ended" || row.status === "failed") {
+        throw new Error(row.error_message || "Сессия отклонена супервайзером");
+      }
+      return row;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error("Истекло ожидание супервайзера (15 мин)");
+}
+
 const emptyAclForm = {
   kind: "role" as "role" | "user" | "group",
   role_id: "",
@@ -76,6 +93,8 @@ export function AssetEditPage() {
     quorum_n: 2,
     quorum_m: 3,
     approver_group_id: "",
+    require_supervisor: false,
+    supervisor_group_id: "",
     pam_only: true,
   });
   const [accForm, setAccForm] = useState({
@@ -142,6 +161,8 @@ export function AssetEditPage() {
         quorum_n: a.quorum_n || 2,
         quorum_m: a.quorum_m || 3,
         approver_group_id: a.approver_group_id || "",
+        require_supervisor: !!a.require_supervisor,
+        supervisor_group_id: a.supervisor_group_id || "",
         pam_only: a.pam_only !== false,
       });
       const acl = await api.listACL(id);
@@ -217,7 +238,7 @@ export function AssetEditPage() {
     setError("");
     setConnecting(acc.id);
     try {
-      const sess = await api.createSession(id, acc.id, {
+      let sess = await api.createSession(id, acc.id, {
         ticket_id: connectTicket.trim() || undefined,
         reason: connectReason.trim() || undefined,
         db_privilege:
@@ -225,6 +246,11 @@ export function AssetEditPage() {
         step_up_token: stepUpToken,
       });
       setStepUp(null);
+      if (sess.waiting_supervisor) {
+        setMsg("Ожидание супервайзера (четыре глаза)… Подключение начнётся после разрешения.");
+        sess = await waitForSupervisor(sess.id);
+        setMsg("");
+      }
       const title = `${asset.name} · ${acc.username}`;
       const kind = kindForProtocol(asset.protocol, appForm.recording_mode === "isolated");
       if (asset.protocol === "postgres" || asset.protocol === "mysql") {
@@ -356,6 +382,8 @@ export function AssetEditPage() {
         quorum_n: form.approval_mode === "quorum" ? Number(form.quorum_n) || 2 : 1,
         quorum_m: form.approval_mode === "quorum" ? Number(form.quorum_m) || 3 : 1,
         approver_group_id: form.approval_mode === "quorum" && form.approver_group_id ? form.approver_group_id : null,
+        require_supervisor: form.require_supervisor,
+        supervisor_group_id: form.require_supervisor && form.supervisor_group_id ? form.supervisor_group_id : null,
         pam_only: form.pam_only,
       });
       setAsset(updated);
@@ -1053,6 +1081,37 @@ export function AssetEditPage() {
             </select>
             <p className="muted" style={{ marginTop: 0 }}>
               Заявка одобряется, когда N разных участников группы проголосовали. Любой из них может отклонить.
+            </p>
+          </>
+        )}
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={form.require_supervisor}
+            onChange={(e) => setForm({ ...form, require_supervisor: e.target.checked })}
+            disabled={!canWrite}
+          />
+          Четыре глаза: супервайзер до старта сессии
+        </label>
+        {form.require_supervisor && (
+          <>
+            <label>Группа супервайзеров</label>
+            <select
+              value={form.supervisor_group_id}
+              onChange={(e) => setForm({ ...form, supervisor_group_id: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="">Любой с правом sessions.supervise</option>
+              {pamGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                  {g.member_count != null ? ` (${g.member_count})` : ""}
+                </option>
+              ))}
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              SSH/RDP/SQL/k8s не стартуют, пока другой пользователь не нажмёт «Разрешить». Break-glass пропускает ожидание.
+              Свою сессию супервизить нельзя. Таймаут 15 мин.
             </p>
           </>
         )}

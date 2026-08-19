@@ -424,11 +424,15 @@ func main() {
 				case <-runCtx.Done():
 					return
 				case <-t.C:
-					n, err := sessSvc.CloseStale(runCtx, 2*time.Minute)
-					if err != nil {
+					if n, err := sessSvc.CloseStale(runCtx, 2*time.Minute); err != nil {
 						slog.Warn("session reaper", "err", err)
 					} else if n > 0 {
 						slog.Info("session reaper closed stale", "count", n)
+					}
+					if n, err := sessSvc.ExpireWaitingSupervisor(runCtx, 15*time.Minute); err != nil {
+						slog.Warn("supervisor wait reaper", "err", err)
+					} else if n > 0 {
+						slog.Info("supervisor wait timed out", "count", n)
 					}
 					expired, err := policySvc.ExpirePending(runCtx, cfg.AccessRequestTTL)
 					if err != nil {

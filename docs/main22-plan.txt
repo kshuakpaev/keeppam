@@ -36,9 +36,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 
 | Статус    | Кол-во | Примеры |
 |-----------|--------|---------|
-| есть      | 16     | T-04 агенты, T-11 MFA, T-12 аудит, T-24 break-glass, T-38 replay speed |
-| частично  | 22     | T-09 discovery, T-10 OCR, T-16 quorum, T-20 группы, T-33 протоколы |
-| нет       | 16     | T-01 OVA, T-16 N-of-M, T-23 supervisor, T-25 AD group, T-33 Citrix/TN3270 |
+| есть      | 18     | T-04 агенты, T-11 MFA, T-12 аудит, T-16 quorum, T-23 supervisor, T-24 break-glass |
+| частично  | 21     | T-09 discovery, T-10 OCR, T-20 группы, T-33 протоколы |
+| нет       | 14     | T-01 OVA, T-25 AD group, T-33 Citrix/TN3270 |
 
 Цель плана: **частично → есть** для всех пунктов уровня B; **нет → опция SOW** для уровня C.
 
@@ -49,7 +49,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 | Фаза | Срок     | Цель для ТЗ                         | Пункты |
 |------|----------|-------------------------------------|--------|
 | P0   | 2–3 нед. | Дистрибутив, offline update, демо   | T-01*, T-03, T-13, T-14, T-52* |
-| P1   | 8–12 нед.| Согласование и портал как в ТЗ      | T-15, T-23 (T-16 ✓) |
+| P1   | 8–12 нед.| Согласование и портал как в ТЗ      | T-15 (T-16 ✓, T-23 ✓) |
 | P2   | 6–8 нед. | Файлы, метаданные, OCR, кодировки   | T-10, T-31, T-32, T-37, T-43, T-44 |
 | P3   | 8–12 нед.| HA, архив, RADIUS, scale            | T-06, T-07, T-18, T-19, T-46, T-48 |
 | P4   | 4–6 мес. | Протоколы и AD-sync                 | T-09, T-17, T-25, T-27, T-29, T-33*, T-35 |
@@ -190,25 +190,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** в acceptance — cron window «только пн–пт 09–18».
 
 ### T-23. «Четыре глаза» — супервайзер сессии
-**Сейчас:** dual-control на JIT/checkout; нет назначенного супервайзера на конкретную сессию до старта.
-**План (P1, 3–4 нед.):**
-
-Модель:
-- На активе / ACL: `require_supervisor=true`.
-- Перед connect: сессия `waiting_supervisor`; выбранный user (или любой из группы) жмёт Authorize.
-- Connect SSH/RDP блокируется, пока нет `session_supervisors` row.
-- Супервайзер ≠ оператор; live-watch опционально auto-open.
-
-Схема:
-```
-sessions.supervisor_id, supervisor_approved_at
-session_supervisor_reqs
-```
-
-Точки enforcement: `sessionsvc` start, SSH gateway banner «waiting for supervisor».
-UI: колонка «ждут супервайзера», кнопка Authorize.
-
-**DoD:** RDP/SSH не стартует без Authorize; после Approve — сессия идёт; kill супервайзером работает.
+**Статус: есть** (миграция `075`, право `sessions.supervise`).
+**Реализация:** флаг актива `require_supervisor` + опциональная группа; сессия `pending` до `supervisor_approved_at`; connect SSH/RDP/SQL/k8s/HTTPS блокируется; SSH-баннер wait; dual-control; break-glass skip; timeout 15 мин; kill супервайзером.
+**DoD:** RDP/SSH не стартует без Authorize; после Approve — сессия идёт; deny/timeout закрывает; свою сессию супервизить нельзя.
 
 ### T-24. Break-glass
 **Статус: есть.**
@@ -376,9 +360,9 @@ UI: колонка «ждут супервайзера», кнопка Authorize
 ```
 P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
   │
-  ├─ P1.1  JIT quorum N-of-M                             [T-16]   ← старт кода
-  ├─ P1.2  Session supervisor                            [T-23]
-  ├─ P1.3  i18n EN/RU                                    [T-15]
+  ├─ P1.1  JIT quorum N-of-M                             [T-16]   ✓
+  ├─ P1.2  Session supervisor                            [T-23]   ✓
+  ├─ P1.3  i18n EN/RU                                    [T-15]   ← дальше
   └─ P1.4  JEA list import                               [T-42]
   │
   ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]
@@ -441,5 +425,6 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
 - `docs/kp.txt` — что обещаем в КП (A/B/C)
 - `docs/kp-roadmap.txt` — фазы КП-0…3 (коммерческая нарезка этого плана)
 - `docs/kp-acceptance.txt` — приёмка пилота (уровень A); расширять по мере закрытия T-xx
-- `docs/jit-workflow.txt` — текущий sequential JIT (обновить после T-16)
+- `docs/jit-workflow.txt` — sequential JIT и кворум N-of-M
+- `docs/session-supervisor.txt` — четыре глаза до старта сессии
 - `docs/arch.txt` — архитектура для приложения к контракту

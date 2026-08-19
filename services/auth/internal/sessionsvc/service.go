@@ -20,34 +20,41 @@ import (
 )
 
 type Session struct {
-	ID               uuid.UUID        `json:"id"`
-	UserID           uuid.UUID        `json:"user_id"`
-	AssetID          uuid.UUID        `json:"asset_id"`
-	AccountID        uuid.UUID        `json:"account_id"`
-	Protocol         string           `json:"protocol"`
-	Status           string           `json:"status"`
-	ClientIP         string           `json:"client_ip"`
-	RecordingPath    string           `json:"recording_path,omitempty"`
-	ErrorMessage     string           `json:"error_message,omitempty"`
-	StartedAt        *time.Time       `json:"started_at,omitempty"`
-	EndedAt          *time.Time       `json:"ended_at,omitempty"`
-	LastSeenAt       *time.Time       `json:"last_seen_at,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
-	TicketID         string           `json:"ticket_id,omitempty"`
-	Reason           string           `json:"reason,omitempty"`
-	DBPrivilege      string           `json:"db_privilege,omitempty"`
-	DatabaseName     string           `json:"database_name,omitempty"`
-	SQLPolicyPackID  *uuid.UUID       `json:"sql_policy_pack_id,omitempty"`
-	HTTPPolicyPackID *uuid.UUID       `json:"http_policy_pack_id,omitempty"`
-	AppObjectPackID  *uuid.UUID       `json:"app_object_pack_id,omitempty"`
-	K8sNamespaces    []string         `json:"k8s_namespaces,omitempty"`
-	BreakGlass       bool             `json:"break_glass"`
-	RiskScore        int              `json:"risk_score"`
-	RiskFactors      []string         `json:"risk_factors,omitempty"`
-	Labels           []string         `json:"labels,omitempty"`
-	AccessPolicyID   *uuid.UUID       `json:"access_policy_id,omitempty"`
-	ClientCountry    string           `json:"client_country,omitempty"`
-	PolicySnapshot   *policy.Snapshot `json:"policy_snapshot,omitempty"`
+	ID                   uuid.UUID        `json:"id"`
+	UserID               uuid.UUID        `json:"user_id"`
+	AssetID              uuid.UUID        `json:"asset_id"`
+	AccountID            uuid.UUID        `json:"account_id"`
+	Protocol             string           `json:"protocol"`
+	Status               string           `json:"status"`
+	ClientIP             string           `json:"client_ip"`
+	RecordingPath        string           `json:"recording_path,omitempty"`
+	ErrorMessage         string           `json:"error_message,omitempty"`
+	StartedAt            *time.Time       `json:"started_at,omitempty"`
+	EndedAt              *time.Time       `json:"ended_at,omitempty"`
+	LastSeenAt           *time.Time       `json:"last_seen_at,omitempty"`
+	CreatedAt            time.Time        `json:"created_at"`
+	TicketID             string           `json:"ticket_id,omitempty"`
+	Reason               string           `json:"reason,omitempty"`
+	DBPrivilege          string           `json:"db_privilege,omitempty"`
+	DatabaseName         string           `json:"database_name,omitempty"`
+	SQLPolicyPackID      *uuid.UUID       `json:"sql_policy_pack_id,omitempty"`
+	HTTPPolicyPackID     *uuid.UUID       `json:"http_policy_pack_id,omitempty"`
+	AppObjectPackID      *uuid.UUID       `json:"app_object_pack_id,omitempty"`
+	K8sNamespaces        []string         `json:"k8s_namespaces,omitempty"`
+	BreakGlass           bool             `json:"break_glass"`
+	RiskScore            int              `json:"risk_score"`
+	RiskFactors          []string         `json:"risk_factors,omitempty"`
+	Labels               []string         `json:"labels,omitempty"`
+	AccessPolicyID       *uuid.UUID       `json:"access_policy_id,omitempty"`
+	ClientCountry        string           `json:"client_country,omitempty"`
+	PolicySnapshot       *policy.Snapshot `json:"policy_snapshot,omitempty"`
+	RequireSupervisor    bool             `json:"require_supervisor"`
+	SupervisorGroupID    *uuid.UUID       `json:"supervisor_group_id,omitempty"`
+	SupervisorGroupName  string           `json:"supervisor_group_name,omitempty"`
+	SupervisorID         *uuid.UUID       `json:"supervisor_id,omitempty"`
+	SupervisorUsername   string           `json:"supervisor_username,omitempty"`
+	SupervisorApprovedAt *time.Time       `json:"supervisor_approved_at,omitempty"`
+	WaitingSupervisor    bool             `json:"waiting_supervisor"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
@@ -122,12 +129,13 @@ type CreateInput struct {
 }
 
 type ListFilter struct {
-	OnlyUser *uuid.UUID
-	Status   string
-	Protocol string
-	Q        string
-	Limit    int
-	Offset   int
+	OnlyUser          *uuid.UUID
+	Status            string
+	Protocol          string
+	Q                 string
+	WaitingSupervisor bool
+	Limit             int
+	Offset            int
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, ua string) (Session, error) {
@@ -177,12 +185,19 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if labels == nil {
 		labels = []string{}
 	}
+	needSup := false
+	var supGroup *uuid.UUID
+	if !in.BreakGlass {
+		_ = s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(require_supervisor, FALSE), supervisor_group_id
+			FROM assets WHERE id=$1`, in.AssetID).Scan(&needSup, &supGroup)
+	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at, require_supervisor, supervisor_group_id)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
 		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, ns, in.BreakGlass,
-		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now)
+		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now, needSup, supGroup)
 	if err != nil {
 		return Session{}, err
 	}
@@ -190,6 +205,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		"asset_id": in.AssetID.String(), "account_id": in.AccountID.String(), "protocol": in.Protocol,
 		"ticket_id": strings.TrimSpace(in.TicketID), "break_glass": in.BreakGlass,
 		"risk_score": in.RiskScore, "labels": labels, "client_country": strings.TrimSpace(in.ClientCountry),
+		"require_supervisor": needSup, "supervisor_skipped": in.BreakGlass && needSup,
 	})
 	_ = s.AddEvent(ctx, id, "created", map[string]any{"protocol": in.Protocol})
 	return s.Get(ctx, id)
@@ -197,6 +213,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 
 func (s *Service) MarkActive(ctx context.Context, id uuid.UUID) error {
 	row, _ := s.Get(ctx, id)
+	if row.IsWaitingSupervisor() {
+		return ErrWaitingSupervisor
+	}
 	now := time.Now().UTC()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET status='active', started_at=$2, last_seen_at=$2 WHERE id=$1`, id, now)
@@ -335,12 +354,16 @@ const sessionSelect = `
 			COALESCE(s.k8s_namespaces,'{}'), COALESCE(s.break_glass,false),
 			COALESCE(s.risk_score,0), COALESCE(s.risk_factors,'{}'), COALESCE(s.labels,'{}'),
 			s.access_policy_id, COALESCE(s.client_country,''), s.policy_snapshot,
+			COALESCE(s.require_supervisor, FALSE), s.supervisor_group_id, COALESCE(sg.name,''),
+			s.supervisor_id, COALESCE(su.username,''), s.supervisor_approved_at,
 			u.username, a.name, aa.username, a.address,
 			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN assets a ON a.id = s.asset_id
-		JOIN asset_accounts aa ON aa.id = s.account_id`
+		JOIN asset_accounts aa ON aa.id = s.account_id
+		LEFT JOIN groups sg ON sg.id = s.supervisor_group_id
+		LEFT JOIN users su ON su.id = s.supervisor_id`
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Session, error) {
 	row := s.db.Pool.QueryRow(ctx, sessionSelect+` WHERE s.id=$1`, id)
@@ -366,6 +389,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 		where += ` AND s.status=$` + itoa(i)
 		args = append(args, st)
 		i++
+	}
+	if f.WaitingSupervisor {
+		where += ` AND s.require_supervisor AND s.supervisor_approved_at IS NULL AND s.status='pending'`
 	}
 	if proto := strings.TrimSpace(f.Protocol); proto != "" {
 		where += ` AND s.protocol=$` + itoa(i)
@@ -474,6 +500,8 @@ func scanSession(row scannable) (Session, error) {
 		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID, &s.HTTPPolicyPackID, &s.AppObjectPackID,
 		&s.K8sNamespaces, &s.BreakGlass,
 		&s.RiskScore, &s.RiskFactors, &s.Labels, &s.AccessPolicyID, &s.ClientCountry, &snapRaw,
+		&s.RequireSupervisor, &s.SupervisorGroupID, &s.SupervisorGroupName,
+		&s.SupervisorID, &s.SupervisorUsername, &s.SupervisorApprovedAt,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
 	)
 	if err != nil {
@@ -485,6 +513,7 @@ func scanSession(row scannable) (Session, error) {
 	if s.Labels == nil {
 		s.Labels = []string{}
 	}
+	s.WaitingSupervisor = s.IsWaitingSupervisor()
 	s.Isolated = s.Protocol == "https" && strings.Contains(filepath.ToSlash(s.RecordingPath), "/guac/")
 	if len(snapRaw) > 0 {
 		var sn policy.Snapshot

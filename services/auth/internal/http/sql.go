@@ -58,6 +58,9 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "session not connectable")
 		return
 	}
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

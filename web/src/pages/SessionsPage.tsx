@@ -43,6 +43,7 @@ export function SessionsPage() {
   const [eventTotal, setEventTotal] = useState(0);
   const canRead = hasPerm(user, "sessions.read");
   const canWatch = hasPerm(user, "sessions.read");
+  const canSupervise = hasPerm(user, "sessions.supervise");
 
   const effectiveStatus = tab === "live" ? "active" : status;
 
@@ -82,6 +83,26 @@ export function SessionsPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось завершить");
+    }
+  }
+
+  async function onApproveSupervisor(id: string) {
+    setError("");
+    try {
+      await api.approveSupervisor(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось разрешить сессию");
+    }
+  }
+
+  async function onDenySupervisor(id: string) {
+    setError("");
+    try {
+      await api.denySupervisor(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось отклонить сессию");
     }
   }
 
@@ -375,10 +396,20 @@ export function SessionsPage() {
                   >
                     {s.status === "active" ? "live" : s.status}
                   </span>
+                  {s.waiting_supervisor && (
+                    <span className="badge locked" style={{ marginLeft: 6 }} title="четыре глаза">
+                      ждёт супервайзера
+                    </span>
+                  )}
                   {s.break_glass && (
                     <span className="badge locked" style={{ marginLeft: 6 }} title="break-glass session">
                       glass
                     </span>
+                  )}
+                  {s.supervisor_username && s.supervisor_approved_at && (
+                    <div className="muted" style={{ fontSize: "0.8rem" }}>
+                      супервайзер {s.supervisor_username}
+                    </div>
                   )}
                   {snapshotHint(s) && (
                     <div className="muted mono" style={{ fontSize: "0.8rem" }} title="политика на момент connect">
@@ -388,7 +419,26 @@ export function SessionsPage() {
                 </td>
                 <td>
                   <div className="row">
-                    {(s.status === "active" || s.status === "pending") && (
+                    {s.waiting_supervisor && canSupervise && s.user_id !== user?.id && (
+                      <>
+                        <button className="btn" type="button" onClick={() => void onApproveSupervisor(s.id)}>
+                          Разрешить
+                        </button>
+                        <button className="btn danger" type="button" onClick={() => void onDenySupervisor(s.id)}>
+                          Отклонить
+                        </button>
+                      </>
+                    )}
+                    {s.waiting_supervisor && (
+                      <button
+                        className="btn danger"
+                        type="button"
+                        onClick={() => void onEnd(s.id)}
+                      >
+                        Завершить
+                      </button>
+                    )}
+                    {(s.status === "active" || s.status === "pending") && !s.waiting_supervisor && (
                       <>
                         <button
                           className="btn secondary"
