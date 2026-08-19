@@ -42,8 +42,11 @@ export function SessionReplayPage() {
   const [keystrokes, setKeystrokes] = useState<TranscriptLine[]>([]);
   const [screenText, setScreenText] = useState<TranscriptLine[]>([]);
   const [files, setFiles] = useState<SessionFile[]>([]);
+  const [transferFiles, setTransferFiles] = useState<TranscriptLine[]>([]);
+  const [windowTitles, setWindowTitles] = useState<TranscriptLine[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [sshSpeed, setSshSpeed] = useState(1);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -55,7 +58,8 @@ export function SessionReplayPage() {
   const sshRef = useRef<{
     term: Terminal;
     events: CastEv[];
-    replay: (speed: number, onDone?: () => void) => () => void;
+    replay: (speed: number, fromSec?: number, onDone?: () => void) => () => void;
+    stop?: () => void;
   } | null>(null);
 
   useEffect(() => {
@@ -86,6 +90,8 @@ export function SessionReplayPage() {
               setOutputLines(t.output || []);
               setKeystrokes(t.keystrokes || []);
               setScreenText(t.screen_text || []);
+              setTransferFiles(t.files || []);
+              setWindowTitles(t.window_titles || []);
             }
           } catch {
             /* replay still works */
@@ -180,14 +186,18 @@ export function SessionReplayPage() {
         }
         if (events.length) setDuration(events[events.length - 1][0] * 1000);
 
-        const replay = (speed: number, onDone?: () => void) => {
+        const replay = (speed: number, fromSec = 0, onDone?: () => void) => {
           let i = 0;
           let stopped = false;
           term.reset();
-          const start = performance.now();
+          while (i < events.length && events[i][0] < fromSec) {
+            term.write(events[i][2]);
+            i++;
+          }
+          const t0 = performance.now();
           const tick = () => {
             if (cancelled || stopped) return;
-            const elapsed = ((performance.now() - start) / 1000) * speed;
+            const elapsed = fromSec + ((performance.now() - t0) / 1000) * speed;
             setPosition(elapsed * 1000);
             while (i < events.length && events[i][0] <= elapsed) {
               term.write(events[i][2]);
@@ -209,7 +219,8 @@ export function SessionReplayPage() {
 
         sshRef.current = { term, events, replay };
         setReady(true);
-        replay(1);
+        const stop = replay(1, 0);
+        sshRef.current.stop = stop;
       } catch (err) {
         if (!cancelled) setError(te(err, "replay.error"));
       }
@@ -287,7 +298,7 @@ export function SessionReplayPage() {
           fps: 15,
           run: () =>
             new Promise<void>((resolve) => {
-              ssh.replay(8, () => resolve());
+              ssh.replay(8, 0, () => resolve());
             }),
         });
       }
@@ -325,6 +336,8 @@ export function SessionReplayPage() {
       setOutputLines(res.output || []);
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
+      setTransferFiles(res.files || []);
+      setWindowTitles(res.window_titles || []);
     } catch (err) {
       setError(te(err, "replay.indexError"));
     } finally {
@@ -340,6 +353,7 @@ export function SessionReplayPage() {
       const res = await api.indexSessionTranscript(id, { force: true, ocr: true });
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
+      setWindowTitles(res.window_titles || []);
     } catch (err) {
       setError(te(err, "replay.ocrError"));
     } finally {
@@ -348,6 +362,44 @@ export function SessionReplayPage() {
   }
 
   const isGuac = protocol === "rdp" || protocol === "vnc" || isolated;
+
+  function seekToMs(ms: number) {
+    const rec = recordingRef.current;
+    if (rec) {
+      rec.seek(ms, () => setPosition(rec.getPosition()));
+      return;
+    }
+    const ssh = sshRef.current;
+    if (!ssh) return;
+    ssh.stop?.();
+    const stop = ssh.replay(sshSpeed, Math.max(0, ms / 1000));
+    ssh.stop = stop;
+  }
+
+  function playSshAt(speed: number) {
+    const ssh = sshRef.current;
+    if (!ssh) return;
+    setSshSpeed(speed);
+    ssh.stop?.();
+    const from = position / 1000;
+    const stop = ssh.replay(speed, from);
+    ssh.stop = stop;
+  }
+
+  const fileRows: TranscriptLine[] =
+    transferFiles.length > 0
+      ? transferFiles
+      : files.map((f) => ({
+          ts: f.created_at,
+          type: "file_transfer",
+          command: `${f.direction} ${f.protocol} ${f.filename}`,
+          filename: f.filename,
+          file_id: f.id,
+          captured: f.captured,
+          path: f.remote_path,
+          direction: f.direction,
+          protocol: f.protocol,
+        }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", minHeight: 0 }}>
@@ -370,6 +422,22 @@ export function SessionReplayPage() {
             <button className="btn secondary" type="button" onClick={togglePlay} disabled={exporting || exportingMp4}>
               {playing ? t("replay.pause") : t("replay.play")}
             </button>
+          )}
+          {protocol === "ssh" && ready && (
+            <span className="row" style={{ gap: 4, alignItems: "center" }}>
+              <span className="muted">{t("replay.speed")}</span>
+              {[1, 2, 4].map((s) => (
+                <button
+                  key={s}
+                  className={sshSpeed === s ? "btn" : "btn secondary"}
+                  type="button"
+                  disabled={exporting}
+                  onClick={() => playSshAt(s)}
+                >
+                  {s}×
+                </button>
+              ))}
+            </span>
           )}
           <button
             className="btn secondary"
@@ -410,7 +478,7 @@ export function SessionReplayPage() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {isGuac && (
+      {(isGuac || protocol === "ssh") && (
         <div className="row" style={{ padding: "0.5rem 1rem", gap: "0.75rem", alignItems: "center" }}>
           <span className="mono muted">{formatMs(position)}</span>
           <input
@@ -418,7 +486,7 @@ export function SessionReplayPage() {
             min={0}
             max={Math.max(duration, 1)}
             value={Math.min(position, duration)}
-            onChange={(e) => onSeek(Number(e.target.value))}
+            onChange={(e) => seekToMs(Number(e.target.value))}
             style={{ flex: 1 }}
             disabled={exporting}
           />
@@ -474,16 +542,23 @@ export function SessionReplayPage() {
           </ul>
           <h2>{t("replay.files")}</h2>
           <p className="muted">
-            {files.length === 0 ? t("replay.emptyFiles") : t("replay.nFiles", { n: files.length })}
+            {fileRows.length === 0 ? t("replay.emptyFiles") : t("replay.nFiles", { n: fileRows.length })}
           </p>
           <ul className="plain-list">
-            {files.map((f) => (
-              <li key={f.id}>
-                <span className="mono" title={f.remote_path || f.filename}>
-                  {f.direction} {f.protocol} {f.filename}
-                </span>
-                {f.captured ? (
-                  <a className="btn secondary" href={api.getSessionFileUrl(id!, f.id)}>
+            {fileRows.map((f, i) => (
+              <li key={f.file_id || `${f.ts}-${i}`}>
+                <button
+                  type="button"
+                  className="mono"
+                  style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                  title={f.path || f.filename}
+                  onClick={() => seekToMs((f.offset || 0) * 1000)}
+                >
+                  {f.offset != null ? `[${Math.floor(f.offset)}s] ` : ""}
+                  {f.command || f.filename}
+                </button>
+                {f.captured && f.file_id ? (
+                  <a className="btn secondary" href={api.getSessionFileUrl(id!, f.file_id)}>
                     {t("sess.download")}
                   </a>
                 ) : (
@@ -527,6 +602,46 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
+          <h2>{t("replay.titles")}</h2>
+          <p className="muted">
+            {windowTitles.length === 0 ? t("replay.emptyTitles") : t("replay.nFrags", { n: windowTitles.length })}
+          </p>
+          <ul className="plain-list">
+            {windowTitles.map((ln, i) => (
+              <li key={`w-${ln.ts}-${i}`}>
+                <button
+                  type="button"
+                  className="mono"
+                  style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                  onClick={() => seekToMs((ln.offset || 0) * 1000)}
+                >
+                  {ln.offset != null ? `[${ln.offset}s] ` : ""}
+                  {ln.command}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {fileRows.length > 0 && (
+            <>
+              <h2>{t("replay.files")}</h2>
+              <p className="muted">{t("replay.nFiles", { n: fileRows.length })}</p>
+              <ul className="plain-list">
+                {fileRows.map((f, i) => (
+                  <li key={f.file_id || `gf-${f.ts}-${i}`}>
+                    <button
+                      type="button"
+                      className="mono"
+                      style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                      onClick={() => seekToMs((f.offset || 0) * 1000)}
+                    >
+                      {f.offset != null ? `[${Math.floor(f.offset)}s] ` : ""}
+                      {f.command || f.filename}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </aside>
       )}
       </div>

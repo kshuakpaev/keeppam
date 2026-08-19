@@ -15,13 +15,14 @@ import (
 )
 
 type TimelineFilter struct {
-	UserID uuid.UUID
-	From   time.Time
-	To     time.Time
-	Q      string
-	Source string // all|audit|session
-	Limit  int
-	Offset int
+	UserID   uuid.UUID
+	From     time.Time
+	To       time.Time
+	Q        string
+	Filename string
+	Source   string // all|audit|session
+	Limit    int
+	Offset   int
 }
 
 type TimelineEvent struct {
@@ -143,13 +144,23 @@ func (s *Service) Timeline(ctx context.Context, f TimelineFilter) (TimelineResul
 	}
 	q := strings.TrimSpace(f.Q)
 	like := likePattern(q)
+	fname := strings.TrimSpace(f.Filename)
 
-	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src, q != "")
-	where := ""
+	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src, q != "" || fname != "")
+	var extra []string
 	if q != "" {
 		args = append(args, like)
 		p := len(args)
-		where = fmt.Sprintf(" WHERE (x.kind ILIKE $%d ESCAPE '\\' OR COALESCE(x.payload::text,'') ILIKE $%d ESCAPE '\\' OR COALESCE(x.asset_name,'') ILIKE $%d ESCAPE '\\')", p, p, p)
+		extra = append(extra, fmt.Sprintf("(x.kind ILIKE $%d ESCAPE '\\' OR COALESCE(x.payload::text,'') ILIKE $%d ESCAPE '\\' OR COALESCE(x.asset_name,'') ILIKE $%d ESCAPE '\\')", p, p, p))
+	}
+	if fname != "" {
+		args = append(args, likePattern(fname))
+		p := len(args)
+		extra = append(extra, fmt.Sprintf("x.kind = 'file_transfer' AND (COALESCE(x.payload->>'filename','') ILIKE $%d ESCAPE '\\' OR COALESCE(x.payload->>'path','') ILIKE $%d ESCAPE '\\')", p, p))
+	}
+	where := ""
+	if len(extra) > 0 {
+		where = " WHERE " + strings.Join(extra, " AND ")
 	}
 
 	var total int

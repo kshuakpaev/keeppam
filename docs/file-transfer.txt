@@ -25,7 +25,7 @@ scp secret.bin user+demo-linux-01@keeppam:
 
 ## UI / API
 
-Replay сессии → «Файлы SCP/SFTP».  
+Replay сессии → «Файлы SCP/SFTP»: список из событий `file_transfer` (audit и capture), клик перематывает запись на `offset`. Download — если `captured`.  
 `GET /api/v1/admin/sessions/{id}/files`  
 `GET /api/v1/admin/sessions/{id}/files/{fileId}` — download (`sessions.files.read`).
 

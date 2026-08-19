@@ -42,6 +42,11 @@ export function SessionsPage() {
   const [appliedQ, setAppliedQ] = useState("");
   const [offset, setOffset] = useState(0);
   const [eventType, setEventType] = useState("");
+  const [filename, setFilename] = useState("");
+  const [appliedFilename, setAppliedFilename] = useState("");
+  const [eventProtocol, setEventProtocol] = useState("");
+  const [clientIP, setClientIP] = useState("");
+  const [appliedIP, setAppliedIP] = useState("");
   const [hours, setHours] = useState(168);
   const [events, setEvents] = useState<SessionEventHit[]>([]);
   const [eventTotal, setEventTotal] = useState(0);
@@ -57,6 +62,9 @@ export function SessionsPage() {
         const res = await api.searchSessionEvents({
           q: appliedQ || undefined,
           type: eventType || undefined,
+          filename: appliedFilename || undefined,
+          protocol: eventProtocol || undefined,
+          client_ip: appliedIP || undefined,
           hours,
           limit: PAGE_SIZE,
           offset,
@@ -78,7 +86,7 @@ export function SessionsPage() {
     } catch (err) {
       setError(te(err));
     }
-  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours]);
+  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours, appliedFilename, eventProtocol, appliedIP]);
 
   async function onEnd(id: string) {
     setError("");
@@ -182,6 +190,8 @@ export function SessionsPage() {
         onSubmit={(e) => {
           e.preventDefault();
           setAppliedQ(q.trim());
+          setAppliedFilename(filename.trim());
+          setAppliedIP(clientIP.trim());
           setOffset(0);
         }}
       >
@@ -226,6 +236,36 @@ export function SessionsPage() {
               </select>
             </label>
             <label>
+              {t("sess.filename")}
+              <input
+                value={filename}
+                onChange={(e) => setFilename(e.target.value)}
+                placeholder="secret.bin"
+              />
+            </label>
+            <label>
+              {t("common.protocol")}
+              <select value={eventProtocol} onChange={(e) => { setEventProtocol(e.target.value); setOffset(0); }}>
+                <option value="">{t("common.all")}</option>
+                <option value="ssh">ssh</option>
+                <option value="rdp">rdp</option>
+                <option value="vnc">vnc</option>
+                <option value="postgres">postgres</option>
+                <option value="mysql">mysql</option>
+                <option value="mssql">mssql</option>
+                <option value="kubectl">kubectl</option>
+                <option value="https">https</option>
+              </select>
+            </label>
+            <label>
+              {t("sess.clientIP")}
+              <input
+                value={clientIP}
+                onChange={(e) => setClientIP(e.target.value)}
+                placeholder="10.0.0."
+              />
+            </label>
+            <label>
               {t("sess.window")}
               <select value={hours} onChange={(e) => { setHours(Number(e.target.value)); setOffset(0); }}>
                 <option value={24}>{t("sess.h24")}</option>
@@ -245,6 +285,7 @@ export function SessionsPage() {
               <option value="vnc">vnc</option>
               <option value="postgres">postgres</option>
               <option value="mysql">mysql</option>
+              <option value="mssql">mssql</option>
               <option value="kubectl">kubectl</option>
               <option value="https">https</option>
             </select>
@@ -270,6 +311,11 @@ export function SessionsPage() {
             setStatus("");
             setProtocol("");
             setEventType("");
+            setFilename("");
+            setAppliedFilename("");
+            setEventProtocol("");
+            setClientIP("");
+            setAppliedIP("");
             setHours(168);
             setOffset(0);
           }}

@@ -141,7 +141,7 @@ func (s *Service) SaveReader(ctx context.Context, meta SaveMeta, r io.Reader, si
 		_ = s.sess.AddEvent(ctx, meta.SessionID, "file_transfer", map[string]any{
 			"filename": name, "path": meta.RemotePath, "protocol": meta.Protocol,
 			"direction": meta.Direction, "size": size, "sha256": sum, "captured": captured,
-			"file_id": id.String(),
+			"file_id": id.String(), "offset": s.sessionOffsetSec(ctx, meta.SessionID),
 		})
 	}
 	return nil
@@ -206,4 +206,16 @@ func (s *Service) OpenLocal(ctx context.Context, f File) (*os.File, error) {
 		}
 	}
 	return os.Open(f.StoredPath)
+}
+
+func (s *Service) sessionOffsetSec(ctx context.Context, sessionID uuid.UUID) float64 {
+	var created time.Time
+	if err := s.db.Pool.QueryRow(ctx, `SELECT created_at FROM sessions WHERE id=$1`, sessionID).Scan(&created); err != nil || created.IsZero() {
+		return 0
+	}
+	sec := time.Since(created).Seconds()
+	if sec < 0 {
+		return 0
+	}
+	return sec
 }

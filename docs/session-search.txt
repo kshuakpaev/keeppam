@@ -15,7 +15,10 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 | Query | Смысл |
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
-| `type` | пусто = forensic (`sql`, …, `output`, `keystroke`, `screen_text`, `dlp`, …); `all` = любые; иначе точный тип |
+| `filename` | имя/путь `file_transfer` (payload `filename`/`path`); без `type` — только эти события |
+| `protocol` | протокол сессии |
+| `client_ip` | подстрока `sessions.client_ip` |
+| `type` | пусто = forensic (`sql`, …, `file_transfer`); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 
@@ -28,7 +31,7 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 
 ## UI
 
-Сессии → вкладка **События**. Replay SSH: команды + вывод. Replay RDP/VNC: **Клавиши** + **Экран (OCR)**. Кнопки «Индексировать запись» / «OCR экрана».
+Сессии → вкладка **События**: тип, имя файла, протокол, IP. Replay SSH: команды + вывод + **файлы** (клик — seek по offset). Replay RDP/VNC: клавиши + OCR + **окна** (первая строка кадра). Скорость SSH 1×/2×/4×.
 
 ## Индекс
 

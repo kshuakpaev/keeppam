@@ -206,10 +206,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	f := sessionsvc.EventSearchFilter{
-		Q:     r.URL.Query().Get("q"),
-		Type:  r.URL.Query().Get("type"),
-		Hours: 168,
-		Limit: 50,
+		Q:        r.URL.Query().Get("q"),
+		Type:     r.URL.Query().Get("type"),
+		Filename: r.URL.Query().Get("filename"),
+		Protocol: r.URL.Query().Get("protocol"),
+		ClientIP: r.URL.Query().Get("client_ip"),
+		Hours:    168,
+		Limit:    50,
 	}
 	if v := r.URL.Query().Get("hours"); v != "" {
 		if n, err := parseInt(v); err == nil {
@@ -241,9 +244,10 @@ func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	q := r.URL.Query()
 	f := sessionsvc.TimelineFilter{
-		Q:      q.Get("q"),
-		Source: q.Get("source"),
-		Limit:  50,
+		Q:        q.Get("q"),
+		Filename: q.Get("filename"),
+		Source:   q.Get("source"),
+		Limit:    50,
 	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := parseInt(v); err == nil {

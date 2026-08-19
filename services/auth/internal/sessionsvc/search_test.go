@@ -39,3 +39,20 @@ func TestLikePatternEscapes(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestWindowTitleFromOCR(t *testing.T) {
+	if WindowTitleFromOCR("Notepad\nFile Edit") != "Notepad" {
+		t.Fatal("first line")
+	}
+	if WindowTitleFromOCR("x") != "" {
+		t.Fatal("too short")
+	}
+	dup := WindowTitlesFromScreen([]TranscriptLine{
+		{Command: "Chrome\nbody", Offset: 1},
+		{Command: "Chrome\nother", Offset: 2},
+		{Command: "Explorer\n", Offset: 3},
+	})
+	if len(dup) != 2 || dup[0].Command != "Chrome" || dup[1].Command != "Explorer" {
+		t.Fatalf("dedupe %#v", dup)
+	}
+}

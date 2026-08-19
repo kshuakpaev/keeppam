@@ -28,7 +28,7 @@
 | 1.6 | **SCP/SFTP file capture** (storage + UI) вместо только deny | п.37, 71 | ✓ миграция `078` |
 | 1.7 | **OCR rus+eng**, больше кадров / настраиваемый interval | п.13 | ✓ миграция `079` |
 | 1.8 | **MSSQL wire** proxy (если в scope заказчика) | п.50 | ✓ миграция `080`, TDS `:11433` |
-| 1.9 | **Replay metadata**: имена файлов transfer events | п.40, 60 | 2 нед. |
+| 1.9 | **Replay metadata**: имена файлов transfer events | п.40, 60 | ✓ transcript `files`/`window_titles`, forensic `filename` |
 
 ## Фаза КП-2 — enterprise (6–12 мес., опция)
 
@@ -58,4 +58,4 @@
 
 ## Следующий шаг реализации
 
-**КП-1.9 Replay metadata**: имена файлов transfer events.
+Фаза КП-1 закрыта. Дальше — КП-2 (OVA / AD group JIT) только по запросу.

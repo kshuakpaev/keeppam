@@ -218,11 +218,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Статус: есть (SCP/SFTP)** — политика `file_transfer=deny|audit|capture`, миграция `078`, `docs/file-transfer.txt`. RDP clipboard — не в этом срезе (T-27).
 
 ### T-32. Мониторинг: I/O + метаданные (процессы, окна, файлы)
-**Сейчас:** stdin/stdout/keystroke/screen_text; процессы/окна Windows — нет (нужен агент или глубокий RDP).
-**План (P2):**
-- Имена файлов — из T-31 events `file_transfer`.
-- Заголовки окон — эвристика OCR (T-10) + опционально RDP RAIL window titles если доступны в guac.
-- Процессы — не обещать без агента; в КП: «из протокола, не с хоста».
+**Статус: есть (файлы + окна OCR)** — `file_transfer` в replay/transcript; forensic `filename`; заголовок окна = первая строка `screen_text`. Процессы Windows без агента — нет.
 **DoD:** forensic фильтр по имени файла; window title — best-effort OCR.
 
 ### T-33. Протоколы
@@ -257,8 +253,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** watch SSH + kill; replay только read-only.
 
 ### T-37. Forensic search (время, IP, протокол, полнотекст, метаданные, имя файла)
-**Сейчас:** session_events search (`docs/forensic.txt`, `docs/session-search.txt`). Имя файла — после T-31. Архив SMB — после T-46 (поиск по архиву: индекс остаётся в PG/OS).
-**План (P2):** фильтры UI = чек-лист ТЗ; filename index; «архивные» сессии помечаются `archived=true`, поиск не требует монтирования SMB.
+**Статус: есть** — `GET .../sessions/events` (`q`, `filename`, `protocol`, `client_ip`, `type`, `hours`); timeline `filename`. Архив SMB не монтируется для поиска (индекс в PG).
 
 ### T-38. Скорость воспроизведения
 **Статус: есть** (`SessionReplayPage` speed).
@@ -344,7 +339,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P1.3  i18n EN/RU                                    [T-15]   ✓
   └─ P1.4  JEA list import                               [T-42]
   │
-  ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓ T-31 SSH; T-37 имя файла; T-44 WORM recstore
+  ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓
   ├─ P2.2  OCR rus+eng                                   [T-10]  ✓
   ├─ P2.3  Charset CP1251/KOI8                           [T-43]
   └─ P2.4  Dynamic groups auto-match                     [T-20]

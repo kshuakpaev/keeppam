@@ -1453,6 +1453,9 @@ export const api = {
   searchSessionEvents: (params?: {
     q?: string;
     type?: string;
+    filename?: string;
+    protocol?: string;
+    client_ip?: string;
     hours?: number;
     limit?: number;
     offset?: number;
@@ -1460,6 +1463,9 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.type) qs.set("type", params.type);
+    if (params?.filename) qs.set("filename", params.filename);
+    if (params?.protocol) qs.set("protocol", params.protocol);
+    if (params?.client_ip) qs.set("client_ip", params.client_ip);
     if (params?.hours != null) qs.set("hours", String(params.hours));
     if (params?.limit != null) qs.set("limit", String(params.limit));
     if (params?.offset != null) qs.set("offset", String(params.offset));
@@ -1476,6 +1482,8 @@ export const api = {
       output?: TranscriptLine[];
       keystrokes?: TranscriptLine[];
       screen_text?: TranscriptLine[];
+      files?: TranscriptLine[];
+      window_titles?: TranscriptLine[];
     }>(`/api/v1/admin/sessions/${id}/transcript`),
   indexSessionTranscript: (id: string, opts?: { force?: boolean; ocr?: boolean }) =>
     request<{
@@ -1497,6 +1505,8 @@ export const api = {
       output?: TranscriptLine[];
       keystrokes?: TranscriptLine[];
       screen_text?: TranscriptLine[];
+      files?: TranscriptLine[];
+      window_titles?: TranscriptLine[];
     }>(
       `/api/v1/admin/sessions/${id}/transcript`,
       { method: "POST", body: JSON.stringify({ force: !!opts?.force, ocr: !!opts?.ocr }) },
@@ -1505,6 +1515,7 @@ export const api = {
     user_id?: string;
     username?: string;
     q?: string;
+    filename?: string;
     source?: string;
     hours?: number;
     from?: string;
@@ -1516,6 +1527,7 @@ export const api = {
     if (params.user_id) qs.set("user_id", params.user_id);
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
+    if (params.filename) qs.set("filename", params.filename);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
@@ -1529,6 +1541,7 @@ export const api = {
     user_id?: string;
     username?: string;
     q?: string;
+    filename?: string;
     source?: string;
     from?: string;
     to?: string;
@@ -1539,6 +1552,7 @@ export const api = {
     if (params.user_id) qs.set("user_id", params.user_id);
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
+    if (params.filename) qs.set("filename", params.filename);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
@@ -2063,6 +2077,12 @@ export type TranscriptLine = {
   command: string;
   source?: string;
   offset?: number;
+  filename?: string;
+  file_id?: string;
+  path?: string;
+  direction?: string;
+  protocol?: string;
+  captured?: boolean;
 };
 
 export type SessionEventHit = {

@@ -3,17 +3,24 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type TranscriptLine struct {
-	TS      time.Time `json:"ts"`
-	Type    string    `json:"type"`
-	Command string    `json:"command"`
-	Source  string    `json:"source,omitempty"`
-	Offset  float64   `json:"offset,omitempty"`
+	TS        time.Time `json:"ts"`
+	Type      string    `json:"type"`
+	Command   string    `json:"command"`
+	Source    string    `json:"source,omitempty"`
+	Offset    float64   `json:"offset,omitempty"`
+	Filename  string    `json:"filename,omitempty"`
+	FileID    string    `json:"file_id,omitempty"`
+	Path      string    `json:"path,omitempty"`
+	Direction string    `json:"direction,omitempty"`
+	Protocol  string    `json:"protocol,omitempty"`
+	Captured  *bool     `json:"captured,omitempty"`
 }
 
 func (s *Service) HasTypedCommands(ctx context.Context, sessionID uuid.UUID) (bool, error) {
@@ -219,4 +226,87 @@ func (s *Service) ListScreenTextTranscript(ctx context.Context, sessionID uuid.U
 		out = []TranscriptLine{}
 	}
 	return out, rows.Err()
+}
+
+func (s *Service) ListFileTranscript(ctx context.Context, sessionID uuid.UUID) ([]TranscriptLine, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT e.ts, e.event_type, e.payload,
+			EXTRACT(EPOCH FROM (e.ts - s.created_at))::float8
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		WHERE e.session_id=$1 AND e.event_type='file_transfer'
+		ORDER BY e.ts ASC
+		LIMIT 200`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TranscriptLine
+	for rows.Next() {
+		var line TranscriptLine
+		var raw []byte
+		var elapsed float64
+		if err := rows.Scan(&line.TS, &line.Type, &raw, &elapsed); err != nil {
+			return nil, err
+		}
+		var p map[string]any
+		_ = json.Unmarshal(raw, &p)
+		line.Filename = payloadString(p, "filename")
+		if line.Filename == "" {
+			line.Filename = payloadString(p, "path")
+		}
+		line.Command = EventSnippet("file_transfer", p)
+		line.Path = payloadString(p, "path")
+		line.Direction = payloadString(p, "direction")
+		line.Protocol = payloadString(p, "protocol")
+		line.FileID = payloadString(p, "file_id")
+		line.Source = "file_transfer"
+		if v, ok := p["captured"].(bool); ok {
+			line.Captured = &v
+		}
+		if v, ok := p["offset"].(float64); ok && v > 0 {
+			line.Offset = v
+		} else if elapsed > 0 {
+			line.Offset = elapsed
+		}
+		out = append(out, line)
+	}
+	if out == nil {
+		out = []TranscriptLine{}
+	}
+	return out, rows.Err()
+}
+
+func WindowTitleFromOCR(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	if i := strings.IndexAny(line, "\n\r"); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	r := []rune(line)
+	if len(r) < 2 || len(r) > 96 {
+		return ""
+	}
+	return string(r)
+}
+
+func WindowTitlesFromScreen(lines []TranscriptLine) []TranscriptLine {
+	var out []TranscriptLine
+	prev := ""
+	for _, ln := range lines {
+		title := WindowTitleFromOCR(ln.Command)
+		if title == "" || strings.EqualFold(title, prev) {
+			continue
+		}
+		prev = title
+		out = append(out, TranscriptLine{
+			TS: ln.TS, Type: "window_title", Command: title, Offset: ln.Offset, Source: "ocr",
+		})
+	}
+	if out == nil {
+		return []TranscriptLine{}
+	}
+	return out
 }
