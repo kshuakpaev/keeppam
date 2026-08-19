@@ -3,10 +3,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { LangSwitch, useI18n } from "../i18n";
 import { webauthnRegister, webauthnSupported } from "../webauthn";
 
 export function SetupPage() {
   const { user, refresh, loading } = useAuth();
+  const { t, te } = useI18n();
   const nav = useNavigate();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -31,23 +33,23 @@ export function SetupPage() {
     }
   }, [user, loading, nav]);
 
-  if (loading) return <div className="auth-page muted">Загрузка…</div>;
+  if (loading) return <div className="auth-page muted">{t("common.loading")}</div>;
   if (!user) return <Navigate to="/login" replace />;
 
   async function onPassword(e: FormEvent) {
     e.preventDefault();
     setError("");
     if (next !== confirm) {
-      setError("Пароли не совпадают");
+      setError(t("setup.mismatch"));
       return;
     }
     try {
       await api.changePassword(current, next);
-      setMsg("Пароль обновлён");
+      setMsg(t("setup.passwordUpdated"));
       await refresh();
       setStep("mfa");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err));
     }
   }
 
@@ -59,7 +61,7 @@ export function SetupPage() {
       setQr(await QRCode.toDataURL(setup.url, { width: 200, margin: 1 }));
       setMfaMode("totp");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка MFA");
+      setError(te(err));
     }
   }
 
@@ -71,7 +73,7 @@ export function SetupPage() {
       await refresh();
       nav("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Неверный код");
+      setError(te(err, "login.badCode"));
     }
   }
 
@@ -85,7 +87,7 @@ export function SetupPage() {
       await refresh();
       nav("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка WebAuthn");
+      setError(te(err));
     } finally {
       setBusy(false);
     }
@@ -94,14 +96,17 @@ export function SetupPage() {
   return (
     <div className="auth-page">
       <div className="card auth-card">
-        <div className="brand">KeepPAM</div>
-        <h1>Первичная настройка</h1>
-        <p className="muted">Смена пароля и MFA (TOTP или Passkey) обязательны</p>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="brand">KeepPAM</div>
+          <LangSwitch />
+        </div>
+        <h1>{t("setup.title")}</h1>
+        <p className="muted">{t("setup.lead")}</p>
         {error && <p className="error">{error}</p>}
         {msg && <p className="ok">{msg}</p>}
         {step === "password" ? (
           <form onSubmit={onPassword}>
-            <label htmlFor="current">Текущий пароль</label>
+            <label htmlFor="current">{t("setup.current")}</label>
             <input
               id="current"
               type="password"
@@ -109,7 +114,7 @@ export function SetupPage() {
               onChange={(e) => setCurrent(e.target.value)}
               required
             />
-            <label htmlFor="next">Новый пароль (мин. 10 символов)</label>
+            <label htmlFor="next">{t("setup.next")}</label>
             <input
               id="next"
               type="password"
@@ -118,7 +123,7 @@ export function SetupPage() {
               minLength={10}
               required
             />
-            <label htmlFor="confirm">Повтор пароля</label>
+            <label htmlFor="confirm">{t("setup.confirm")}</label>
             <input
               id="confirm"
               type="password"
@@ -128,13 +133,13 @@ export function SetupPage() {
               required
             />
             <button className="btn" type="submit">
-              Сохранить пароль
+              {t("setup.savePassword")}
             </button>
           </form>
         ) : mfaMode === "choose" ? (
           <div>
             <button className="btn" type="button" onClick={() => void startMfa()}>
-              Настроить TOTP
+              {t("setup.totp")}
             </button>
             {webauthnSupported() && (
               <button
@@ -143,20 +148,20 @@ export function SetupPage() {
                 style={{ marginTop: "0.75rem" }}
                 onClick={() => setMfaMode("passkey")}
               >
-                Зарегистрировать Passkey
+                {t("setup.registerPasskey")}
               </button>
             )}
           </div>
         ) : mfaMode === "passkey" ? (
           <div>
-            <label htmlFor="passkey-name">Имя ключа</label>
+            <label htmlFor="passkey-name">{t("setup.keyName")}</label>
             <input
               id="passkey-name"
               value={passkeyName}
               onChange={(e) => setPasskeyName(e.target.value)}
             />
             <button className="btn" type="button" disabled={busy} onClick={() => void registerPasskey()}>
-              Создать Passkey
+              {t("setup.createPasskey")}
             </button>
             <button
               className="btn"
@@ -164,23 +169,23 @@ export function SetupPage() {
               style={{ marginTop: "0.5rem" }}
               onClick={() => setMfaMode("choose")}
             >
-              Назад
+              {t("common.back")}
             </button>
           </div>
         ) : (
           <div>
             {!qr ? (
               <button className="btn" type="button" onClick={() => void startMfa()}>
-                Сгенерировать MFA
+                {t("setup.genMfa")}
               </button>
             ) : (
               <form onSubmit={confirmMfa}>
-                <p className="muted">Отсканируйте QR в приложении-аутентификаторе</p>
+                <p className="muted">{t("setup.scanQr")}</p>
                 <div className="qr">
                   <img src={qr} alt="MFA QR" width={200} height={200} />
                 </div>
-                <p className="mono muted">Секрет: {secret}</p>
-                <label htmlFor="totp">Код подтверждения</label>
+                <p className="mono muted">{t("setup.secret", { secret })}</p>
+                <label htmlFor="totp">{t("setup.code")}</label>
                 <input
                   id="totp"
                   value={code}
@@ -188,7 +193,7 @@ export function SetupPage() {
                   required
                 />
                 <button className="btn" type="submit">
-                  Включить MFA
+                  {t("setup.enableMfa")}
                 </button>
               </form>
             )}

@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keeppam.fullname" . }}-web-nginx
+  labels:
+    {{- include "keeppam.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 80;
+        root /usr/share/nginx/html;
+        index index.html;
+        location /api/ {
+            proxy_pass http://{{ include "keeppam.fullname" . }}-api:{{ .Values.service.api.port }}/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 3600s;
+        }
+        location /scim/ {
+            proxy_pass http://{{ include "keeppam.fullname" . }}-api:{{ .Values.service.api.port }}/scim/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header Authorization $http_authorization;
+        }
+        location /healthz { proxy_pass http://{{ include "keeppam.fullname" . }}-api:{{ .Values.service.api.port }}/healthz; }
+        location /livez { proxy_pass http://{{ include "keeppam.fullname" . }}-api:{{ .Values.service.api.port }}/livez; }
+        location /readyz { proxy_pass http://{{ include "keeppam.fullname" . }}-api:{{ .Values.service.api.port }}/readyz; }
+        location / { try_files $uri /index.html; }
+    }

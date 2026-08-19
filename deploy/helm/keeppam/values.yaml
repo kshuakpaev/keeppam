@@ -1,0 +1,87 @@
+# 2 control + 2 session-worker. Postgres/Redis снаружи (Patroni / managed) — postgres.ha.
+replicaCount:
+  api: 2
+  worker: 2
+  web: 1
+
+image:
+  repository: keeppam/api
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+webImage:
+  repository: keeppam/web
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  api:
+    type: ClusterIP
+    port: 8080
+  worker:
+    type: LoadBalancer
+    port: 2222
+  web:
+    type: ClusterIP
+    port: 80
+  pgwire:
+    port: 15432
+  mysqlwire:
+    port: 13306
+  k8sapi:
+    port: 16443
+
+ingress:
+  enabled: false
+  className: ""
+  hosts:
+    - host: keeppam.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+env:
+  mode: production
+  corsOrigin: https://keeppam.example.local
+  cookieSecure: "true"
+  drainTimeout: 90s
+  recordingsDir: /var/lib/keeppam/recordings
+  recordingsBackend: local
+  guacdAddr: guacd:4822
+  trustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+# Connection strings live in Secret (see secret.yaml / existingSecret).
+databaseUrl: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+redisUrl: "redis://redis:6379/0"
+# base64 of 32 raw bytes — override in a real Secret
+dataKey: "a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE="
+existingSecret: ""
+
+postgres:
+  # false = внешний Patroni / CloudNativePG / RDS-эквивалент on-prem
+  ha: false
+
+resources:
+  api:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  worker:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+podDisruptionBudget:
+  apiMinAvailable: 1
+  workerMinAvailable: 1
+
+recordings:
+  persistence: false
+  size: 20Gi
+
+guacd:
+  enabled: true
+  image: guacamole/guacd:1.5.5

@@ -43,6 +43,12 @@ services:
       - "15432:15432"
       - "13306:13306"
       - "16443:16443"
+    healthcheck:
+      test: ["CMD", "/app/auth-server", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 25s
     environment:
       KEEPPAM_MODE: "api"
       KEEPPAM_HTTP_ADDR: ":8080"
@@ -172,8 +178,15 @@ services:
       - sshhost:/var/lib/keeppam/ssh
     ports:
       - "2222:2222"
+    healthcheck:
+      test: ["CMD", "/app/auth-server", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
     environment:
       KEEPPAM_MODE: "ssh"
+      KEEPPAM_HTTP_ADDR: ":8080"
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
       KEEPPAM_REDIS_URL: "redis://redis:6379/0"
       KEEPPAM_DATA_KEY: "a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE="

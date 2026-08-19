@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keeppam.fullname" . }}-worker
+  labels:
+    {{- include "keeppam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.replicaCount.worker }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "keeppam.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "keeppam.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: worker
+                    app.kubernetes.io/instance: {{ .Release.Name }}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: ssh
+              containerPort: 2222
+            - name: health
+              containerPort: 8080
+          env:
+            - name: KEEPPAM_MODE
+              value: ssh
+            - name: KEEPPAM_HTTP_ADDR
+              value: ":8080"
+            - name: KEEPPAM_SSH_ADDR
+              value: ":2222"
+            - name: KEEPPAM_SSH_HOST_KEY
+              value: /var/lib/keeppam/ssh/hostkey
+            - name: KEEPPAM_DRAIN_TIMEOUT
+              value: {{ .Values.env.drainTimeout | quote }}
+            - name: KEEPPAM_RECORDINGS_DIR
+              value: {{ .Values.env.recordingsDir | quote }}
+            - name: KEEPPAM_RECORDINGS_BACKEND
+              value: {{ .Values.env.recordingsBackend | quote }}
+            - name: KEEPPAM_DATA_KEY_SOURCE
+              value: env
+            - name: KEEPPAM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: database-url
+            - name: KEEPPAM_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: redis-url
+            - name: KEEPPAM_DATA_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: data-key
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}
+          volumeMounts:
+            - name: recordings
+              mountPath: {{ .Values.env.recordingsDir }}
+            - name: sshhost
+              mountPath: /var/lib/keeppam/ssh
+      terminationGracePeriodSeconds: 100
+      volumes:
+        - name: recordings
+          {{- if .Values.recordings.persistence }}
+          persistentVolumeClaim:
+            claimName: {{ include "keeppam.fullname" . }}-recordings
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: sshhost
+          persistentVolumeClaim:
+            claimName: {{ include "keeppam.fullname" . }}-sshhost
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "keeppam.fullname" . }}-ssh
+  labels:
+    {{- include "keeppam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: {{ .Values.service.worker.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "keeppam.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: worker
+  ports:
+    - name: ssh
+      port: {{ .Values.service.worker.port }}
+      targetPort: ssh
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "keeppam.fullname" . }}-worker
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.workerMinAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "keeppam.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker

@@ -1,0 +1,11 @@
+# KeepPAM: i18n EN/RU портала
+
+Словарь: `web/src/i18n/catalog.ts` (свой провайдер, без react-i18next). Cookie и localStorage: `kp_lang=en|ru`. Переключатель — на login/setup и в сайдбаре.
+
+`Accept-Language` уходит с запросами API. Ошибки: `{ error, code }`, UI переводит `errors.<code>` (`te()`), не сырой русский с бэка.
+
+## Сценарий DoD (T-15)
+
+Вход → актив (JIT / кворум / четыре глаза) → заявка → connect SSH → сессия → replay / watch — на EN без голых русских строк.
+
+Остальные экраны (Config, Users, Groups, JEA, Compliance, Discovery, Forensic, Analytics, Audit, AttackSim) пока RU.

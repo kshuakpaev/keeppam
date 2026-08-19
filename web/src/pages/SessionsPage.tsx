@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type PamSession, type SessionEventHit } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import { kindForProtocol, useSessionTabs } from "../sessionTabs";
 
 const PAGE_SIZE = 50;
@@ -27,6 +28,7 @@ type Tab = "all" | "live" | "events";
 
 export function SessionsPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const { openTab, closeTab } = useSessionTabs();
   const [sessions, setSessions] = useState<PamSession[]>([]);
   const [total, setTotal] = useState(0);
@@ -72,7 +74,7 @@ export function SessionsPage() {
       }
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err));
     }
   }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours]);
 
@@ -82,7 +84,7 @@ export function SessionsPage() {
       await closeTab(id, { endSession: true });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось завершить");
+      setError(te(err, "sess.endError"));
     }
   }
 
@@ -92,7 +94,7 @@ export function SessionsPage() {
       await api.approveSupervisor(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось разрешить сессию");
+      setError(te(err, "req.failSupervise"));
     }
   }
 
@@ -102,7 +104,7 @@ export function SessionsPage() {
       await api.denySupervisor(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось отклонить сессию");
+      setError(te(err, "req.failSuperviseDeny"));
     }
   }
 
@@ -118,7 +120,7 @@ export function SessionsPage() {
   }, [canRead, tab, load]);
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   const listTotal = tab === "events" ? eventTotal : total;
@@ -129,14 +131,13 @@ export function SessionsPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Сессии</h1>
+          <h1>{t("sess.title")}</h1>
           <p className="muted">
-            Привилегированные подключения и записи · вкладка «События» ищет SQL / kubectl / команды SSH / JEA.
-            Лента по пользователю — <Link to="/forensic">Расследование</Link>.
+            {t("sess.lead")} <Link to="/forensic">{t("nav.forensic")}</Link>.
           </p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
-          Обновить
+          {t("common.refresh")}
         </button>
       </div>
 
@@ -149,7 +150,7 @@ export function SessionsPage() {
             setOffset(0);
           }}
         >
-          Онлайн
+          {t("sess.live")}
         </button>
         <button
           className={`btn secondary${tab === "all" ? " active" : ""}`}
@@ -159,7 +160,7 @@ export function SessionsPage() {
             setOffset(0);
           }}
         >
-          Все
+          {t("sess.all")}
         </button>
         <button
           className={`btn secondary${tab === "events" ? " active" : ""}`}
@@ -169,7 +170,7 @@ export function SessionsPage() {
             setOffset(0);
           }}
         >
-          События
+          {t("sess.events")}
         </button>
       </div>
 
@@ -184,9 +185,9 @@ export function SessionsPage() {
       >
         {tab === "all" && (
           <label>
-            Статус
+            {t("common.status")}
             <select value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }}>
-              <option value="">все</option>
+              <option value="">{t("common.all")}</option>
               <option value="pending">pending</option>
               <option value="active">active</option>
               <option value="ended">ended</option>
@@ -197,7 +198,7 @@ export function SessionsPage() {
         {tab === "events" ? (
           <>
             <label>
-              Тип
+              {t("common.type")}
               <select value={eventType} onChange={(e) => { setEventType(e.target.value); setOffset(0); }}>
                 <option value="">forensic</option>
                 <option value="sql">sql</option>
@@ -218,24 +219,24 @@ export function SessionsPage() {
                 <option value="app_approval">app_approval</option>
                 <option value="app_approved">app_approved</option>
                 <option value="risk">risk</option>
-                <option value="all">все типы</option>
+                <option value="all">{t("sess.allTypes")}</option>
               </select>
             </label>
             <label>
-              Окно
+              {t("sess.window")}
               <select value={hours} onChange={(e) => { setHours(Number(e.target.value)); setOffset(0); }}>
-                <option value={24}>24ч</option>
-                <option value={72}>3д</option>
-                <option value={168}>7д</option>
-                <option value={720}>30д</option>
+                <option value={24}>{t("sess.h24")}</option>
+                <option value={72}>{t("sess.d3")}</option>
+                <option value={168}>{t("sess.d7")}</option>
+                <option value={720}>{t("sess.d30")}</option>
               </select>
             </label>
           </>
         ) : (
           <label>
-            Протокол
+            {t("common.protocol")}
             <select value={protocol} onChange={(e) => { setProtocol(e.target.value); setOffset(0); }}>
-              <option value="">все</option>
+              <option value="">{t("common.all")}</option>
               <option value="ssh">ssh</option>
               <option value="rdp">rdp</option>
               <option value="vnc">vnc</option>
@@ -247,15 +248,15 @@ export function SessionsPage() {
           </label>
         )}
         <label style={{ flex: 1, minWidth: 160 }}>
-          Поиск
+          {t("sess.search")}
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={tab === "events" ? "SELECT / kubectl / rm -rf / notepad" : "user / актив / адрес"}
+            placeholder={tab === "events" ? "SELECT / kubectl / rm -rf / notepad" : t("sess.searchHint")}
           />
         </label>
         <button className="btn secondary" type="submit">
-          Найти
+          {t("common.find")}
         </button>
         <button
           className="btn secondary"
@@ -270,7 +271,7 @@ export function SessionsPage() {
             setOffset(0);
           }}
         >
-          Сброс
+          {t("common.reset")}
         </button>
       </form>
 
@@ -280,10 +281,10 @@ export function SessionsPage() {
         <table>
           <thead>
             <tr>
-              <th>Время</th>
-              <th>Тип</th>
-              <th>Сниппет</th>
-              <th>Кто / куда</th>
+              <th>{t("sess.time")}</th>
+              <th>{t("common.type")}</th>
+              <th>{t("sess.snippet")}</th>
+              <th>{t("sess.whoWhere")}</th>
               <th />
             </tr>
           </thead>
@@ -328,7 +329,7 @@ export function SessionsPage() {
             {events.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  Нет событий за выбранное окно. SQL / kubectl / команды SSH (PTY или индекс записи) попадают сюда.
+                  {t("sess.noEvents")}
                 </td>
               </tr>
             )}
@@ -336,7 +337,7 @@ export function SessionsPage() {
         </table>
         <div className="row" style={{ marginTop: "0.75rem", justifyContent: "space-between" }}>
           <span className="muted">
-            {listTotal === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${listTotal}`}
+            {listTotal === 0 ? t("common.noRecords") : t("common.pageOf", { page, pages, total: listTotal })}
           </span>
           <div className="row">
             <button
@@ -363,12 +364,12 @@ export function SessionsPage() {
         <table>
           <thead>
             <tr>
-              <th>Время</th>
-              <th>Пользователь</th>
-              <th>Актив</th>
-              <th>Учётка</th>
-              <th>Протокол</th>
-              <th>Статус</th>
+              <th>{t("sess.time")}</th>
+              <th>{t("common.user")}</th>
+              <th>{t("common.asset")}</th>
+              <th>{t("common.account")}</th>
+              <th>{t("common.protocol")}</th>
+              <th>{t("common.status")}</th>
               <th />
             </tr>
           </thead>
@@ -397,8 +398,8 @@ export function SessionsPage() {
                     {s.status === "active" ? "live" : s.status}
                   </span>
                   {s.waiting_supervisor && (
-                    <span className="badge locked" style={{ marginLeft: 6 }} title="четыре глаза">
-                      ждёт супервайзера
+                    <span className="badge locked" style={{ marginLeft: 6 }} title={t("sess.fourEyes")}>
+                      {t("sess.waitingBadge")}
                     </span>
                   )}
                   {s.break_glass && (
@@ -408,11 +409,11 @@ export function SessionsPage() {
                   )}
                   {s.supervisor_username && s.supervisor_approved_at && (
                     <div className="muted" style={{ fontSize: "0.8rem" }}>
-                      супервайзер {s.supervisor_username}
+                      {t("sess.supervisorBy", { name: s.supervisor_username })}
                     </div>
                   )}
                   {snapshotHint(s) && (
-                    <div className="muted mono" style={{ fontSize: "0.8rem" }} title="политика на момент connect">
+                    <div className="muted mono" style={{ fontSize: "0.8rem" }} title={t("sess.policyHint")}>
                       {snapshotHint(s)}
                     </div>
                   )}
@@ -422,10 +423,10 @@ export function SessionsPage() {
                     {s.waiting_supervisor && canSupervise && s.user_id !== user?.id && (
                       <>
                         <button className="btn" type="button" onClick={() => void onApproveSupervisor(s.id)}>
-                          Разрешить
+                          {t("common.allow")}
                         </button>
                         <button className="btn danger" type="button" onClick={() => void onDenySupervisor(s.id)}>
-                          Отклонить
+                          {t("common.deny")}
                         </button>
                       </>
                     )}
@@ -435,7 +436,7 @@ export function SessionsPage() {
                         type="button"
                         onClick={() => void onEnd(s.id)}
                       >
-                        Завершить
+                        {t("common.end")}
                       </button>
                     )}
                     {(s.status === "active" || s.status === "pending") && !s.waiting_supervisor && (
@@ -464,7 +465,7 @@ export function SessionsPage() {
                         </button>
                         {canWatch && (
                           <Link className="btn secondary" to={`/sessions/${s.id}/watch`}>
-                            Наблюдать
+                            {t("common.watch")}
                           </Link>
                         )}
                         <button
@@ -472,7 +473,7 @@ export function SessionsPage() {
                           type="button"
                           onClick={() => void onEnd(s.id)}
                         >
-                          Завершить
+                          {t("common.end")}
                         </button>
                       </>
                     )}
@@ -492,7 +493,7 @@ export function SessionsPage() {
                             </Link>
                             {(s.protocol === "rdp" || s.protocol === "vnc" || s.isolated) && (
                               <a className="btn secondary" href={api.getRecordingUrl(s.id)}>
-                                Скачать
+                                {t("sess.download")}
                               </a>
                             )}
                           </>
@@ -507,8 +508,8 @@ export function SessionsPage() {
               <tr>
                 <td colSpan={7} className="muted">
                   {tab === "live"
-                    ? "Сейчас никто не подключён."
-                    : "Сессий пока нет. Подключитесь к активу со страницы актива."}
+                    ? t("sess.emptyLive")
+                    : t("sess.emptyAll")}
                 </td>
               </tr>
             )}
@@ -516,7 +517,7 @@ export function SessionsPage() {
         </table>
         <div className="row" style={{ marginTop: "0.75rem", justifyContent: "space-between" }}>
           <span className="muted">
-            {listTotal === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${listTotal}`}
+            {listTotal === 0 ? t("common.noRecords") : t("common.pageOf", { page, pages, total: listTotal })}
           </span>
           <div className="row">
             <button

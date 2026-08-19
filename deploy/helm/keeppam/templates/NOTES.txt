@@ -1,0 +1,14 @@
+KeepPAM {{ .Chart.AppVersion }} (2 API + 2 session-worker).
+
+  Portal:  svc {{ include "keeppam.fullname" . }}-web
+  API:     svc {{ include "keeppam.fullname" . }}-api:8080  (/livez /readyz)
+  SSH:     svc {{ include "keeppam.fullname" . }}-ssh:2222
+
+Postgres HA (Patroni / CloudNativePG) задаётся снаружи: values.postgres.ha=true только как пометка,
+DSN — Secret database-url. См. docs/ha.txt.
+
+Rolling:
+  kubectl rollout restart deploy/{{ include "keeppam.fullname" . }}-api
+  kubectl rollout restart deploy/{{ include "keeppam.fullname" . }}-worker
+
+SIGTERM → /readyz=503 → LB снимает под; SSH drain до KEEPPAM_DRAIN_TIMEOUT.

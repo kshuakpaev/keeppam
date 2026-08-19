@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
 import { api, type PamSession, type TranscriptLine } from "../api";
+import { useI18n } from "../i18n";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
 import "xterm/css/xterm.css";
@@ -23,6 +24,7 @@ function formatMs(ms: number): string {
 }
 
 export function SessionReplayPage() {
+  const { t, te } = useI18n();
   const { id } = useParams<{ id: string }>();
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -84,7 +86,7 @@ export function SessionReplayPage() {
         }
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
-        if (!res.ok) throw new Error("запись недоступна");
+        if (!res.ok) throw new Error(t("replay.unavailable"));
 
         if (sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           const blob = await res.blob();
@@ -107,7 +109,7 @@ export function SessionReplayPage() {
           };
 
           recording.onerror = (msg: string) => {
-            setError(msg || "ошибка разбора записи");
+            setError(msg || t("replay.parseError"));
           };
           recording.onprogress = (dur: number) => {
             setDuration(dur);
@@ -155,7 +157,7 @@ export function SessionReplayPage() {
         fitAddon.fit();
 
         const lines = text.trim().split("\n");
-        if (lines.length === 0) throw new Error("пустая запись");
+        if (lines.length === 0) throw new Error(t("replay.empty"));
         const header = JSON.parse(lines[0]) as CastHeader;
         term.resize(header.width || 80, header.height || 24);
         fitAddon.fit();
@@ -202,7 +204,7 @@ export function SessionReplayPage() {
         setReady(true);
         replay(1);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Ошибка replay");
+        if (!cancelled) setError(te(err, "replay.error"));
       }
     })();
 
@@ -241,7 +243,7 @@ export function SessionReplayPage() {
       const filename = `session-${id}.webm`;
       if (protocol === "rdp" || protocol === "vnc") {
         const rec = recordingRef.current;
-        if (!rec) throw new Error("запись не загружена");
+        if (!rec) throw new Error(t("replay.notLoaded"));
         await recordElementToWebM(hostRef.current, {
           filename,
           fps: 15,
@@ -261,7 +263,7 @@ export function SessionReplayPage() {
                     return;
                   }
                   if (Date.now() - start > Math.max(dur, 1000) + 15000) {
-                    reject(new Error("таймаут экспорта"));
+                    reject(new Error(t("replay.exportTimeout")));
                     return;
                   }
                   window.setTimeout(watch, 100);
@@ -272,7 +274,7 @@ export function SessionReplayPage() {
         });
       } else {
         const ssh = sshRef.current;
-        if (!ssh) throw new Error("запись не загружена");
+        if (!ssh) throw new Error(t("replay.notLoaded"));
         await recordElementToWebM(hostRef.current, {
           filename,
           fps: 15,
@@ -283,7 +285,7 @@ export function SessionReplayPage() {
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка экспорта");
+      setError(te(err, "replay.exportError"));
     } finally {
       setExporting(false);
     }
@@ -300,7 +302,7 @@ export function SessionReplayPage() {
       a.download = `session-${id}.mp4`;
       a.click();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка MP4");
+      setError(te(err, "replay.mp4Error"));
     } finally {
       setExportingMp4(false);
     }
@@ -317,7 +319,7 @@ export function SessionReplayPage() {
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка индекса");
+      setError(te(err, "replay.indexError"));
     } finally {
       setIndexBusy(false);
     }
@@ -332,7 +334,7 @@ export function SessionReplayPage() {
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка OCR");
+      setError(te(err, "replay.ocrError"));
     } finally {
       setOcrBusy(false);
     }
@@ -345,21 +347,21 @@ export function SessionReplayPage() {
       <div className="toolbar" style={{ flexShrink: 0 }}>
         <div>
           <p className="muted" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/sessions">Сессии</Link> / replay
+            <Link to="/sessions">{t("nav.sessions")}</Link> / replay
           </p>
-          <h1 style={{ margin: 0 }}>Воспроизведение</h1>
+          <h1 style={{ margin: 0 }}>{t("replay.title")}</h1>
           <p className="muted">
             {meta || "…"}
             {protocol ? ` · ${protocol}` : ""}
-            {playing ? " · играет" : ""}
-            {exporting ? " · кодирование…" : ""}
-            {exportingMp4 ? " · MP4…" : ""}
+            {playing ? ` · ${t("replay.playing")}` : ""}
+            {exporting ? ` · ${t("replay.encoding")}` : ""}
+            {exportingMp4 ? ` · ${t("replay.mp4Busy")}` : ""}
           </p>
         </div>
         <div className="row">
           {isGuac && (
             <button className="btn secondary" type="button" onClick={togglePlay} disabled={exporting || exportingMp4}>
-              {playing ? "Пауза" : "Играть"}
+              {playing ? t("replay.pause") : t("replay.play")}
             </button>
           )}
           <button
@@ -368,7 +370,7 @@ export function SessionReplayPage() {
             disabled={!ready || exporting || exportingMp4}
             onClick={() => void exportWebM()}
           >
-            {exporting ? "Кодирование…" : "Экспорт WebM"}
+            {exporting ? t("replay.encoding") : t("replay.exportWebm")}
           </button>
           {isGuac && (
             <button
@@ -377,26 +379,26 @@ export function SessionReplayPage() {
               disabled={!ready || exporting || exportingMp4}
               onClick={() => void exportMP4()}
             >
-              {exportingMp4 ? "MP4…" : "Экспорт MP4"}
+              {exportingMp4 ? t("replay.mp4Busy") : t("replay.exportMp4")}
             </button>
           )}
           {isGuac && (
             <button className="btn secondary" type="button" disabled={ocrBusy || indexBusy} onClick={() => void ocrScreen()}>
-              {ocrBusy ? "OCR…" : "OCR экрана"}
+              {ocrBusy ? "OCR…" : t("replay.ocr")}
             </button>
           )}
           {id && (protocol === "ssh" || isGuac) && (
             <button className="btn secondary" type="button" disabled={indexBusy || ocrBusy} onClick={() => void indexTranscript()}>
-              {indexBusy ? "Индекс…" : "Индексировать запись"}
+              {indexBusy ? "…" : t("replay.index")}
             </button>
           )}
           {id && (
             <a className="btn secondary" href={api.getRecordingUrl(id)}>
-              Скачать
+              {t("sess.download")}
             </a>
           )}
           <Link className="btn secondary" to="/sessions">
-            Назад
+            {t("common.back")}
           </Link>
         </div>
       </div>
@@ -434,11 +436,11 @@ export function SessionReplayPage() {
       />
       {protocol === "ssh" && (
         <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
-          <h2 style={{ marginTop: 0 }}>Команды</h2>
+          <h2 style={{ marginTop: 0 }}>{t("replay.commands")}</h2>
           <p className="muted">
             {transcript.length === 0
-              ? "Пусто. Для сессий без JEA нажмите «Индексировать запись»."
-              : `${transcript.length} строк`}
+              ? t("replay.emptyCommands")
+              : t("replay.nLines", { n: transcript.length })}
           </p>
           <ul className="plain-list">
             {transcript.map((ln, i) => (
@@ -450,9 +452,9 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
-          <h2>Вывод</h2>
+          <h2>{t("replay.output")}</h2>
           <p className="muted">
-            {outputLines.length === 0 ? "Нет проиндексированного stdout." : `${outputLines.length} строк`}
+            {outputLines.length === 0 ? t("replay.emptyOutput") : t("replay.nLines", { n: outputLines.length })}
           </p>
           <ul className="plain-list">
             {outputLines.map((ln, i) => (
@@ -467,11 +469,11 @@ export function SessionReplayPage() {
       )}
       {isGuac && (
         <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
-          <h2 style={{ marginTop: 0 }}>Клавиши</h2>
+          <h2 style={{ marginTop: 0 }}>{t("replay.keys")}</h2>
           <p className="muted">
             {keystrokes.length === 0
-              ? "Нет проиндексированных нажатий. Нажмите «Индексировать запись» (не OCR)."
-              : `${keystrokes.length} строк`}
+              ? t("replay.emptyKeys")
+              : t("replay.nLines", { n: keystrokes.length })}
           </p>
           <ul className="plain-list">
             {keystrokes.map((ln, i) => (
@@ -482,11 +484,11 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
-          <h2>Экран (OCR)</h2>
+          <h2>{t("replay.screen")}</h2>
           <p className="muted">
             {screenText.length === 0
-              ? "Нет OCR. Кнопка «OCR экрана» — до 20 кадров через guacenc/Tesseract (не полное видео)."
-              : `${screenText.length} фрагментов`}
+              ? t("replay.emptyOcr")
+              : t("replay.nFrags", { n: screenText.length })}
           </p>
           <ul className="plain-list">
             {screenText.map((ln, i) => (

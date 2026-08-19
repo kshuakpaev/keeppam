@@ -74,6 +74,7 @@ type Config struct {
 	PDFLTVDir              string
 	PDFLTVFetch            bool
 	PDFLTA                 bool
+	DrainTimeout           time.Duration
 }
 
 func Load() (Config, error) {
@@ -138,6 +139,7 @@ func Load() (Config, error) {
 		PDFLTVDir:              strings.TrimSpace(env("KEEPPAM_PDF_LTV_DIR", "")),
 		PDFLTVFetch:            boolEnv("KEEPPAM_PDF_LTV_FETCH", true),
 		PDFLTA:                 boolEnv("KEEPPAM_PDF_LTA", false),
+		DrainTimeout:           durationEnv("KEEPPAM_DRAIN_TIMEOUT", 90*time.Second),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

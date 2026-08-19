@@ -702,6 +702,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!headers.has("Content-Type") && init.body) {
     headers.set("Content-Type", "application/json");
   }
+  if (!headers.has("Accept-Language")) {
+    const lang = (document.cookie.match(/(?:^|; )kp_lang=([^;]*)/) || [])[1];
+    headers.set("Accept-Language", decodeURIComponent(lang || "ru").startsWith("en") ? "en" : "ru");
+  }
   const method = (init.method || "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
     headers.set("X-CSRF-Token", csrfToken());

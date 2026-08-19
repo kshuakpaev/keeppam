@@ -26,20 +26,20 @@ type CheckinInput struct {
 }
 
 type CheckoutRequest struct {
-	ID           uuid.UUID  `json:"id"`
-	AssetID      uuid.UUID  `json:"asset_id"`
-	AccountID    uuid.UUID  `json:"account_id"`
-	RequesterID  uuid.UUID  `json:"requester_id"`
-	Reason       string     `json:"reason"`
-	TTLMinutes   int        `json:"ttl_minutes"`
-	Status       string     `json:"status"`
-	ApproverID   *uuid.UUID `json:"approver_id,omitempty"`
-	DecidedAt    *time.Time `json:"decided_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	ExpiresAt    time.Time  `json:"expires_at"`
-	AssetName    string     `json:"asset_name,omitempty"`
-	Username     string     `json:"account_username,omitempty"`
-	RequesterName string    `json:"requester_username,omitempty"`
+	ID            uuid.UUID  `json:"id"`
+	AssetID       uuid.UUID  `json:"asset_id"`
+	AccountID     uuid.UUID  `json:"account_id"`
+	RequesterID   uuid.UUID  `json:"requester_id"`
+	Reason        string     `json:"reason"`
+	TTLMinutes    int        `json:"ttl_minutes"`
+	Status        string     `json:"status"`
+	ApproverID    *uuid.UUID `json:"approver_id,omitempty"`
+	DecidedAt     *time.Time `json:"decided_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	AssetName     string     `json:"asset_name,omitempty"`
+	Username      string     `json:"account_username,omitempty"`
+	RequesterName string     `json:"requester_username,omitempty"`
 }
 
 type CheckoutResult struct {
@@ -432,9 +432,28 @@ func (s *Service) ExpireCheckouts(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// rotateLock is held on one PG session while scheduled rotation runs (HA: only one API replica rotates).
+const rotateLock int64 = 87201606
+
 // RunDueRotations rotates accounts whose next_rotate_at is due.
 func (s *Service) RunDueRotations(ctx context.Context) (int, error) {
-	rows, err := s.db.Pool.Query(ctx, `
+	conn, err := s.db.Pool.Acquire(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Release()
+	var got bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, rotateLock).Scan(&got); err != nil {
+		return 0, err
+	}
+	if !got {
+		return 0, nil
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, rotateLock)
+	}()
+
+	rows, err := conn.Query(ctx, `
 		SELECT id, asset_id FROM asset_accounts
 		WHERE status='active' AND rotate_interval_hours > 0
 		  AND next_rotate_at IS NOT NULL AND next_rotate_at <= NOW()

@@ -1,0 +1,78 @@
+# KeepPAM: HA 2+2 (один DC)
+
+Формулировка КП уровень B: ≥2 control + ≥2 session-worker. 3+2 / multi-site — P5 (`T-07` C).
+
+## Compose
+
+Нужен Docker Compose **v2.24+** (теги `!override`).
+
+```bash
+cd deploy
+docker compose -f docker-compose.yml -f compose.ha.yml up -d
+```
+
+Снаружи как раньше: HTTP `:8080`, SSH `:2222`, SQL wire, k8s API — всё на **edge** (HAProxy).
+
+| Сервис | Реплики | Health |
+|--------|---------|--------|
+| `api`, `api-b` | 2 | `GET /readyz` (PG+Redis; при SIGTERM — 503 draining) |
+| `session-worker`, `session-worker-b` | 2 | тот же `/readyz` на `:8080` внутри сети |
+| `edge` | 1 | снимает бэкенд из балансировки за 2 failed check (~6 с) |
+| `postgres` | 1 | SPOF; см. ниже |
+
+`web` ходит в upstream `api` + `api-b`. Общий volume `recordings` и `sshhost` (один SSH host key).
+
+### Проверки
+
+```bash
+curl -sf http://127.0.0.1:8080/livez
+curl -sf http://127.0.0.1:8080/readyz
+# убить один API — login жив
+docker compose -f docker-compose.yml -f compose.ha.yml kill api
+curl -sf http://127.0.0.1:8080/api/v1/auth/methods
+```
+
+Drain worker (активная SSH на другом не рвётся):
+
+```bash
+docker compose -f docker-compose.yml -f compose.ha.yml stop session-worker
+```
+
+`stop` шлёт SIGTERM → `/readyz=503` → HAProxy не даёт новые SSH на этот контейнер; существующие сессии доигрывают до `KEEPPAM_DRAIN_TIMEOUT` (90 с).
+
+### Postgres HA (opt)
+
+Профиль `pg-ha` поднимает **streaming replica** (`postgres-replica`), без auto-failover:
+
+```bash
+docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
+```
+
+Прод: Patroni / CloudNativePG / внешний VIP. DSN тот же `KEEPPAM_DATABASE_URL`. Promote — `docs/dr-runbook.txt`.
+
+## Helm
+
+```bash
+helm upgrade --install keeppam deploy/helm/keeppam \
+  --set image.repository=keeppam/api --set image.tag=1.0.0
+```
+
+Реплики: `replicaCount.api=2`, `replicaCount.worker=2`. PDB minAvailable=1. Probes: `/livez` / `/readyz`. `terminationGracePeriodSeconds: 100`.
+
+Recordings: для local — PVC ReadWriteMany; иначе `KEEPPAM_RECORDINGS_BACKEND=s3`.
+
+SSH host key — общий PVC RWX (`*-sshhost`).
+
+## API
+
+- `GET /livez` — процесс жив (как `/healthz`).
+- `GET /readyz` — PG ping + Redis ping; `503` если draining.
+- `auth-server readyz` — exit 0/1 для Docker healthcheck.
+- Миграции: `pg_advisory_lock` на одном соединении (два API не гоняют schema параллельно).
+- Ротация по расписанию: `pg_try_advisory_lock` — крутит только один replica (`T-18`).
+
+## Чего нет в этом срезе
+
+- Keepalived VIP на bare metal (edge = VIP).
+- Auto-heal split-brain паролей (`T-19`).
+- 3 control + 2 worker на двух площадках.

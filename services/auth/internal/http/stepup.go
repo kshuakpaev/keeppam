@@ -19,7 +19,7 @@ import (
 const opStepUpWait = 60 * time.Second
 
 func writeErrFields(w http.ResponseWriter, code int, msg string, extra map[string]any) {
-	m := map[string]any{"error": msg}
+	m := map[string]any{"error": msg, "code": errSlug(msg)}
 	for k, v := range extra {
 		m[k] = v
 	}

@@ -146,6 +146,32 @@ h3 {
   overflow-y: auto;
 }
 
+.lang-switch {
+  display: inline-flex;
+  gap: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.1rem;
+  background: var(--bg-input);
+}
+
+.lang-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.lang-switch button.active {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
 .profile-menu {
   position: relative;
   flex-shrink: 0;

@@ -31,6 +31,7 @@ import (
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
+	"github.com/keeppam/auth/internal/health"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
@@ -54,6 +55,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "readyz" {
+		os.Exit(probeReadyz())
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg, err := config.Load()
@@ -148,6 +153,17 @@ func main() {
 	cfg.DataKey = nil
 	mem = crypto.LastMemStatus()
 	slog.Info("memory", "data_key_mlock", mem.DataKeyMlock, "coredump", mem.CoreDump)
+
+	life := health.New()
+	life.SetCheck(func(ctx context.Context) error {
+		if err := db.Pool.Ping(ctx); err != nil {
+			return fmt.Errorf("postgres: %w", err)
+		}
+		if err := sessions.Redis().Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("redis: %w", err)
+		}
+		return nil
+	})
 
 	auditSvc := audit.New(db)
 	auditSvc.SetMAC(env)
@@ -369,7 +385,7 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, life)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -460,14 +476,30 @@ func main() {
 		}()
 	}
 
+	var sshGw *sshgw.Gateway
 	if runSSH {
-		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc)
+		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
-			if err := gw.ListenAndServe(); err != nil {
+			if err := sshGw.ListenAndServe(); err != nil {
 				slog.Error("ssh gateway", "err", err)
 				os.Exit(1)
 			}
+		}()
+	}
+
+	if runSSH && !runHTTP {
+		hs := &http.Server{Addr: cfg.HTTPAddr, Handler: life.Handler()}
+		go func() {
+			slog.Info("ssh health listening", "addr", cfg.HTTPAddr)
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("ssh health", "err", err)
+			}
+		}()
+		defer func() {
+			c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = hs.Shutdown(c)
 		}()
 	}
 
@@ -479,11 +511,16 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	slog.Info("shutdown", "drain", cfg.DrainTimeout.String())
+	life.SetDraining(true)
 	runCancel()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), cfg.DrainTimeout)
+	defer drainCancel()
+	if sshGw != nil {
+		sshGw.Drain(drainCtx)
+	}
 	if srv != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		_ = srv.Shutdown(drainCtx)
 	}
 }
 
@@ -496,4 +533,31 @@ func loadSPIFFEID(cfg config.Config) string {
 		return ""
 	}
 	return id.IDs[0]
+}
+
+func probeReadyz() int {
+	addr := os.Getenv("KEEPPAM_HTTP_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }

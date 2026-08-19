@@ -1,7 +1,9 @@
 import { useMatch } from "react-router-dom";
 import { useSessionTabs } from "../sessionTabs";
+import { useI18n } from "../i18n";
 
 export function SessionTabBar() {
+  const { t } = useI18n();
   const { tabs, activateTab, closeTab } = useSessionTabs();
   const match = useMatch("/sessions/:id/:kind");
   const routeId = match?.params.id;
@@ -13,29 +15,29 @@ export function SessionTabBar() {
   if (tabs.length === 0) return null;
 
   return (
-    <div className="session-tabbar" role="tablist" aria-label="Открытые сессии">
-      {tabs.map((t) => {
-        const active = viewing && t.id === routeId;
+    <div className="session-tabbar" role="tablist" aria-label={t("tabs.open")}>
+      {tabs.map((tab) => {
+        const active = viewing && tab.id === routeId;
         return (
           <div
-            key={t.id}
+            key={tab.id}
             className={`session-tab${active ? " active" : ""}`}
             role="tab"
             aria-selected={active}
-            title={`${t.title} · ${t.protocol}`}
+            title={`${tab.title} · ${tab.protocol}`}
           >
-            <button className="session-tab-btn" type="button" onClick={() => activateTab(t.id)}>
-              <span className="session-tab-kind">{labelKind(t.kind)}</span>
-              <span className="session-tab-title">{t.title}</span>
+            <button className="session-tab-btn" type="button" onClick={() => activateTab(tab.id)}>
+              <span className="session-tab-kind">{labelKind(tab.kind)}</span>
+              <span className="session-tab-title">{tab.title}</span>
             </button>
             <button
               className="session-tab-close"
               type="button"
-              title="Закрыть и завершить сессию"
-              aria-label="Закрыть"
+              title={t("tabs.closeEnd")}
+              aria-label={t("tabs.close")}
               onClick={(e) => {
                 e.stopPropagation();
-                void closeTab(t.id, { endSession: true });
+                void closeTab(tab.id, { endSession: true });
               }}
             >
               ×

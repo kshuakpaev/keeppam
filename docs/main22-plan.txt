@@ -36,9 +36,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 
 | Статус    | Кол-во | Примеры |
 |-----------|--------|---------|
-| есть      | 18     | T-04 агенты, T-11 MFA, T-12 аудит, T-16 quorum, T-23 supervisor, T-24 break-glass |
-| частично  | 21     | T-09 discovery, T-10 OCR, T-20 группы, T-33 протоколы |
-| нет       | 14     | T-01 OVA, T-25 AD group, T-33 Citrix/TN3270 |
+| есть      | 20     | T-04 агенты, T-06 scale 2+2, T-11 MFA, T-12 аудит, T-15 i18n, T-16 quorum, T-23 supervisor |
+| частично  | 20     | T-07 multi-site, T-09 discovery, T-10 OCR, T-18 rotate lock, T-20 группы |
+| нет       | 13     | T-01 OVA, T-25 AD group, T-33 Citrix/TN3270 |
 
 Цель плана: **частично → есть** для всех пунктов уровня B; **нет → опция SOW** для уровня C.
 
@@ -49,7 +49,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 | Фаза | Срок     | Цель для ТЗ                         | Пункты |
 |------|----------|-------------------------------------|--------|
 | P0   | 2–3 нед. | Дистрибутив, offline update, демо   | T-01*, T-03, T-13, T-14, T-52* |
-| P1   | 8–12 нед.| Согласование и портал как в ТЗ      | T-15 (T-16 ✓, T-23 ✓) |
+| P1   | 8–12 нед.| Согласование и портал как в ТЗ      | T-15 ✓, T-16 ✓, T-23 ✓ |
 | P2   | 6–8 нед. | Файлы, метаданные, OCR, кодировки   | T-10, T-31, T-32, T-37, T-43, T-44 |
 | P3   | 8–12 нед.| HA, архив, RADIUS, scale            | T-06, T-07, T-18, T-19, T-46, T-48 |
 | P4   | 4–6 мес. | Протоколы и AD-sync                 | T-09, T-17, T-25, T-27, T-29, T-33*, T-35 |
@@ -89,18 +89,13 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** в документации и UI явно: «запись из потока»; OCR — индекс, не storage format.
 
 ### T-06. Модули access / sessions, scale без остановки
-**Сейчас:** api и session-worker разделены; rolling без документированного runbook.
-**План (P3):**
-- Helm / compose 2+2: `auth` replicas, `session-worker` replicas, общий PG/Redis.
-- Drain: worker перестаёт брать новые сессии, старые доигрывают, SIGTERM.
-- Файлы: `deploy/helm/`, `docs/ha.txt`, health `/readyz` vs `/livez`.
-**DoD:** `kubectl rollout` / compose scale +1 без обрыва активной SSH-сессии на другом worker.
+**Статус: есть** (compose 2+2 + Helm, drain, `/livez` `/readyz`).
+**Реализация:** `deploy/compose.ha.yml`, `deploy/helm/keeppam/`, `docs/ha.txt`. SIGTERM: readyz=503, SSH drain `KEEPPAM_DRAIN_TIMEOUT`.
+**DoD:** kill одного api — login/JIT через edge; stop одного worker — SSH на другом жива.
 
 ### T-07. HA-кластер, несколько площадок
-**Сейчас:** single compose.
-**План:**
-- P3: 2 control + 2 worker, один DC, VIP/keepalived или ingress.
-- P5: multi-site (active/standby PG + object storage реплика); split-brain — T-19.
+**Статус: частично** (P3: 2+2 один DC + HAProxy). Multi-site / 3+2 — P5.
+**План:** P5 — active/standby PG + object storage; split-brain — T-19.
 **DoD P3:** убийство одного api-контейнера — login и JIT живы. P5 — отдельный SOW.
 
 ### T-08. Интеграция с AD / глобальными каталогами
@@ -142,12 +137,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 ## 5. Функциональный блок (T-15 … T-51)
 
 ### T-15. Портал EN+RU, запрос доступа без пароля
-**Сейчас:** портал RU; vault inject есть.
-**План (P1, 4–6 нед.):**
-- i18n: `web/src/i18n/{ru,en}.ts` + `react-i18next` (или свой словарь).
-- Переключатель языка в шапке, cookie `kp_lang`.
-- Все user-facing ошибки API — коды, UI переводит (не сырой русский с бэка).
-**DoD:** полный сценарий JIT+replay на EN без «голых» русских строк в UI.
+**Статус: есть** (сценарий JIT+replay; vault inject был раньше).
+**Реализация:** `web/src/i18n/` (словарь + cookie `kp_lang`), `Accept-Language`, API `{ error, code }`. См. `docs/i18n.txt`.
+**DoD:** полный сценарий JIT+replay на EN без «голых» русских строк в UI. Остальные админ-экраны — RU, не в DoD.
 
 ### T-16. Кворум согласующих (2 из 3, 3 из 5)
 **Статус: есть** (sequential manager→security **и** quorum N-of-M, миграция `074`).
@@ -164,9 +156,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** смена в KeepPAM меняет local unix + AD user в тесте.
 
 ### T-18. Ротация и JIT в многоузловом HA
-**Зависит от T-06/T-07.**
-**План (P3):** leader-election на rotation jobs (pg advisory lock или Redis). JIT binding в общей БД — уже ок.
-**DoD:** kill worker во время rotate — job подхватывает другой узел, пароль не «завис» halfway (двухфазный: generate → set remote → commit vault).
+**Статус: частично** (advisory lock на scheduled rotate; JIT binding в общей БД).
+**Реализация:** `pg_try_advisory_lock` в `RunDueRotations`. Двухфазный rotate halfway — ещё P3.
+**DoD остаток:** kill во время rotate — пароль не «завис» halfway.
 
 ### T-19. Восстановление после split-brain
 **Сейчас:** нет.
@@ -362,7 +354,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
   │
   ├─ P1.1  JIT quorum N-of-M                             [T-16]   ✓
   ├─ P1.2  Session supervisor                            [T-23]   ✓
-  ├─ P1.3  i18n EN/RU                                    [T-15]   ← дальше
+  ├─ P1.3  i18n EN/RU                                    [T-15]   ✓
   └─ P1.4  JEA list import                               [T-42]
   │
   ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]
@@ -370,7 +362,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
   ├─ P2.3  Charset CP1251/KOI8                           [T-43]
   └─ P2.4  Dynamic groups auto-match                     [T-20]
   │
-  ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]
+  ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
   ├─ P3.2  SMB/NFS archive                               [T-46]
   └─ P3.3  RADIUS + x509 admin                           [T-48]
   │
@@ -427,4 +419,5 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
 - `docs/kp-acceptance.txt` — приёмка пилота (уровень A); расширять по мере закрытия T-xx
 - `docs/jit-workflow.txt` — sequential JIT и кворум N-of-M
 - `docs/session-supervisor.txt` — четыре глаза до старта сессии
+- `docs/ha.txt` — HA 2+2 compose/Helm, drain, /livez /readyz
 - `docs/arch.txt` — архитектура для приложения к контракту

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: keeppam
+description: KeepPAM 2+2 (API ×2, session-worker ×2). Postgres/Redis — внешние или из values.
+type: application
+version: 0.3.0
+appVersion: "1.0.0"

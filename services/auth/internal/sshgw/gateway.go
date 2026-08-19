@@ -52,6 +52,11 @@ type Gateway struct {
 	firewall    *firewall.Service
 	conns       sync.Map // *ssh.ServerConn → *sshConnState
 
+	lnMu     sync.Mutex
+	ln       net.Listener
+	draining atomic.Bool
+	connWG   sync.WaitGroup
+
 	targetsMu sync.RWMutex
 	targets   []firewall.Target
 	targetsAt time.Time
@@ -125,15 +130,51 @@ func (g *Gateway) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
+	g.lnMu.Lock()
+	if g.draining.Load() {
+		g.lnMu.Unlock()
+		_ = ln.Close()
+		return nil
+	}
+	g.ln = ln
+	g.lnMu.Unlock()
 	slog.Info("ssh gateway listening", "addr", g.addr)
 
 	for {
 		tcp, err := ln.Accept()
 		if err != nil {
+			if g.draining.Load() {
+				g.connWG.Wait()
+				return nil
+			}
 			slog.Error("ssh accept", "err", err)
 			continue
 		}
-		go g.handleConn(tcp, cfg)
+		g.connWG.Add(1)
+		go func() {
+			defer g.connWG.Done()
+			g.handleConn(tcp, cfg)
+		}()
+	}
+}
+
+// Drain stops accepting new SSH connections and waits for existing ones (or ctx).
+func (g *Gateway) Drain(ctx context.Context) {
+	g.draining.Store(true)
+	g.lnMu.Lock()
+	ln := g.ln
+	g.lnMu.Unlock()
+	if ln != nil {
+		_ = ln.Close()
+	}
+	done := make(chan struct{})
+	go func() {
+		g.connWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }
 

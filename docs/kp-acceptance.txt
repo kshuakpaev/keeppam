@@ -43,13 +43,14 @@
 - [ ] Backup по `docs/dr-runbook.txt` выполнен; restore проверен на копии
 - [ ] TLS на API (или mTLS по согласованию)
 - [ ] Нет исходящих подключений к вендору в штатном режиме
-- [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, admin quick start
+- [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, `docs/ha.txt`, admin quick start
+- [ ] HA 2+2: kill одного api — login жив; stop одного worker — SSH на другом жива
 
 ## 7. Явные исключения (не fail, если в КП оговорено)
 
 - Native RDP client, Citrix, TN3270
 - Virtual Appliance OVA
-- EN locale UI (если не фаза 1.3)
+- EN locale UI (остальные админ-экраны вне сценария JIT+replay)
 - AD group membership on session
 
 Подпись Заказчик / Исполнитель: _______________  Дата: _______________
