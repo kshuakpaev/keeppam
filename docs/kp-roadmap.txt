@@ -9,10 +9,10 @@
 | # | Deliverable | Зачем в КП | Статус |
 |---|-------------|------------|--------|
 | 0.1 | `docs/kp.txt`, `kp-acceptance.txt`, матрица main22 | Юридически честное КП | ✓ |
-| 0.2 | Demo-сценарий 45 мин (SSH JIT → RDP → forensic → compliance PDF) | Продажи | TODO |
+| 0.2 | Demo-сценарий 45 мин (SSH JIT → RDP → forensic → compliance PDF) | Продажи | ✓ |
 | 0.3 | Helm chart / hardened compose 2+2 (api×2, worker×2, postgres HA opt) | HA формулировка B | ✓ |
-| 0.4 | Offline update runbook (tarball образов, без internet) | main22 п.17 | TODO |
-| 0.5 | Единый дистрибутив `keeppam-install.sh` + версия 1.0 | «один производитель» | TODO |
+| 0.4 | Offline update runbook (tarball образов, без internet) | main22 п.17 | ✓ |
+| 0.5 | Единый дистрибутив `keeppam-install.sh` + версия 1.0 | «один производитель» | ✓ |
 
 ## Фаза КП-1 — закрытие разрывов уровня B (8–12 нед.)
 
@@ -23,7 +23,7 @@
 | 1.1 | **JIT quorum N-of-M** (2/3, 3/5) | п.22 | ✓ миграция `074` |
 | 1.2 | **Session supervisor** (4-eyes до старта сессии) | п.29 | ✓ миграция `075` |
 | 1.3 | **i18n EN/RU** портала | п.21 | ✓ сценарий JIT+replay |
-| 1.4 | **RADIUS** auth admin console | п.75 | 2 нед. |
+| 1.4 | **RADIUS** auth admin console | п.75 | ✓ PAP, миграция `076` |
 | 1.5 | **Archive SMB/NFS** worker для recordings | п.73 | 3 нед. |
 | 1.6 | **SCP/SFTP file capture** (storage + UI) вместо только deny | п.37, 71 | 4–6 нед. |
 | 1.7 | **OCR rus+eng**, больше кадров / настраиваемый interval | п.13 | 2 нед. |
@@ -58,4 +58,4 @@
 
 ## Следующий шаг реализации
 
-**P0.4 Offline update** — tarball образов, runbook без internet.
+**КП-1.5 Archive SMB/NFS** worker для recordings.

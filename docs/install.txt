@@ -1,0 +1,55 @@
+# KeepPAM: единый дистрибутив (P0.5 / T-01 compose, не OVA)
+
+Версия: файл `VERSION` (сейчас 1.0.0). Bundled runtime: `NOTICE`.
+
+OVA/Hyper-V — не этот срез (T-01 P5 / T-02).
+
+## Сборка артефакта
+
+На хосте с Docker и уже собранными образами (`make up`):
+
+```bash
+SET=core ./scripts/keeppam-pack.sh
+# полный стенд (Grafana / OpenSearch / HAProxy image):
+SET=full ./scripts/keeppam-pack.sh
+```
+
+Один файл: `dist/keeppam-1.0.0-offline-<set>.tar.gz` — образы (`docker save`) + compose + миграции + скрипты install/upgrade/rollback + `NOTICE`.
+
+## Установка с USB (без git, без registry)
+
+```bash
+tar -xzf keeppam-1.0.0-offline-core.tar.gz
+cd keeppam-1.0.0-offline-core
+./install.sh
+```
+
+Скрипт: `sha256sum` → `docker load` → `deploy/.env` из `.env.example` → достаёт `auth-server` из образа, если файла нет → `docker compose up -d --pull never --no-build` → ждёт `GET /readyz`.
+
+Исходящего pull нет. Смените `KEEPPAM_BOOTSTRAP_ADMIN_PASSWORD` в `deploy/.env`.
+
+HA:
+
+```bash
+KEEPPAM_HA=1 ./install.sh
+```
+
+Наблюдаемость (профиль `obs`): автоматически для `SET=full`, иначе:
+
+```bash
+KEEPPAM_OBS=1 ./install.sh
+```
+
+Из git checkout (образы уже в local Docker):
+
+```bash
+./scripts/keeppam-install.sh
+# или с бандлом:
+./scripts/keeppam-install.sh /media/usb/keeppam-1.0.0-offline-core.tar.gz
+```
+
+Портал: http://127.0.0.1:5173 (логин bootstrap из `.env`).
+
+Демо 45 мин: `docs/demo-45min.txt`, `./scripts/demo-seed.sh`.
+
+Обновление той же площадки: `docs/offline-update.txt`.

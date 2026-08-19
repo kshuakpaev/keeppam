@@ -1,0 +1,81 @@
+# KeepPAM: демо 45 минут (продажи / пилот)
+
+Цель: один ноутбук, стенд `make up`, без слайдов «как будет». Зритель видит JIT → сессию → запись → PDF.
+
+Подготовка (до встречи, 10 мин, не в таймере):
+
+```bash
+make up
+# admin: вход http://127.0.0.1:5173 — смена пароля + TOTP (один раз)
+ADMIN_PASSWORD='…' ./scripts/demo-seed.sh
+# Windows в LAN (иначе RDP заменяется SQL-консолью на 5 мин):
+# DEMO_RDP_HOST=… DEMO_RDP_USER=Administrator DEMO_RDP_PASS='…' ./scripts/demo-seed.sh
+```
+
+Шпаргалка: `deploy/.demo-seed.txt` (не в git). Портал: `/` Assets, Access requests, Sessions, Forensic, Compliance. Язык: **EN** для JIT+SSH (`docs/i18n.txt`), Compliance/Forensic пока RU.
+
+Пароль целевой УЗ оператору **не** показывать (vault inject). Не логиниться на `demo-ssh` мимо шлюза.
+
+---
+
+## 0:00–0:05  Контур и deny-by-default
+
+1. Войти **admin**. Карточка `demo-linux-01`: нет постоянного ACL у `ops`.
+2. Фраза: «без заявки сессия не стартует; пароль root/demo в портале не виден».
+3. Показать учётки актива: секрет скрыт, Reveal — отдельное право (не делать в демо).
+
+## 0:05–0:18  JIT SSH (ядро)
+
+1. Выйти, войти **ops** (первый раз — TOTP на телефоне/ноутбуке, 1 мин).
+2. Актив `demo-linux-01` → заявка JIT: ticket `INC-451`, duration **45**, reason `Need prod-linux-01 for incident INC-451`.
+3. Показать, что Connect ещё нельзя / сессия denied.
+4. Второй браузер (или окно инкогнито): **admin** → Access requests → **Approve**.
+5. Снова **ops** → Connect учётки `demo`. HTML5-терминал (или `ssh -p 2222 ops@127.0.0.1` и выбор цели).
+6. В сессии:
+
+```text
+id
+hostname
+echo KEEP-PAM-DEMO-42
+cat ~/KEEP-PAM-README.txt
+```
+
+7. End session. Replay: скорость, поиск команды. Пароль цели в записи не светится.
+
+Опционально 2 мин: кворум 2 из 3 на другом активе (`docs/jit-workflow.txt`) — не обязательно в 45 мин.
+
+## 0:18–0:28  Второй протокол: RDP или SQL
+
+**Если есть `demo-win-01`:** ops → JIT (можно тот же approver) → Connect RDP из портала (Guacamole). Набрать в Блокноте `KEEP-PAM-DEMO-42`. End. Replay / MP4 если успеваете.
+
+**Если Windows нет:** ops → JIT на `demo-tickets-db` → SQL console: `SELECT * FROM tickets;`. Сказать: «RDP — тот же HTML5-путь; на пилоте дадим jump Windows». Не обещать native mstsc (исключение в `docs/kp-acceptance.txt`).
+
+## 0:28–0:38  Forensic
+
+Войти **auditor** (или остаться admin). **Расследование / Forensic**:
+
+- пользователь `ops`, окно «сегодня», поиск `KEEP-PAM-DEMO-42`;
+- клик в сессию → replay;
+- фраза: «аудитор читает, не ходит на хост».
+
+## 0:38–0:45  Compliance PDF
+
+**Compliance** (admin или auditor): период сегодня, framework `all` → таблица → **PDF**. Если задан `KEEPPAM_PDF_CERT_FILE` — PAdES в статусе страницы.
+
+Открыть PDF: согласования, connect, команды. Audit: `compliance.report.generated`.
+
+Закрытие: «обновление без интернета и HA 2+2 — в комплекте (`docs/offline-update.txt`, `docs/ha.txt`), OVA — опция».
+
+---
+
+## Если сломалось
+
+| Симптом | Что сделать |
+|---------|-------------|
+| Connect SSH timeout | `docker compose -f deploy/docker-compose.yml ps demo-ssh`; адрес актива `demo-ssh`, не localhost |
+| 403 на заявке | ops без `access.request`; пересидить `demo-seed.sh` |
+| Approve своей заявки | заявка от ops, голос от **admin** |
+| Нет PDF | `compliance.read`; скачать всё равно JSON/CSV |
+| MFA блокирует seed | `ADMIN_TOTP=123456 ./scripts/demo-seed.sh` |
+
+Не в этом срезе: Citrix, TN3270, native RDP, полный OCR каждого кадра.

@@ -1,0 +1,11 @@
+prom/prometheus:v2.54.1
+prom/alertmanager:v0.27.0
+otel/opentelemetry-collector:0.109.0
+grafana/tempo:2.6.1
+grafana/grafana:11.4.0
+nats:2.10-alpine
+opensearchproject/opensearch:2.18.0
+opensearchproject/opensearch-dashboards:2.18.0
+curlimages/curl:8.5.0
+haproxy:2.9-alpine
+keeppam-iso-browser:local

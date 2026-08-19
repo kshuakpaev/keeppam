@@ -34,7 +34,7 @@ func UsableEmail(raw string) bool {
 		return false
 	}
 	switch email[at+1:] {
-	case "ldap.local", "oidc.local", "saml.local":
+	case "ldap.local", "oidc.local", "saml.local", "radius.local":
 		return false
 	}
 	return true

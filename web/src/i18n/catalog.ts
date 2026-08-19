@@ -100,6 +100,8 @@ export const catalog = {
   "login.badCode": { ru: "Неверный код", en: "Invalid code" },
   "login.oidcBad": { ru: "OIDC включён, но не настроен (issuer / client / secret)", en: "OIDC is enabled but not configured (issuer / client / secret)" },
   "login.samlBad": { ru: "SAML включён, но не настроен (IdP metadata / cert + SP key)", en: "SAML is enabled but not configured (IdP metadata / cert + SP key)" },
+  "login.radius": { ru: "RADIUS", en: "RADIUS" },
+  "login.radiusBad": { ru: "RADIUS включён, но нет сервера или shared secret", en: "RADIUS is enabled but host or shared secret is missing" },
 
   "setup.title": { ru: "Первичная настройка", en: "Initial setup" },
   "setup.lead": { ru: "Смена пароля и MFA (TOTP или Passkey) обязательны", en: "Password change and MFA (TOTP or Passkey) are required" },

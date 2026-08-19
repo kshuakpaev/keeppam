@@ -86,3 +86,6 @@ OPA extra deny: `KEEPPAM_OPA_POLICY` — см. `docs/opa.txt`.
 Конфигурация → блок «Инфраструктура (env)» — read-only статус (`GET /api/v1/admin/settings/infra`, право `settings.write`).
 
 HA 2+2 (compose overlay / Helm): `docs/ha.txt`. `/livez` vs `/readyz`.
+
+Офлайн-обновление (USB/ISO, без registry): `docs/offline-update.txt`.
+Первичная установка с USB: `docs/install.txt` (`--pull never`).

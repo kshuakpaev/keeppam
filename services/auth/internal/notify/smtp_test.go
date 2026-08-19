@@ -13,7 +13,7 @@ import (
 
 func TestUsableEmail(t *testing.T) {
 	ok := []string{"alice@example.com", "Bob@Corp.KZ"}
-	bad := []string{"", "nope", "a@", "@x", "a@ldap.local", "b@oidc.local", "c@saml.local", "a b@x.com"}
+	bad := []string{"", "nope", "a@", "@x", "a@ldap.local", "b@oidc.local", "c@saml.local", "d@radius.local", "a b@x.com"}
 	for _, e := range ok {
 		if !UsableEmail(e) {
 			t.Fatalf("want usable %q", e)

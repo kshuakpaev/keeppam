@@ -1,0 +1,84 @@
+# KeepPAM: обновление без интернета (T-14)
+
+Цель: стенд **без default route** принимает новую версию с USB/ISO. Registry Docker Hub на площадке не нужен.
+
+Версия дистрибутива: файл `VERSION` в корне репозитория.
+
+## Состав поставки
+
+На сборочном хосте (есть интернет / внутренний registry):
+
+```bash
+make up                          # собрать api/web и поднять стек
+SET=core ./scripts/keeppam-pack.sh
+# или полный стенд с Grafana/OpenSearch:
+SET=full ./scripts/keeppam-pack.sh
+```
+
+Артефакты в `dist/` (не в git):
+
+- `keeppam-<ver>-offline-<set>.tar.gz`
+- `keeppam-<ver>-offline-<set>.tar.gz.sha256`
+
+Внутри архива: `images.tar` (`docker save`), `SHA256SUMS`, `MANIFEST.txt`, `NOTICE`, `images.txt`, `VERSION`.
+
+Список образов: `deploy/images-core.txt` + при `SET=full` — `deploy/images-full.txt`.
+`alpine` входит в core — его используют `backup.sh` / `restore.sh`.
+
+## На площадке (air-gap)
+
+1. Скопировать `.tar.gz` (и `.sha256`) на USB.
+2. Проверка: `sha256sum -c keeppam-…tar.gz.sha256`
+3. Обновление:
+
+```bash
+./scripts/keeppam-upgrade.sh /media/usb/keeppam-1.0.0-offline-core.tar.gz
+```
+
+HA-стенд:
+
+```bash
+KEEPPAM_HA=1 ./scripts/keeppam-upgrade.sh /path/to/bundle.tar.gz
+```
+
+Скрипт: проверяет `SHA256SUMS` → пишет `deploy/.upgrade-state` (id образов до load) → `docker load` → `scripts/backup.sh` → `docker compose up -d --pull never --no-build` → ждёт `GET /readyz`.
+
+`--pull never` — compose **не ходит** в registry.
+
+Профиль `obs` (Prometheus/Grafana/OpenSearch): бандл `SET=full` включает его сам; иначе `KEEPPAM_OBS=1`. Core-бандл не требует этих образов.
+
+Первичная установка (не только update): `docs/install.txt`.
+
+4. Откат, если `/readyz` не поднялся или регресс:
+
+```bash
+./scripts/keeppam-rollback.sh
+# HA:
+KEEPPAM_HA=1 ./scripts/keeppam-rollback.sh
+```
+
+Откат вешает прежние image id на те же теги и снова `up --pull never`. Данные: backup из шага upgrade в `backups/` (`docs/dr-runbook.txt`).
+
+## USB / ISO
+
+- Файловая система: USB с `.tar.gz` достаточно.
+- ISO: один файл архива + `.sha256` в корне ISO; монтирование и тот же `keeppam-upgrade.sh`.
+- Не нужен `docker pull` и исходящий HTTPS к вендору.
+
+## Helm / k8s
+
+`helm` не тянет образы сам, если они уже в containerd:
+
+```bash
+docker load -i images.tar
+# при containerd: ctr -n k8s.io images import images.tar
+kubectl rollout restart deploy/keeppam-api deploy/keeppam-worker
+```
+
+См. `docs/ha.txt`.
+
+## Чего скрипт не делает
+
+- Не патчит `/etc/hosts` и не ставит Docker.
+- Не является first-boot OVA. Первичная установка compose: `scripts/keeppam-install.sh` (`docs/install.txt`).
+- Миграции БД применяет API при старте (advisory lock, `docs/ha.txt`); откат схемы — restore `pg_dump`, не `goose down`.

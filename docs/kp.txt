@@ -110,7 +110,7 @@
 | Хранение WORM | A | S3 Object Lock |
 | SMB/NFS archive | B | |
 | RBAC админов на replay | A | permissions |
-| AD/RADIUS/x509 admin auth | A/B | LDAP/SAML/mTLS; RADIUS B |
+| AD/RADIUS/x509 admin auth | A/B | LDAP/SAML/mTLS; RADIUS PAP консоль A; EAP/x509 map B |
 | UEBA + notify | A/B | Baseline A; keystroke/mouse C |
 | Лицензия 100 ИС, 3+2, 12 мес | C | Контракт |
 
@@ -127,6 +127,7 @@
 
 ## Связанные документы
 
+- `docs/demo-45min.txt` — демо 45 мин (продажи)
 - `docs/kp-roadmap.txt` — фазы доработки под КП
 - `docs/main22-plan.txt` — инженерный план реализации по пунктам ТЗ
 - `docs/kp-acceptance.txt` — чек-лист приёмки пилота

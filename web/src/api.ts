@@ -294,6 +294,14 @@ export type AuthSettings = {
   ldap_auto_provision: boolean;
   ldap_skip_mfa: boolean;
   ldap_default_role: string;
+  radius_host: string;
+  radius_nas_id: string;
+  radius_timeout_sec: number;
+  radius_secret?: string;
+  has_radius_secret: boolean;
+  radius_auto_provision: boolean;
+  radius_skip_mfa: boolean;
+  radius_default_role: string;
   saml_idp_metadata_url: string;
   saml_idp_entity_id: string;
   saml_idp_sso_url: string;
@@ -850,6 +858,7 @@ export const api = {
       oidc_ready: boolean;
       ldap_ready: boolean;
       saml_ready: boolean;
+      radius_ready?: boolean;
       saml_idps?: { slug: string; name: string }[];
     }>("/api/v1/auth/methods"),
   listSAMLIdPs: () => request<{ idps: SAMLIdP[] }>("/api/v1/admin/settings/saml/idps"),

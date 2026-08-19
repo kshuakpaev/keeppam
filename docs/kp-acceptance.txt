@@ -4,7 +4,7 @@
 
 ## 1. Identity и доступ
 
-- [ ] Вход local / LDAP / OIDC / SAML (минимум 2 источника из согласованных)
+- [ ] Вход local / LDAP / OIDC / SAML / RADIUS (минимум 2 источника из согласованных)
 - [ ] MFA TOTP или WebAuthn обязателен для привилегированных ролей
 - [ ] JIT: заявка → согласование (этап manager/security **или** кворум N из M) → временный ACL → истечение binding
 - [ ] Четыре глаза: актив с `require_supervisor` — SSH/RDP не стартует без Authorize другого пользователя; deny/timeout 15 мин закрывает сессию
@@ -45,6 +45,8 @@
 - [ ] Нет исходящих подключений к вендору в штатном режиме
 - [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, `docs/ha.txt`, admin quick start
 - [ ] HA 2+2: kill одного api — login жив; stop одного worker — SSH на другом жива
+- [ ] Offline update: `docs/offline-update.txt` — load с USB, `--pull never`, rollback
+- [ ] Demo 45 мин по `docs/demo-45min.txt` (JIT SSH, RDP или SQL, forensic, PDF)
 
 ## 7. Явные исключения (не fail, если в КП оговорено)
 

@@ -36,9 +36,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 
 | Статус    | Кол-во | Примеры |
 |-----------|--------|---------|
-| есть      | 20     | T-04 агенты, T-06 scale 2+2, T-11 MFA, T-12 аудит, T-15 i18n, T-16 quorum, T-23 supervisor |
-| частично  | 20     | T-07 multi-site, T-09 discovery, T-10 OCR, T-18 rotate lock, T-20 группы |
-| нет       | 13     | T-01 OVA, T-25 AD group, T-33 Citrix/TN3270 |
+| есть      | 21     | T-04 агенты, T-06 2+2, T-11 MFA, T-12 аудит, T-14 offline, T-15 i18n, T-16 quorum |
+| частично  | 22     | T-01 compose, T-03 NOTICE, T-07 multi-site, T-48 RADIUS (без EAP/x509 map), T-10 OCR |
+| нет       | 10     | T-02 Hyper-V, T-25 AD group, T-33 Citrix/TN3270 |
 
 Цель плана: **частично → есть** для всех пунктов уровня B; **нет → опция SOW** для уровня C.
 
@@ -62,13 +62,11 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 ## 4. Общий блок ТЗ (T-01 … T-14)
 
 ### T-01. Virtual Appliance
+**Статус: частично** (единый compose-дистрибутив P0; OVA нет).
 **ТЗ:** готовый программный комплекс (Virtual Appliance).
-**Сейчас:** Docker Compose / (частично) k8s. OVA нет.
-**План:**
-- P0: `scripts/keeppam-install.sh` — один артефакт (образы + compose + `.env.example` + версия).
-- P5: сборка OVA (Packer + Ubuntu LTS + docker + first-boot wizard: IP, admin, LDAP).
-- Артефакты: `deploy/appliance/`, Packer template, cloud-init, документация first-boot.
-**DoD:** импорт OVA в vSphere → мастер → login в портал. Hyper-V — T-02.
+**Реализация P0:** `docs/install.txt`, `scripts/keeppam-install.sh`, бандл `keeppam-pack.sh` (образы + compose + `.env.example` + `VERSION` + `NOTICE`).
+**План P5:** OVA (Packer + Ubuntu LTS + docker + first-boot wizard: IP, admin, LDAP).
+**DoD OVA:** импорт в vSphere → мастер → login в портал. Hyper-V — T-02.
 
 ### T-02. VMware и Hyper-V
 **Сейчас:** нет.
@@ -76,9 +74,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** стенд VMware + стенд Hyper-V, оба поднимают control+worker.
 
 ### T-03. Без ПО других производителей
-**Сейчас:** Guacamole, Tesseract, OpenSearch, PostgreSQL, Redis — runtime.
+**Статус: частично** (`NOTICE` + install/upgrade `--pull never`; образы guacd/OS остаются upstream tag).
 **План (P0):** в КП и `NOTICE` перечислить bundled components; брендировать как KeepPAM Session Gateway / Search / OCR. Не переписывать guacd.
-**DoD:** инсталлятор ставит только образы KeepPAM registry; внешних URL в runtime нет.
+**DoD P0:** `keeppam-install.sh` / `keeppam-upgrade.sh` не ходят в registry (`--pull never`). OVA и перетегирование всех upstream-имён — не этот срез.
 
 ### T-04. Без агентов
 **Статус: есть.** SSH/RDP/VNC/HTTP/SQL через шлюз.
@@ -128,9 +126,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План (P0):** проверка исходящих в attack-sim; в КП явный пункт.
 
 ### T-14. Обновления без интернета
-**Сейчас:** pull образов с registry.
-**План (P0):** `docs/offline-update.txt` — tarball образов + `docker load` + migrate + rollback. Скрипт `scripts/keeppam-upgrade.sh`.
-**DoD:** стенд без default route обновляется с USB/ISO.
+**Статус: есть** (tarball + `docker load` + `--pull never` + rollback).
+**Реализация:** `docs/offline-update.txt`, `scripts/keeppam-pack.sh`, `keeppam-upgrade.sh`, `keeppam-rollback.sh`.
+**DoD:** стенд без registry обновляется с USB (архив `dist/keeppam-*-offline-*.tar.gz`).
 
 ---
 
@@ -313,9 +311,10 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** явный permission `sessions.stdin.read` vs metadata-only; проверка в API replay.
 
 ### T-48. Admin auth: AD, RADIUS, x509
-**Сейчас:** AD/LDAP, SAML, mTLS частично.
-**План (P3, 2 нед.):** RADIUS (PAP/EAP) для входа в консоль; x509 client cert map to user (уже mTLS задел).
-**DoD:** login админа по RADIUS test server; по client cert.
+**Статус: частично** (RADIUS PAP консоль+SSH; AD/LDAP/SAML были; x509 = mTLS задел).
+**Реализация RADIUS:** `docs/radius-auth.txt`, миграция `076`, Config mode `radius`.
+**DoD RADIUS:** login по Access-Accept тестового сервера; Filter-Id → роль.
+**Остаток:** EAP/RadSec; map client cert CN → user (не только mTLS к API).
 
 ### T-49. UEBA: нетипичное поведение, индекс риска
 **Сейчас:** baseline 30д, risk на connect (`docs/ueba.txt`).
@@ -350,7 +349,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 ## 7. Порядок работ (критический путь)
 
 ```
-P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
+P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]  ✓
   │
   ├─ P1.1  JIT quorum N-of-M                             [T-16]   ✓
   ├─ P1.2  Session supervisor                            [T-23]   ✓
@@ -364,7 +363,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
   │
   ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
   ├─ P3.2  SMB/NFS archive                               [T-46]
-  └─ P3.3  RADIUS + x509 admin                           [T-48]
+  └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ RADIUS PAP
   │
   ├─ P4.1  MSSQL TDS                                     [T-33]
   ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09, T-17, T-25]
@@ -419,5 +418,8 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]
 - `docs/kp-acceptance.txt` — приёмка пилота (уровень A); расширять по мере закрытия T-xx
 - `docs/jit-workflow.txt` — sequential JIT и кворум N-of-M
 - `docs/session-supervisor.txt` — четыре глаза до старта сессии
+- `docs/radius-auth.txt` — вход консоли/SSH-шлюза по RADIUS PAP
+- `docs/install.txt` — `keeppam-install.sh`, USB без git/registry
+- `docs/offline-update.txt` — USB/ISO `docker load`, upgrade/rollback
 - `docs/ha.txt` — HA 2+2 compose/Helm, drain, /livez /readyz
 - `docs/arch.txt` — архитектура для приложения к контракту

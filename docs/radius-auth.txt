@@ -1,0 +1,35 @@
+# KeepPAM: вход администраторов по RADIUS (T-48)
+
+Режим **RADIUS** в Config → Авторизация. PAP `Access-Request` на UDP (default порт 1812). Не EAP, не RadSec.
+
+Это **IdP пароля** для консоли (и SSH-шлюза, если включён тот же режим), не второй фактор. Локальный TOTP остаётся, пока не включён «Не требовать локальный MFA».
+
+## Настройка
+
+| Поле | Смысл |
+|------|--------|
+| host / host:port | NPS, FreeRADIUS, Cisco ISE |
+| shared secret | шифруется `KEEPPAM_DATA_KEY`, write-only |
+| NAS-Identifier | default `keeppam` |
+| timeout | 1–30 с, default 5 |
+| роль по умолчанию | если сервер не прислал Filter-Id |
+| auto-provision | создать пользователя при первом Accept |
+| skip MFA | как у LDAP |
+
+Переключение в RADIUS без secret/host — ошибка сохранения. Локальный `admin` после смены режима **не** логинится паролем из БД, пока режим снова `local`.
+
+## Filter-Id → роль
+
+В Access-Accept атрибут Filter-Id:
+
+`admin` / `operator` / `auditor` / `security`, либо с префиксом `keeppam-` (`keeppam-admin`). Иначе — роль по умолчанию. Смена Filter-Id у уже существующего пользователя роль не меняет.
+
+## DoD
+
+FreeRADIUS/NPS: пользователь Accept → вход в портал; Reject → `invalid credentials`; аудит `user.login.failure` reason=`radius`.
+
+x509 client cert → user: по-прежнему mTLS (`docs` TLS), не этот срез.
+
+## Вне scope
+
+EAP-TTLS/PEAP, RADIUS accounting, CoA, RadSec.

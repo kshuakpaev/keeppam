@@ -19,6 +19,7 @@ export function LoginPage() {
   const [mode, setMode] = useState("local");
   const [oidcReady, setOidcReady] = useState(false);
   const [samlReady, setSamlReady] = useState(false);
+  const [radiusReady, setRadiusReady] = useState(false);
   const [samlIdps, setSamlIdps] = useState<{ slug: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -28,6 +29,7 @@ export function LoginPage() {
         setMode(m.mode);
         setOidcReady(m.oidc_ready);
         setSamlReady(!!m.saml_ready);
+        setRadiusReady(!!m.radius_ready);
         setSamlIdps(m.saml_idps || []);
       } catch {
         /* default local */
@@ -100,6 +102,7 @@ export function LoginPage() {
   const showPasswordForm =
     mode === "local" ||
     mode === "ldap" ||
+    mode === "radius" ||
     !!challenge ||
     (mode === "oidc" && !oidcReady) ||
     (mode === "saml" && !samlReady);
@@ -116,6 +119,7 @@ export function LoginPage() {
           {mode === "oidc" && "SSO (OIDC)"}
           {mode === "saml" && "SSO (SAML 2.0)"}
           {mode === "ldap" && "LDAP / Active Directory"}
+          {mode === "radius" && t("login.radius")}
           {mode === "local" && t("login.tagline")}
         </p>
         {error && <p className="error">{error}</p>}
@@ -153,6 +157,9 @@ export function LoginPage() {
               <p className="error">{t("login.samlBad")}</p>
             )}
           </div>
+        )}
+        {!challenge && mode === "radius" && !radiusReady && (
+          <p className="error">{t("login.radiusBad")}</p>
         )}
         {showPasswordForm && !challenge && (
           <form onSubmit={onLogin}>

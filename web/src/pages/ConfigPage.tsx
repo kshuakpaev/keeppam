@@ -37,6 +37,13 @@ const empty: AuthSettings = {
   ldap_auto_provision: true,
   ldap_skip_mfa: false,
   ldap_default_role: "operator",
+  radius_host: "",
+  radius_nas_id: "keeppam",
+  radius_timeout_sec: 5,
+  has_radius_secret: false,
+  radius_auto_provision: true,
+  radius_skip_mfa: false,
+  radius_default_role: "operator",
   saml_idp_metadata_url: "",
   saml_idp_entity_id: "",
   saml_idp_sso_url: "",
@@ -159,6 +166,7 @@ export function ConfigPage() {
   const [infra, setInfra] = useState<InfraStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [ldapPass, setLdapPass] = useState("");
+  const [radiusSecret, setRadiusSecret] = useState("");
   const [scimToken, setScimToken] = useState("");
   const [webhookAuth, setWebhookAuth] = useState("");
   const [kafkaPassword, setKafkaPassword] = useState("");
@@ -240,9 +248,11 @@ export function ConfigPage() {
       const body: Partial<AuthSettings> = { ...form };
       if (secret.trim()) body.oidc_client_secret = secret.trim();
       if (ldapPass.trim()) body.ldap_bind_password = ldapPass.trim();
+      if (radiusSecret.trim()) body.radius_secret = radiusSecret.trim();
       if (scimToken.trim()) body.scim_token = scimToken.trim();
       delete body.has_oidc_secret;
       delete body.has_ldap_bind_password;
+      delete body.has_radius_secret;
       delete body.has_saml_sp_key;
       delete body.has_scim_token;
       delete body.saml_acs_url;
@@ -255,6 +265,7 @@ export function ConfigPage() {
       setGroupMapText(formatGroupRoleMap(saved.saml_group_role_map));
       setSecret("");
       setLdapPass("");
+      setRadiusSecret("");
       setScimToken("");
       setMsg("Авторизация сохранена");
     } catch (err) {
@@ -667,6 +678,7 @@ export function ConfigPage() {
           <option value="oidc">OIDC / SSO</option>
           <option value="saml">SAML 2.0 / SSO</option>
           <option value="ldap">LDAP / Active Directory</option>
+          <option value="radius">RADIUS (PAP)</option>
         </select>
 
         <label>Public Base URL (для SSO redirect / ACS)</label>
@@ -1097,6 +1109,67 @@ export function ConfigPage() {
                 onChange={(e) => setForm({ ...form, ldap_skip_mfa: e.target.checked })}
               />
               Не требовать локальный MFA после LDAP
+            </label>
+          </>
+        )}
+
+        {form.mode === "radius" && (
+          <>
+            <h2>RADIUS</h2>
+            <p className="muted">
+              PAP Access-Request (UDP 1812). EAP/RadSec не в этом срезе. Filter-Id{" "}
+              <span className="mono">admin|operator|auditor|security</span> (или{" "}
+              <span className="mono">keeppam-admin</span>) задаёт роль при первом входе. См.{" "}
+              <span className="mono">docs/radius-auth.txt</span>.
+            </p>
+            <label>Сервер (host или host:port)</label>
+            <input
+              value={form.radius_host}
+              onChange={(e) => setForm({ ...form, radius_host: e.target.value })}
+              placeholder="radius.example:1812"
+              required={form.mode === "radius"}
+            />
+            <label>Shared secret {form.has_radius_secret ? "(задан)" : ""}</label>
+            <input
+              type="password"
+              value={radiusSecret}
+              onChange={(e) => setRadiusSecret(e.target.value)}
+              autoComplete="off"
+            />
+            <label>NAS-Identifier</label>
+            <input
+              value={form.radius_nas_id}
+              onChange={(e) => setForm({ ...form, radius_nas_id: e.target.value })}
+              placeholder="keeppam"
+            />
+            <label>Timeout, сек (1–30)</label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={form.radius_timeout_sec}
+              onChange={(e) => setForm({ ...form, radius_timeout_sec: Number(e.target.value) || 5 })}
+            />
+            <label>Роль по умолчанию</label>
+            <input
+              value={form.radius_default_role}
+              onChange={(e) => setForm({ ...form, radius_default_role: e.target.value })}
+            />
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.radius_auto_provision}
+                onChange={(e) => setForm({ ...form, radius_auto_provision: e.target.checked })}
+              />
+              Автосоздание пользователей
+            </label>
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.radius_skip_mfa}
+                onChange={(e) => setForm({ ...form, radius_skip_mfa: e.target.checked })}
+              />
+              Не требовать локальный MFA после RADIUS
             </label>
           </>
         )}

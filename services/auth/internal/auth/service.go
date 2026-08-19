@@ -87,6 +87,8 @@ func (s *Service) Login(ctx context.Context, username, password, ip, ua string) 
 		return LoginResult{}, fmt.Errorf("use SSO login")
 	case "ldap":
 		return s.loginLDAP(ctx, authCfg, ldapSec, username, password, ip, ua)
+	case "radius":
+		return s.loginRADIUS(ctx, authCfg, username, password, ip, ua)
 	default:
 		return s.loginLocal(ctx, username, password, ip, ua)
 	}
@@ -164,6 +166,26 @@ func (s *Service) loginLDAP(ctx context.Context, authCfg settings.AuthSettings, 
 		return LoginResult{}, fmt.Errorf("account disabled")
 	}
 	return s.finishLogin(ctx, u, ip, ua, authCfg.LDAPSkipMFA, "ldap")
+}
+
+func (s *Service) loginRADIUS(ctx context.Context, authCfg settings.AuthSettings, username, password, ip, ua string) (LoginResult, error) {
+	enc, err := s.settings.RADIUSSecretEnc(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	ident, err := s.settings.AuthenticateRADIUS(ctx, authCfg, enc, username, password)
+	if err != nil {
+		_ = s.audit.Record(ctx, nil, "user.login.failure", "user", username, ip, ua, map[string]any{"reason": "radius", "error": err.Error()})
+		return LoginResult{}, fmt.Errorf("invalid credentials")
+	}
+	u, err := s.findOrProvisionExternal(ctx, ident.Username, ident.Email, ident.DisplayName, "radius", authCfg.RADIUSAutoProvision, ident.Role)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if u.Status == "disabled" {
+		return LoginResult{}, fmt.Errorf("account disabled")
+	}
+	return s.finishLogin(ctx, u, ip, ua, authCfg.RADIUSSkipMFA, "radius")
 }
 
 func (s *Service) LoginOIDC(ctx context.Context, claims settings.OIDCClaims, ip, ua string) (LoginResult, error) {
@@ -450,6 +472,25 @@ func (s *Service) AuthenticatePassword(ctx context.Context, username, password, 
 			return store.User{}, fmt.Errorf("invalid credentials")
 		}
 		u, err := s.findOrProvisionExternal(ctx, ident.Username, ident.Email, ident.DisplayName, "ldap", authCfg.LDAPAutoProvision, authCfg.LDAPDefaultRole)
+		if err != nil {
+			return store.User{}, err
+		}
+		if u.Status == "disabled" {
+			return store.User{}, fmt.Errorf("account disabled")
+		}
+		return u, nil
+	}
+	if authCfg.Mode == "radius" {
+		enc, err := s.settings.RADIUSSecretEnc(ctx)
+		if err != nil {
+			return store.User{}, err
+		}
+		ident, err := s.settings.AuthenticateRADIUS(ctx, authCfg, enc, username, password)
+		if err != nil {
+			_ = s.audit.Record(ctx, nil, "user.login.failure", "user", username, ip, "ssh", map[string]any{"reason": "radius"})
+			return store.User{}, fmt.Errorf("invalid credentials")
+		}
+		u, err := s.findOrProvisionExternal(ctx, ident.Username, ident.Email, ident.DisplayName, "radius", authCfg.RADIUSAutoProvision, ident.Role)
 		if err != nil {
 			return store.User{}, err
 		}

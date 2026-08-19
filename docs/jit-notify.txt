@@ -68,7 +68,7 @@ User-Agent: `KeepPAM-Notify/1.0`.
 
 Те же события, что inbox (JIT **и** checkout). Письмо на `users.email`.
 
-Пропускаются пустые адреса и заглушки `@ldap.local` / `@oidc.local` / `@saml.local`.
+Пропускаются пустые адреса и заглушки `@ldap.local` / `@oidc.local` / `@saml.local` / `@radius.local`.
 
 | Поле | Смысл |
 |------|--------|

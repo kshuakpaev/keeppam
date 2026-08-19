@@ -32,6 +32,7 @@ func (s *Server) handleGetAuthSettings(w http.ResponseWriter, r *http.Request) {
 	cfg.OIDCClientSecret = ""
 	cfg.LDAPBindPassword = ""
 	cfg.SCIMToken = ""
+	cfg.RADIUSSecret = ""
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -50,6 +51,7 @@ func (s *Server) handlePutAuthSettings(w http.ResponseWriter, r *http.Request) {
 	out.OIDCClientSecret = ""
 	out.LDAPBindPassword = ""
 	out.SCIMToken = ""
+	out.RADIUSSecret = ""
 	writeJSON(w, http.StatusOK, out)
 }
 
