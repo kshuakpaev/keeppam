@@ -1,0 +1,2 @@
+# Keeppam offline bundle staging for Packer file provisioner.
+# Populated by scripts/appliance-build.sh from SET=core|full pack output.

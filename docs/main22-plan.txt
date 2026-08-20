@@ -38,7 +38,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 |-----------|--------|---------|
 | есть      | 22     | T-04 агенты, T-06 2+2, T-14 offline, T-15 i18n, T-16 quorum, T-46 archive, T-48 RADIUS PAP |
 | частично  | 22     | T-01 compose, T-03 NOTICE, T-07 multi-site, T-48 RADIUS (без EAP/x509 map), T-10 OCR |
-| нет       | 10     | T-02 Hyper-V, T-25 AD group, T-33 Citrix/TN3270 |
+| нет       | 8      | T-25 AD group, T-33 Citrix/TN3270 |
 
 Цель плана: **частично → есть** для всех пунктов уровня B; **нет → опция SOW** для уровня C.
 
@@ -62,16 +62,13 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 ## 4. Общий блок ТЗ (T-01 … T-14)
 
 ### T-01. Virtual Appliance
-**Статус: частично** (единый compose-дистрибутив P0; OVA нет).
-**ТЗ:** готовый программный комплекс (Virtual Appliance).
-**Реализация P0:** `docs/install.txt`, `scripts/keeppam-install.sh`, бандл `keeppam-pack.sh` (образы + compose + `.env.example` + `VERSION` + `NOTICE`).
-**План P5:** OVA (Packer + Ubuntu LTS + docker + first-boot wizard: IP, admin, LDAP).
-**DoD OVA:** импорт в vSphere → мастер → login в портал. Hyper-V — T-02.
+**Статус: есть (pipeline)** — Packer (Ubuntu 24.04 cloudimg) + first-boot wizard + OVA/VHDX export. Compose-дистрибутив P0 без изменений.
+**Реализация:** `docs/appliance-ova.txt`, `appliance/`, `scripts/appliance-build.sh`, `appliance-export-ova.sh`, `appliance-export-vhdx.sh`.
+**DoD:** на build host с KVM: bundle → `appliance-build` → `.ova`; импорт в vSphere → мастер → login. Hyper-V — T-02 (тот же диск → VHDX).
 
 ### T-02. VMware и Hyper-V
-**Сейчас:** нет.
-**План (после T-01):** тот же образ → VHDX (qemu-img) + документация Generation 2. Гостевые tools опционально.
-**DoD:** стенд VMware + стенд Hyper-V, оба поднимают control+worker.
+**Статус: есть (export)** — `appliance-export-ova.sh` (VMware), `appliance-export-vhdx.sh` (Hyper-V Gen2). Гостевые tools: open-vm-tools в образе; Hyper-V daemons — после импорта по необходимости.
+**DoD:** стенд VMware + стенд Hyper-V поднимают control+worker из одного qcow2.
 
 ### T-03. Без ПО других производителей
 **Статус: частично** (`NOTICE` + install/upgrade `--pull never`; образы guacd/OS остаются upstream tag).
@@ -144,12 +141,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 
 
 ### T-17. Синхронизация паролей nix / AD / LDAP / Oracle / MSSQL / MySQL
-**Сейчас:** ротация SSH, PostgreSQL, MySQL. Нет AD/Oracle/MSSQL sync «одна УЗ — много систем».
-**План (P4):**
-- Сущность `password_set` (логический пароль) + members (account_id на разных активах).
-- Job: rotate master → push ко всем members (порядок: AD last или first — настройка).
-- Коннекторы: уже есть SSH/PG/MySQL; добавить LDAP bind+unicodePwd; Oracle (thick client в worker); MSSQL (после T-33 TDS).
-**DoD:** смена в KeepPAM меняет local unix + AD user в тесте.
+**Статус: есть (срез)** — миграция `082`, `docs/password-sync.txt`.
+**Реализация:** `password_sets` + members; rotate set / peer sync при rotate учётки; order directory_first|last; коннекторы SSH/PG/MySQL/MSSQL/LDAP. Oracle — нет.
+**DoD:** смена в KeepPAM меняет local unix + AD (+ DB/MSSQL) в одном наборе.
 
 ### T-18. Ротация и JIT в многоузловом HA
 **Статус: частично** (advisory lock на scheduled rotate; JIT binding в общей БД).
@@ -187,12 +181,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** регресс notify (уже `docs/jit-notify.txt` / SMTP).
 
 ### T-25. AD-группа на время сессии + rotate после disconnect
-**Сейчас:** нет.
-**План (P4, 4–6 нед.):**
-- На учёте/активе: `ad_privileged_group_dn`.
-- Session start: LDAP add member; end/kill: remove + rotate password (T-17 коннектор).
-- Идемпотентность и retry; если remove fail — critical audit + ticket.
-**DoD:** user не в группе до сессии, в группе во время, не в группе после; пароль сменён.
+**Статус: есть** (миграция `081`, пакет `adjit`, `docs/ad-group-jit.txt`).
+**Реализация:** `ad_privileged_group_dn` на активе; `ad_user_dn` на учётке; join на MarkActive; leave на EndHook до MaybeRotateAfterSession; LDAP rotate при group/DN.
+**DoD:** user не в группе до сессии, в группе во время, не в группе после; пароль сменён при rotate_after_session; leave fail → critical audit.
 
 ### T-26. Прозрачный шлюз
 **Статус: есть** (SSH :2222, HTML5 RDP).
@@ -352,7 +343,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09, T-17, T-25]
   └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27, T-29]
   │
-  └─ P5    OVA/Hyper-V, 3+2, Kerberos, Citrix, UEBA mouse [T-01, T-02, T-07, T-35, T-33, T-50]
+  └─ P5    OVA/Hyper-V ✓ pipeline; 3+2, Kerberos, Citrix, UEBA mouse [T-01✓, T-02✓, T-07, T-35, T-33, T-50]
 ```
 
 Параллелить можно: P1.3 (i18n) с P1.1; P2.2 с P2.1; P3.3 с P3.2.

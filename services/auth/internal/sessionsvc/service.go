@@ -73,8 +73,12 @@ type Service struct {
 	aud           *audit.Service
 	recordingsDir string
 	store         recstore.Store
+	startHook     StartHook
 	endHook       EndHook
 }
+
+// StartHook runs once when a session first becomes active (best-effort AD/JIT join).
+type StartHook func(ctx context.Context, id uuid.UUID)
 
 // EndHook runs after a session is marked ended/failed (best-effort cleanup).
 type EndHook func(ctx context.Context, id uuid.UUID, protocol string)
@@ -82,6 +86,10 @@ type EndHook func(ctx context.Context, id uuid.UUID, protocol string)
 func New(db *store.DB, aud *audit.Service, recordingsDir string) *Service {
 	_ = os.MkdirAll(recordingsDir, 0o750)
 	return &Service{db: db, aud: aud, recordingsDir: recordingsDir, store: &recstore.Local{Root: recordingsDir}}
+}
+
+func (s *Service) SetStartHook(h StartHook) {
+	s.startHook = h
 }
 
 func (s *Service) SetEndHook(h EndHook) {
@@ -223,14 +231,18 @@ func (s *Service) MarkActive(ctx context.Context, id uuid.UUID) error {
 	if row.IsWaitingSupervisor() {
 		return ErrWaitingSupervisor
 	}
+	wasPending := row.Status == "pending"
 	now := time.Now().UTC()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET status='active', started_at=$2, last_seen_at=$2 WHERE id=$1`, id, now)
 	if err != nil {
 		return err
 	}
-	if row.Status == "pending" {
+	if wasPending {
 		obs.Default.ObserveSessionSetup(now.Sub(row.CreatedAt))
+		if s.startHook != nil {
+			s.startHook(ctx, id)
+		}
 	}
 	return s.AddEvent(ctx, id, "started", nil)
 }

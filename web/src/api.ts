@@ -115,6 +115,7 @@ export type AssetAccount = {
   k8s_impersonate?: boolean;
   k8s_impersonate_prefix?: string;
   k8s_bind_user?: boolean;
+  ad_user_dn?: string;
 };
 
 export type SecretCheckoutRequest = {
@@ -155,6 +156,7 @@ export type Asset = {
   require_supervisor?: boolean;
   supervisor_group_id?: string;
   supervisor_group_name?: string;
+  ad_privileged_group_dn?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -163,6 +165,27 @@ export type Asset = {
   created_at: string;
   updated_at: string;
   accounts?: AssetAccount[];
+};
+
+export type PasswordSetMember = {
+  account_id: string;
+  asset_id: string;
+  asset_name: string;
+  protocol: string;
+  username: string;
+  auth_method: string;
+  directory: boolean;
+  sort_order: number;
+};
+
+export type PasswordSet = {
+  id: string;
+  name: string;
+  description: string;
+  sync_order: "directory_first" | "directory_last";
+  created_at: string;
+  updated_at: string;
+  members?: PasswordSetMember[];
 };
 
 export type AccessBinding = {
@@ -1115,6 +1138,7 @@ export const api = {
     require_supervisor?: boolean;
     supervisor_group_id?: string | null;
     pam_only?: boolean;
+    ad_privileged_group_dn?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1141,6 +1165,7 @@ export const api = {
       require_supervisor?: boolean;
       supervisor_group_id?: string | null;
       pam_only?: boolean;
+      ad_privileged_group_dn?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1165,6 +1190,7 @@ export const api = {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts`, {
@@ -1191,6 +1217,7 @@ export const api = {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}`, {
@@ -1213,6 +1240,48 @@ export const api = {
         body: JSON.stringify(body ?? {}),
       },
     ),
+  listPasswordSets: () => request<{ sets: PasswordSet[] }>("/api/v1/admin/password-sets"),
+  getPasswordSet: (id: string) => request<PasswordSet>(`/api/v1/admin/password-sets/${id}`),
+  createPasswordSet: (body: {
+    name: string;
+    description?: string;
+    sync_order?: string;
+    account_ids?: string[];
+  }) =>
+    request<PasswordSet>("/api/v1/admin/password-sets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updatePasswordSet: (
+    id: string,
+    body: {
+      name?: string;
+      description?: string;
+      sync_order?: string;
+      account_ids?: string[];
+    },
+  ) =>
+    request<PasswordSet>(`/api/v1/admin/password-sets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deletePasswordSet: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/password-sets/${id}`, { method: "DELETE" }),
+  rotatePasswordSet: (id: string, body?: { apply_remote?: boolean; new_secret?: string }) =>
+    request<{
+      set_id: string;
+      results: {
+        account_id: string;
+        asset_id: string;
+        username: string;
+        ok: boolean;
+        remote_applied: boolean;
+        error?: string;
+      }[];
+    }>(`/api/v1/admin/password-sets/${id}/rotate`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
   checkoutAccount: (
     assetId: string,
     accountId: string,

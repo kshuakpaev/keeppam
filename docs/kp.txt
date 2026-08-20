@@ -70,7 +70,7 @@
 
 | Блок main22 | Уровень КП | Комментарий |
 |-------------|------------|-------------|
-| Virtual Appliance, VMware/Hyper-V | C | Compose/K8s сейчас; OVA — фаза поставки |
+| Virtual Appliance, VMware/Hyper-V | B/C | Compose/K8s + OVA/VHDX pipeline (`docs/appliance-ova.txt`); готовый .ova — сборка на KVM host |
 | Без ПО других производителей | B* | Guacamole/OpenSearch/Tesseract — disclose в КП как runtime; «единый дистрибутив KeepPAM» |
 | Без агентов | A | ✓ |
 | Трафик сессии, не граббинг экрана | A | ✓ поток; OCR — выборочные кадры (B) |

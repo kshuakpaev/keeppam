@@ -17,6 +17,7 @@ export const catalog = {
   "common.delete": { ru: "Удалить", en: "Delete" },
   "common.open": { ru: "Открыть", en: "Open" },
   "common.create": { ru: "Создать", en: "Create" },
+  "common.noAccess": { ru: "Нет доступа", en: "No access" },
   "common.search": { ru: "Поиск", en: "Search" },
   "common.find": { ru: "Найти", en: "Search" },
   "common.reset": { ru: "Сброс", en: "Reset" },
@@ -53,6 +54,34 @@ export const catalog = {
 
   "nav.overview": { ru: "Обзор", en: "Overview" },
   "nav.assets": { ru: "Активы", en: "Assets" },
+  "nav.passwordSets": { ru: "Password sync", en: "Password sync" },
+  "pwset.title": { ru: "Синхронизация паролей", en: "Password sync sets" },
+  "pwset.hint": {
+    ru: "Один логический пароль на несколько УЗ (unix + AD + DB). Rotate пушит один секрет на всех members. Учётка с ad_user_dn / AD group — directory.",
+    en: "One logical password across accounts (unix + AD + DB). Rotate pushes one secret to all members. Accounts with ad_user_dn / AD group count as directory.",
+  },
+  "pwset.empty": { ru: "Нет наборов", en: "No sets yet" },
+  "pwset.create": { ru: "Новый набор", en: "New set" },
+  "pwset.edit": { ru: "Редактирование", en: "Edit set" },
+  "pwset.syncOrder": { ru: "Порядок sync", en: "Sync order" },
+  "pwset.orderLast": { ru: "Сначала host, потом AD/LDAP", en: "Hosts first, then AD/LDAP" },
+  "pwset.orderFirst": { ru: "Сначала AD/LDAP, потом host", en: "AD/LDAP first, then hosts" },
+  "pwset.orderHint": {
+    ru: "directory_last удобен, если AD блокирует старый пароль после смены — сначала обновите unix/DB.",
+    en: "directory_last helps when AD invalidates the old password immediately — update unix/DB first.",
+  },
+  "pwset.members": { ru: "Участники (password)", en: "Members (password)" },
+  "pwset.noAccounts": { ru: "Нет password-учёток на активах", en: "No password accounts on assets" },
+  "pwset.rotate": { ru: "Rotate all", en: "Rotate all" },
+  "pwset.rotateConfirm": {
+    ru: "Сгенерировать новый пароль и применить ко всем участникам (remote)?",
+    en: "Generate a new password and apply to all members (remote)?",
+  },
+  "pwset.deleteConfirm": { ru: "Удалить набор?", en: "Delete this set?" },
+  "pwset.saved": { ru: "Набор сохранён", en: "Set saved" },
+  "pwset.created": { ru: "Набор создан", en: "Set created" },
+  "pwset.deleted": { ru: "Набор удалён", en: "Set deleted" },
+  "pwset.rotated": { ru: "Ротация выполнена", en: "Rotation finished" },
   "nav.discovery": { ru: "Discovery", en: "Discovery" },
   "nav.requests": { ru: "Запросы", en: "Requests" },
   "nav.sessions": { ru: "Сессии", en: "Sessions" },
@@ -177,6 +206,19 @@ export const catalog = {
   "assets.fourEyesHint": {
     ru: "SSH/RDP/SQL/k8s не стартуют, пока другой пользователь не нажмёт «Разрешить». Break-glass пропускает ожидание. Свою сессию супервизить нельзя. Таймаут 15 мин.",
     en: "SSH/RDP/SQL/k8s will not start until another user clicks Authorize. Break-glass skips the wait. You cannot supervise your own session. Timeout 15 min.",
+  },
+  "assets.adGroupDN": {
+    ru: "AD/LDAP privileged group DN (JIT)",
+    en: "AD/LDAP privileged group DN (JIT)",
+  },
+  "assets.adGroupHint": {
+    ru: "На старте сессии учётка добавляется в группу; после disconnect — удаляется. Bind — из Config → Auth LDAP. Пусто = выкл.",
+    en: "On session start the vault account is added to this group; after disconnect it is removed. Bind uses Config → Auth LDAP. Empty = off.",
+  },
+  "assets.adUserDN": { ru: "DN пользователя в AD/LDAP", en: "AD/LDAP user DN" },
+  "assets.adUserHint": {
+    ru: "Опционально. Если пусто — поиск по username через LDAP user filter. Нужен для rotate unicodePwd.",
+    en: "Optional. If empty, user is looked up by username via LDAP filter. Required for unicodePwd rotate when search fails.",
   },
   "assets.waitSupervisor": {
     ru: "Ожидание супервайзера (четыре глаза)… Подключение начнётся после разрешения.",

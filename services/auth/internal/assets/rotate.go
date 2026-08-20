@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/microsoft/go-mssqldb"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/keeppam/auth/internal/store"
@@ -26,6 +28,8 @@ type RotateInput struct {
 	ApplyRemote *bool `json:"apply_remote"`
 	// RemoveOldKey for ssh_key remote rotation: drop previous pubkey after verify.
 	RemoveOldKey bool `json:"remove_old_key"`
+	// SkipPeerSync prevents cascading password_set peer updates (internal).
+	SkipPeerSync bool `json:"-"`
 }
 
 type RotateResult struct {
@@ -58,7 +62,7 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 		return RotateResult{}, fmt.Errorf("unsupported auth_method %q", method)
 	}
 
-	canRemote := supportsRemoteRotation(asset.Protocol, method)
+	canRemote := s.canRemoteRotate(asset, acc, method)
 	applyRemote := canRemote
 	if in.ApplyRemote != nil {
 		applyRemote = *in.ApplyRemote
@@ -151,7 +155,21 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 	if err != nil {
 		return RotateResult{}, err
 	}
+	if !in.SkipPeerSync && method == "password" {
+		s.syncPeersAfterRotate(ctx, actorID, accountID, newSecret, applyRemote, ip, ua)
+	}
 	return RotateResult{Account: out, Remote: applyRemote, Method: method}, nil
+}
+
+func usesDirectoryPassword(asset Asset, acc Account) bool {
+	return strings.TrimSpace(asset.ADPrivilegedGroupDN) != "" || strings.TrimSpace(acc.ADUserDN) != ""
+}
+
+func (s *Service) canRemoteRotate(asset Asset, acc Account, method string) bool {
+	if method == "password" && s.ldapPass != nil && usesDirectoryPassword(asset, acc) {
+		return true
+	}
+	return supportsRemoteRotation(asset.Protocol, method)
 }
 
 func supportsRemoteRotation(protocol, method string) bool {
@@ -160,7 +178,7 @@ func supportsRemoteRotation(protocol, method string) bool {
 		return method == "password" || method == "ssh_key"
 	case "rdp", "vnc":
 		return method == "password" || method == "ssh_key"
-	case "postgres", "mysql":
+	case "postgres", "mysql", "mssql":
 		return method == "password"
 	default:
 		return false
@@ -194,6 +212,12 @@ func prepareNewSecret(method, provided string) (string, error) {
 }
 
 func (s *Service) applyRemotePassword(ctx context.Context, creds TargetCreds, newSecret string) error {
+	if s.ldapPass != nil && usesDirectoryPassword(creds.Asset, creds.Account) {
+		if err := s.ldapPass.ChangeAccountPassword(ctx, creds.Account, newSecret); err != nil {
+			return fmt.Errorf("directory password change: %w", err)
+		}
+		return nil
+	}
 	switch creds.Asset.Protocol {
 	case "ssh":
 		client, err := s.DialSSH(ctx, creds)
@@ -232,6 +256,9 @@ func (s *Service) applyRemotePassword(ctx context.Context, creds TargetCreds, ne
 
 	case "mysql":
 		return s.rotateMySQLPassword(ctx, creds, newSecret)
+
+	case "mssql":
+		return rotateMSSQLPassword(ctx, creds, newSecret)
 
 	default:
 		return fmt.Errorf("unsupported protocol %s", creds.Asset.Protocol)
@@ -338,6 +365,7 @@ func (s *Service) rotateMySQLPassword(ctx context.Context, creds TargetCreds, ne
 	alter := fmt.Sprintf("ALTER USER %s IDENTIFIED BY %s", mysqlQuoteIdent(creds.Account.Username), mysqlQuoteLiteral(newSecret))
 	script := "export MYSQL_PWD=" + shellQuote(creds.Secret) + "\n" +
 		"mysql -u " + user + " -e " + shellQuote(alter) + "\n"
+
 	_, stderr, err := sshRun(client, "bash -lc "+shellQuote(script))
 	if err != nil {
 		change := fmt.Sprintf("SET PASSWORD FOR %s = PASSWORD(%s)", mysqlQuoteIdent(creds.Account.Username), mysqlQuoteLiteral(newSecret))
@@ -349,6 +377,63 @@ func (s *Service) rotateMySQLPassword(ctx context.Context, creds TargetCreds, ne
 		}
 	}
 	return nil
+}
+
+func rotateMSSQLPassword(ctx context.Context, creds TargetCreds, newSecret string) error {
+	dbName := strings.TrimSpace(creds.Asset.DatabaseName)
+	if dbName == "" {
+		dbName = "master"
+	}
+	host := net.JoinHostPort(creds.Asset.Address, strconv.Itoa(creds.Asset.Port))
+	if creds.Asset.Port <= 0 {
+		host = net.JoinHostPort(creds.Asset.Address, "1433")
+	}
+	u := &url.URL{
+		Scheme: "sqlserver",
+		User:   url.UserPassword(creds.Account.Username, creds.Secret),
+		Host:   host,
+	}
+	q := u.Query()
+	q.Set("database", dbName)
+	q.Set("encrypt", "disable")
+	u.RawQuery = q.Encode()
+
+	db, err := sql.Open("sqlserver", u.String())
+	if err != nil {
+		return fmt.Errorf("mssql open: %w", err)
+	}
+	defer db.Close()
+	db.SetConnMaxLifetime(30 * time.Second)
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("mssql dial: %w", err)
+	}
+	stmt := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s",
+		mssqlQuoteIdent(creds.Account.Username), mssqlQuoteLiteral(newSecret))
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("ALTER LOGIN: %w", err)
+	}
+	vu := *u
+	vu.User = url.UserPassword(creds.Account.Username, newSecret)
+	vdb, err := sql.Open("sqlserver", vu.String())
+	if err != nil {
+		return fmt.Errorf("mssql verify open: %w", err)
+	}
+	defer vdb.Close()
+	if err := vdb.PingContext(ctx); err != nil {
+		rollback := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s",
+			mssqlQuoteIdent(creds.Account.Username), mssqlQuoteLiteral(creds.Secret))
+		_, _ = db.ExecContext(ctx, rollback)
+		return fmt.Errorf("verify dial failed: %w", err)
+	}
+	return nil
+}
+
+func mssqlQuoteIdent(name string) string {
+	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
+}
+
+func mssqlQuoteLiteral(s string) string {
+	return "N'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func generatePassword(n int) (string, error) {

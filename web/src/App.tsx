@@ -248,6 +248,7 @@ export function AppLayout() {
             {t("nav.overview")}
           </NavLink>
           {hasPerm(user, "assets.read") && <NavLink to="/assets">{t("nav.assets")}</NavLink>}
+          {hasPerm(user, "assets.read") && <NavLink to="/password-sets">{t("nav.passwordSets")}</NavLink>}
           {hasPerm(user, "discovery.read") && <NavLink to="/discovery">{t("nav.discovery")}</NavLink>}
           {hasPerm(user, "access.request") ||
           hasPerm(user, "access.approve") ||

@@ -1,0 +1,38 @@
+# AD privileged group JIT (КП-2.2 / T-25)
+
+На время PAM-сессии vault-учётка временно входит в привилегированную группу AD/LDAP.
+После disconnect членство снимается; при `rotate_after_session` пароль меняется в каталоге (`unicodePwd` / `userPassword`).
+
+## Настройка
+
+1. **Config → Auth LDAP** — URL, bind DN/password, user base DN, filter (`%s` = username).
+   Для AD предпочтительны LDAPS или StartTLS (нужны для `unicodePwd`).
+2. **Актив** → поле `ad_privileged_group_dn` (полный DN группы, напр. `CN=Domain Admins,CN=Users,DC=corp,DC=local`).
+3. **Учётка** → опционально `ad_user_dn`. Если пусто — DN ищется LDAP-поиском по username.
+
+Пустой group DN = функция выключена для актива.
+
+## Поведение
+
+| Событие | Действие |
+|---------|----------|
+| Session `pending` → `active` | LDAP `member` (fallback `uniqueMember`) add; запись `session_ad_memberships` |
+| Session end/kill | remove member; audit |
+| Leave fail | `failed_leave` + audit severity critical |
+| `rotate_after_session` | после leave — remote rotate через LDAP (не SSH/host) |
+
+Идемпотентность: «уже в группе» / «уже не в группе» не считаются ошибкой.
+
+## Миграция
+
+`081_ad_group_jit.sql` — колонки `assets.ad_privileged_group_dn`, `asset_accounts.ad_user_dn`, таблица `session_ad_memberships`.
+
+## Аудит
+
+- `session.ad_group.join` / `join_failed`
+- `session.ad_group.leave` / `leave_failed` (critical)
+- события сессии type `ad_group`
+
+## DoD
+
+User не в группе до сессии → в группе во время → не в группе после; при rotate_after_session пароль в AD сменён.

@@ -37,7 +37,8 @@ Ephemeral DB role **нет** (только postgres/mysql). Запросы ид�
 
 - Нет TLS от клиента до PAM (как PG wire `sslmode=disable`). Канал PAM→SQL Server — с encrypt.
 - Нет MARS, нет SSPI/Kerberos login, нет TDS RPC (`sp_*` из SSMS Object Explorer может не работать).
-- Нет ротации пароля MSSQL (T-17 после TDS) в этом срезе.
+- Нет Oracle thick-client sync (вне среза password-sync).
+- Remote rotate MSSQL: `ALTER LOGIN` через `password_set` / account rotate (`docs/password-sync.txt`).
 - Живой байт-форвард без terminate-and-query нет: result set собирается и отдаётся как NVARCHAR — типы/precision упрощены.
 
 ## Порты

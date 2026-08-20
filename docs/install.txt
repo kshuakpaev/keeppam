@@ -1,8 +1,8 @@
-# KeepPAM: единый дистрибутив (P0.5 / T-01 compose, не OVA)
+# KeepPAM: единый дистрибутив (P0.5 / T-01 compose)
 
 Версия: файл `VERSION` (сейчас 1.0.0). Bundled runtime: `NOTICE`.
 
-OVA/Hyper-V — не этот срез (T-01 P5 / T-02).
+**Virtual Appliance (OVA / Hyper-V):** `docs/appliance-ova.txt` (КП-2.1 / T-01 P5 + T-02).
 
 ## Сборка артефакта
 

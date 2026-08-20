@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/keeppam/auth/internal/adjit"
 	"github.com/keeppam/auth/internal/analytics"
 	"github.com/keeppam/auth/internal/appaccess"
 	"github.com/keeppam/auth/internal/assets"
@@ -228,6 +229,19 @@ func main() {
 		notifySvc.OnOpApproval(ctx, rec)
 	}
 	var k8sGw *k8sproxy.Gateway
+	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, func(ctx context.Context) (adjit.DirectoryConfig, error) {
+		cfg, _, ldapEnc, err := settingsSvc.Get(ctx)
+		if err != nil {
+			return adjit.DirectoryConfig{}, err
+		}
+		pass, err := settingsSvc.DecryptSecret(ldapEnc)
+		if err != nil {
+			return adjit.DirectoryConfig{}, err
+		}
+		return adjit.DirectoryFromAuthSettings(cfg, pass), nil
+	})
+	assetsSvc.SetLDAPPasswordChanger(adJit)
+	sessSvc.SetStartHook(adJit.OnSessionStart)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
@@ -245,6 +259,7 @@ func main() {
 				k8sGw.DropSession(id)
 			}
 		}
+		adJit.OnSessionEnd(ctx, id)
 		if row, err := sessSvc.Get(ctx, id); err == nil {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)

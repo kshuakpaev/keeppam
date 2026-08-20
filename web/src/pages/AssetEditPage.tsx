@@ -97,6 +97,7 @@ export function AssetEditPage() {
     require_supervisor: false,
     supervisor_group_id: "",
     pam_only: true,
+    ad_privileged_group_dn: "",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -110,6 +111,7 @@ export function AssetEditPage() {
     k8s_impersonate: false,
     k8s_impersonate_prefix: "keeppam:",
     k8s_bind_user: false,
+    ad_user_dn: "",
   });
   const [aclForm, setAclForm] = useState({ ...emptyAclForm });
   const [aclEditId, setAclEditId] = useState<string | null>(null);
@@ -165,6 +167,7 @@ export function AssetEditPage() {
         require_supervisor: !!a.require_supervisor,
         supervisor_group_id: a.supervisor_group_id || "",
         pam_only: a.pam_only !== false,
+        ad_privileged_group_dn: a.ad_privileged_group_dn || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -389,6 +392,7 @@ export function AssetEditPage() {
         require_supervisor: form.require_supervisor,
         supervisor_group_id: form.require_supervisor && form.supervisor_group_id ? form.supervisor_group_id : null,
         pam_only: form.pam_only,
+        ad_privileged_group_dn: form.ad_privileged_group_dn.trim(),
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -438,6 +442,7 @@ export function AssetEditPage() {
         k8s_impersonate: accForm.k8s_impersonate,
         k8s_impersonate_prefix: accForm.k8s_impersonate_prefix,
         k8s_bind_user: accForm.k8s_bind_user,
+        ad_user_dn: accForm.ad_user_dn.trim() || undefined,
       });
       setAccForm({
         username: "",
@@ -451,6 +456,7 @@ export function AssetEditPage() {
         k8s_impersonate: false,
         k8s_impersonate_prefix: "keeppam:",
         k8s_bind_user: false,
+        ad_user_dn: "",
       });
       setMsg(t("assets.accountAdded"));
       await load();
@@ -609,6 +615,7 @@ export function AssetEditPage() {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) {
     if (!id || !canWrite) return;
@@ -1120,6 +1127,17 @@ export function AssetEditPage() {
             </p>
           </>
         )}
+        <label>{t("assets.adGroupDN")}</label>
+        <input
+          className="mono"
+          value={form.ad_privileged_group_dn}
+          onChange={(e) => setForm({ ...form, ad_privileged_group_dn: e.target.value })}
+          disabled={!canWrite}
+          placeholder="CN=Domain Admins,CN=Users,DC=example,DC=com"
+        />
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("assets.adGroupHint")}
+        </p>
         <label>{t("common.description")}</label>
         <input
           value={form.description}
@@ -1372,6 +1390,21 @@ export function AssetEditPage() {
                         />
                         dual-control
                       </label>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        style={{ padding: "0.15rem 0.4rem", fontSize: "0.8rem" }}
+                        onClick={() => {
+                          const v = window.prompt(
+                            t("assets.adUserDN"),
+                            acc.ad_user_dn || "",
+                          );
+                          if (v === null) return;
+                          void onToggleVaultPolicy(acc, { ad_user_dn: v.trim() });
+                        }}
+                      >
+                        AD DN…
+                      </button>
                       <button
                         className="btn secondary"
                         type="button"
@@ -1700,6 +1733,16 @@ export function AssetEditPage() {
             value={accForm.description}
             onChange={(e) => setAccForm({ ...accForm, description: e.target.value })}
           />
+          <label>{t("assets.adUserDN")}</label>
+          <input
+            className="mono"
+            value={accForm.ad_user_dn}
+            onChange={(e) => setAccForm({ ...accForm, ad_user_dn: e.target.value })}
+            placeholder="CN=svc-admin,OU=Admins,DC=example,DC=com"
+          />
+          <p className="muted" style={{ marginTop: 0 }}>
+            {t("assets.adUserHint")}
+          </p>
           {(accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token") && (
             <>
               <label className="row" style={{ gap: 8, alignItems: "center" }}>

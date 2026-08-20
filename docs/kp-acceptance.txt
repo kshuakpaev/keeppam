@@ -52,7 +52,7 @@
 ## 7. Явные исключения (не fail, если в КП оговорено)
 
 - Native RDP client, Citrix, TN3270
-- Virtual Appliance OVA
+- [ ] Virtual Appliance: импорт OVA или VHDX → first-boot → portal (`docs/appliance-ova.txt`) — если в scope КП-2 / SOW
 - EN locale UI (остальные админ-экраны вне сценария JIT+replay)
 - AD group membership on session
 

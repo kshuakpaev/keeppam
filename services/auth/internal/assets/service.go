@@ -19,10 +19,11 @@ import (
 )
 
 type Service struct {
-	db    *store.DB
-	env   *crypto.Envelope
-	aud   *audit.Service
-	sshCA SSHCertIssuer
+	db       *store.DB
+	env      *crypto.Envelope
+	aud      *audit.Service
+	sshCA    SSHCertIssuer
+	ldapPass LDAPPasswordChanger
 }
 
 // SSHCertIssuer signs ephemeral user certificates when ssh_auth_mode=ssh_cert.
@@ -31,12 +32,21 @@ type SSHCertIssuer interface {
 	SignUser(ctx context.Context, principal string) (ssh.Signer, error)
 }
 
+// LDAPPasswordChanger rotates a vault account password in AD/LDAP (unicodePwd / userPassword).
+type LDAPPasswordChanger interface {
+	ChangeAccountPassword(ctx context.Context, acc Account, newPassword string) error
+}
+
 func New(db *store.DB, env *crypto.Envelope, aud *audit.Service) *Service {
 	return &Service{db: db, env: env, aud: aud}
 }
 
 func (s *Service) SetSSHCA(ca SSHCertIssuer) {
 	s.sshCA = ca
+}
+
+func (s *Service) SetLDAPPasswordChanger(c LDAPPasswordChanger) {
+	s.ldapPass = c
 }
 
 type Asset struct {
@@ -60,6 +70,7 @@ type Asset struct {
 	RequireSupervisor   bool       `json:"require_supervisor"`
 	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id,omitempty"`
 	SupervisorGroupName string     `json:"supervisor_group_name,omitempty"`
+	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn,omitempty"`
 	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
@@ -102,47 +113,50 @@ type Account struct {
 	K8sImpersonate       bool       `json:"k8s_impersonate"`
 	K8sImpersonatePrefix string     `json:"k8s_impersonate_prefix"`
 	K8sBindUser          bool       `json:"k8s_bind_user"`
+	ADUserDN             string     `json:"ad_user_dn,omitempty"`
 }
 
 type CreateAssetInput struct {
-	Name              string     `json:"name"`
-	AssetType         string     `json:"asset_type"`
-	Hostname          string     `json:"hostname"`
-	Address           string     `json:"address"`
-	Port              int        `json:"port"`
-	Protocol          string     `json:"protocol"`
-	DatabaseName      string     `json:"database_name"`
-	Description       string     `json:"description"`
-	Tags              []string   `json:"tags"`
-	ApprovalStages    []string   `json:"approval_stages"`
-	ApprovalMode      string     `json:"approval_mode"`
-	QuorumN           int        `json:"quorum_n"`
-	QuorumM           int        `json:"quorum_m"`
-	ApproverGroupID   *uuid.UUID `json:"approver_group_id"`
-	RequireSupervisor bool       `json:"require_supervisor"`
-	SupervisorGroupID *uuid.UUID `json:"supervisor_group_id"`
-	PamOnly           *bool      `json:"pam_only"`
+	Name                string     `json:"name"`
+	AssetType           string     `json:"asset_type"`
+	Hostname            string     `json:"hostname"`
+	Address             string     `json:"address"`
+	Port                int        `json:"port"`
+	Protocol            string     `json:"protocol"`
+	DatabaseName        string     `json:"database_name"`
+	Description         string     `json:"description"`
+	Tags                []string   `json:"tags"`
+	ApprovalStages      []string   `json:"approval_stages"`
+	ApprovalMode        string     `json:"approval_mode"`
+	QuorumN             int        `json:"quorum_n"`
+	QuorumM             int        `json:"quorum_m"`
+	ApproverGroupID     *uuid.UUID `json:"approver_group_id"`
+	RequireSupervisor   bool       `json:"require_supervisor"`
+	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id"`
+	PamOnly             *bool      `json:"pam_only"`
+	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn"`
 }
 
 type UpdateAssetInput struct {
-	Name              *string    `json:"name"`
-	AssetType         *string    `json:"asset_type"`
-	Hostname          *string    `json:"hostname"`
-	Address           *string    `json:"address"`
-	Port              *int       `json:"port"`
-	Protocol          *string    `json:"protocol"`
-	DatabaseName      *string    `json:"database_name"`
-	Description       *string    `json:"description"`
-	Status            *string    `json:"status"`
-	Tags              *[]string  `json:"tags"`
-	ApprovalStages    *[]string  `json:"approval_stages"`
-	ApprovalMode      *string    `json:"approval_mode"`
-	QuorumN           *int       `json:"quorum_n"`
-	QuorumM           *int       `json:"quorum_m"`
-	ApproverGroupID   *uuid.UUID `json:"approver_group_id"`
-	RequireSupervisor *bool      `json:"require_supervisor"`
-	SupervisorGroupID *uuid.UUID `json:"supervisor_group_id"`
-	PamOnly           *bool      `json:"pam_only"`
+	Name                *string    `json:"name"`
+	AssetType           *string    `json:"asset_type"`
+	Hostname            *string    `json:"hostname"`
+	Address             *string    `json:"address"`
+	Port                *int       `json:"port"`
+	Protocol            *string    `json:"protocol"`
+	DatabaseName        *string    `json:"database_name"`
+	Description         *string    `json:"description"`
+	Status              *string    `json:"status"`
+	Tags                *[]string  `json:"tags"`
+	ApprovalStages      *[]string  `json:"approval_stages"`
+	ApprovalMode        *string    `json:"approval_mode"`
+	QuorumN             *int       `json:"quorum_n"`
+	QuorumM             *int       `json:"quorum_m"`
+	ApproverGroupID     *uuid.UUID `json:"approver_group_id"`
+	RequireSupervisor   *bool      `json:"require_supervisor"`
+	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id"`
+	PamOnly             *bool      `json:"pam_only"`
+	ADPrivilegedGroupDN *string    `json:"ad_privileged_group_dn"`
 }
 
 type CreateAccountInput struct {
@@ -157,6 +171,7 @@ type CreateAccountInput struct {
 	K8sImpersonate       bool   `json:"k8s_impersonate"`
 	K8sImpersonatePrefix string `json:"k8s_impersonate_prefix"`
 	K8sBindUser          bool   `json:"k8s_bind_user"`
+	ADUserDN             string `json:"ad_user_dn"`
 }
 
 type UpdateAccountInput struct {
@@ -176,6 +191,7 @@ type UpdateAccountInput struct {
 	K8sImpersonate       *bool   `json:"k8s_impersonate"`
 	K8sImpersonatePrefix *string `json:"k8s_impersonate_prefix"`
 	K8sBindUser          *bool   `json:"k8s_bind_user"`
+	ADUserDN             *string `json:"ad_user_dn"`
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
@@ -184,7 +200,8 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
-			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, '')
+			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
+			COALESCE(a.ad_privileged_group_dn, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -215,7 +232,8 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
-			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, '')
+			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
+			COALESCE(a.ad_privileged_group_dn, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -271,15 +289,16 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	} else {
 		a.SupervisorGroupID = nil
 	}
+	a.ADPrivilegedGroupDN = strings.TrimSpace(in.ADPrivilegedGroupDN)
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -385,6 +404,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			a.SupervisorGroupID = nil
 		}
 	}
+	if in.ADPrivilegedGroupDN != nil {
+		a.ADPrivilegedGroupDN = strings.TrimSpace(*in.ADPrivilegedGroupDN)
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -398,11 +420,11 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			firewall_probe_at=CASE WHEN $19 THEN NULL ELSE firewall_probe_at END,
 			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END,
 			approval_mode=$20, quorum_n=$21, quorum_m=$22, approver_group_id=$23,
-			require_supervisor=$24, supervisor_group_id=$25
+			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
-		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID)
+		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -472,11 +494,11 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 	id := store.NewID()
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO asset_accounts (id, asset_id, username, auth_method, secret_enc, description, status, created_at, updated_at, created_by,
-			token_request_enabled, k8s_sa_namespace, k8s_sa_name, token_ttl_seconds, k8s_impersonate, k8s_impersonate_prefix, k8s_bind_user)
-		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+			token_request_enabled, k8s_sa_namespace, k8s_sa_name, token_ttl_seconds, k8s_impersonate, k8s_impersonate_prefix, k8s_bind_user, ad_user_dn)
+		VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		id, assetID, in.Username, in.AuthMethod, secretEnc, in.Description, now, now, actorID,
 		in.TokenRequestEnabled, strings.TrimSpace(in.K8sSANamespace), strings.TrimSpace(in.K8sSAName), ttl,
-		in.K8sImpersonate, canonImpersonatePrefix(in.K8sImpersonatePrefix), in.K8sBindUser)
+		in.K8sImpersonate, canonImpersonatePrefix(in.K8sImpersonatePrefix), in.K8sBindUser, strings.TrimSpace(in.ADUserDN))
 	if err != nil {
 		return Account{}, err
 	}
@@ -506,6 +528,7 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	impOn := acc.K8sImpersonate
 	impPrefix := acc.K8sImpersonatePrefix
 	bindUser := acc.K8sBindUser
+	adUserDN := acc.ADUserDN
 	if in.Username != nil {
 		username = *in.Username
 	}
@@ -567,6 +590,9 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	if in.K8sBindUser != nil {
 		bindUser = *in.K8sBindUser
 	}
+	if in.ADUserDN != nil {
+		adUserDN = strings.TrimSpace(*in.ADUserDN)
+	}
 	if err := requireBindUserTokenRequest(bindUser, trOn); err != nil {
 		return Account{}, err
 	}
@@ -590,10 +616,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			UPDATE asset_accounts SET username=$2, auth_method=$3, secret_enc=$4, description=$5, status=$6,
 				rotate_after_session=$7, rotate_on_checkin=$8, rotate_interval_hours=$9, next_rotate_at=$10,
 				dual_control_checkout=$11, token_request_enabled=$12, k8s_sa_namespace=$13, k8s_sa_name=$14,
-				token_ttl_seconds=$15, k8s_impersonate=$16, k8s_impersonate_prefix=$17, k8s_bind_user=$18, updated_at=$19
+				token_ttl_seconds=$15, k8s_impersonate=$16, k8s_impersonate_prefix=$17, k8s_bind_user=$18, ad_user_dn=$19, updated_at=$20
 			WHERE id=$1`,
 			accountID, username, authMethod, enc, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, adUserDN, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -602,10 +628,10 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			UPDATE asset_accounts SET username=$2, auth_method=$3, description=$4, status=$5,
 				rotate_after_session=$6, rotate_on_checkin=$7, rotate_interval_hours=$8, next_rotate_at=$9,
 				dual_control_checkout=$10, token_request_enabled=$11, k8s_sa_namespace=$12, k8s_sa_name=$13,
-				token_ttl_seconds=$14, k8s_impersonate=$15, k8s_impersonate_prefix=$16, k8s_bind_user=$17, updated_at=$18
+				token_ttl_seconds=$14, k8s_impersonate=$15, k8s_impersonate_prefix=$16, k8s_bind_user=$17, ad_user_dn=$18, updated_at=$19
 			WHERE id=$1`,
 			accountID, username, authMethod, description, status,
-			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, now)
+			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, adUserDN, now)
 		if err != nil {
 			return Account{}, err
 		}
@@ -641,7 +667,7 @@ func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Accoun
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
 			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
-			COALESCE(a.k8s_bind_user,false)
+			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 ORDER BY a.username`, assetID)
@@ -674,7 +700,7 @@ func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username s
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
 			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
-			COALESCE(a.k8s_bind_user,false)
+			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.asset_id=$1 AND a.username=$2`, assetID, username)
@@ -695,7 +721,7 @@ func (s *Service) getAccount(ctx context.Context, id uuid.UUID) (Account, error)
 			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
 			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
 			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
-			COALESCE(a.k8s_bind_user,false)
+			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
 		WHERE a.id=$1`, id)
@@ -719,7 +745,7 @@ func scanAccountRow(row accountScanner) (Account, error) {
 		&a.CheckoutUserID, &a.CheckoutUsername, &a.CheckoutAt, &a.CheckoutExpiresAt, &a.CheckoutReason,
 		&a.RotateAfterSession, &a.RotateOnCheckin, &a.RotateIntervalHours, &a.NextRotateAt, &a.DualControlCheckout,
 		&a.TokenRequestEnabled, &a.K8sSANamespace, &a.K8sSAName, &a.TokenTTLSeconds,
-		&a.K8sImpersonate, &a.K8sImpersonatePrefix, &a.K8sBindUser,
+		&a.K8sImpersonate, &a.K8sImpersonatePrefix, &a.K8sBindUser, &a.ADUserDN,
 	)
 	if err != nil {
 		return a, err
@@ -909,7 +935,7 @@ func scanAsset(row scannable) (Asset, error) {
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
 		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt,
 		&a.ApprovalMode, &a.QuorumN, &a.QuorumM, &a.ApproverGroupID, &a.ApproverGroupName,
-		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName)
+		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}
