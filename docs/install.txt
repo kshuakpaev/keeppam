@@ -31,7 +31,8 @@ cd keeppam-1.0.0-offline-core
 HA:
 
 ```bash
-KEEPPAM_HA=1 ./install.sh
+KEEPPAM_HA=1 ./install.sh          # 2+2
+KEEPPAM_HA=3 ./install.sh          # 3 control + 2 worker
 ```
 
 Наблюдаемость (профиль `obs`): автоматически для `SET=full`, иначе:

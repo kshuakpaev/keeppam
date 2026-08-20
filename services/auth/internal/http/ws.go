@@ -200,6 +200,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_hint"] = fmt.Sprintf("export KUBECONFIG=./keeppam-%s.yaml && kubectl get ns", created.ID.String()[:8])
 		}
 	}
+	if created.Protocol == "rdp" && !created.WaitingSupervisor && s.rdp != nil && s.rdp.Enabled() {
+		info, err := s.rdp.Prepare(r.Context(), created, created.PolicySnapshot, s.cfg.SessionTTL)
+		if err == nil && info != nil {
+			out["rdp_token"] = info.Token
+			out["rdp_addr"] = info.Addr
+			out["rdp_port"] = info.Port
+			out["rdp_user"] = info.User
+			out["rdp_hint"] = info.Hint
+			out["rdp_file"] = info.File
+			out["rdp_proxy"] = info.ProxyOK
+			out["rdp_filename"] = info.Filename
+		}
+	}
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -459,6 +472,9 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.live != nil {
 		s.live.Kill(r.Context(), id)
+	}
+	if s.rdp != nil {
+		s.rdp.Stop(id)
 	}
 	if err := s.sessionsvc.MarkEnded(r.Context(), id, ""); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

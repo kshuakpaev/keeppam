@@ -59,7 +59,7 @@ cp "$ROOT/scripts/keeppam-compose.inc.sh" \
 chmod +x "$STAGE/scripts/"*.sh
 cp "$ROOT/docs/offline-update.txt" "$ROOT/docs/install.txt" "$ROOT/docs/demo-45min.txt" "$STAGE/docs/"
 cp -a "$ROOT/services/auth/migrations" "$STAGE/services/auth/"
-cp "$ROOT/deploy/docker-compose.yml" "$ROOT/deploy/compose.ha.yml" \
+cp "$ROOT/deploy/docker-compose.yml" "$ROOT/deploy/compose.ha.yml" "$ROOT/deploy/compose.ha3.yml" \
   "$ROOT/deploy/.env.example" "$ROOT/deploy/images-core.txt" "$ROOT/deploy/images-full.txt" \
   "$STAGE/deploy/"
 for d in opa geoip demo-postgres demo-ssh prometheus grafana otel-collector tempo alertmanager opensearch ha pades; do

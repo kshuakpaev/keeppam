@@ -38,7 +38,8 @@ SET=full ./scripts/keeppam-pack.sh
 HA-стенд:
 
 ```bash
-KEEPPAM_HA=1 ./scripts/keeppam-upgrade.sh /path/to/bundle.tar.gz
+KEEPPAM_HA=1 ./scripts/keeppam-upgrade.sh /path/to/bundle.tar.gz   # 2+2
+KEEPPAM_HA=3 ./scripts/keeppam-upgrade.sh /path/to/bundle.tar.gz   # 3+2
 ```
 
 Скрипт: проверяет `SHA256SUMS` → пишет `deploy/.upgrade-state` (id образов до load) → `docker load` → `scripts/backup.sh` → `docker compose up -d --pull never --no-build` → ждёт `GET /readyz`.

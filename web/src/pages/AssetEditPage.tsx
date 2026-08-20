@@ -98,6 +98,7 @@ export function AssetEditPage() {
     supervisor_group_id: "",
     pam_only: true,
     ad_privileged_group_dn: "",
+    krb_spn: "",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -168,6 +169,7 @@ export function AssetEditPage() {
         supervisor_group_id: a.supervisor_group_id || "",
         pam_only: a.pam_only !== false,
         ad_privileged_group_dn: a.ad_privileged_group_dn || "",
+        krb_spn: a.krb_spn || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -266,6 +268,16 @@ export function AssetEditPage() {
             `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`,
           );
         }
+      }
+      if (asset.protocol === "rdp" && sess.rdp_file) {
+        const blob = new Blob([sess.rdp_file], { type: "application/x-rdp" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = sess.rdp_filename || `keeppam-${sess.id.slice(0, 8)}.rdp`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setMsg(sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`);
       }
       openTab({
         id: sess.id,
@@ -393,6 +405,7 @@ export function AssetEditPage() {
         supervisor_group_id: form.require_supervisor && form.supervisor_group_id ? form.supervisor_group_id : null,
         pam_only: form.pam_only,
         ad_privileged_group_dn: form.ad_privileged_group_dn.trim(),
+        krb_spn: form.krb_spn.trim(),
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1138,6 +1151,17 @@ export function AssetEditPage() {
         <p className="muted" style={{ marginTop: 0 }}>
           {t("assets.adGroupHint")}
         </p>
+        <label>Kerberos SPN (опционально)</label>
+        <input
+          className="mono"
+          value={form.krb_spn}
+          onChange={(e) => setForm({ ...form, krb_spn: e.target.value })}
+          disabled={!canWrite}
+          placeholder="host/srv.corp.local"
+        />
+        <p className="muted" style={{ marginTop: 0 }}>
+          Для GSSAPI: host/fqdn или fqdn. Пусто = hostname актива / address.
+        </p>
         <label>{t("common.description")}</label>
         <input
           value={form.description}
@@ -1699,6 +1723,7 @@ export function AssetEditPage() {
           >
             <option value="password">password</option>
             <option value="ssh_key">ssh_key</option>
+            <option value="gssapi">gssapi (Kerberos)</option>
             <option value="kubeconfig">kubeconfig</option>
             <option value="sa_token">sa_token</option>
           </select>

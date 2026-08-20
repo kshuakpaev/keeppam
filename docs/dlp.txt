@@ -56,7 +56,7 @@
 
 ## RDP / VNC (Guacamole)
 
-Для `rdp`: `disable-copy=true`, `enable-drive=false`, `enable-printing=false` (clipboard/drive/printer). Для `vnc`: `disable-copy=true`. USB не пробрасывается.
+Default DLP-strict: clipboard/drive/printer off. Включение — флаги Access Policy `rdp_*` (`docs/native-rdp.txt`, миграция `085`). Native mstsc — `rdp_native` + freerdp-proxy (конфликт с DLP при full redirect).
 
 ## Forensic
 

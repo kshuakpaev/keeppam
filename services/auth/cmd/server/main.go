@@ -45,6 +45,7 @@ import (
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/recstore"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -203,7 +204,11 @@ func main() {
 	sessSvc.SetRecordingStore(recStore)
 	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
+	castIdx.SetUEBAHook(func(ctx context.Context, row sessionsvc.Session, payload map[string]any) {
+		notifySvc.OnUEBAAnomaly(ctx, row, payload)
+	})
 	live := sessionsvc.NewLiveHub(sessions.Redis())
+	var rdpBroker *rdpgw.Broker
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
@@ -260,6 +265,9 @@ func main() {
 			}
 		}
 		adJit.OnSessionEnd(ctx, id)
+		if rdpBroker != nil {
+			rdpBroker.Stop(id)
+		}
 		if row, err := sessSvc.Get(ctx, id); err == nil {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
@@ -405,7 +413,21 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life)
+		var rdpBrokerInit *rdpgw.Broker
+		if cfg.RDPPublicHost != "" && cfg.RDPPublicHost != "off" {
+			cert, key := cfg.RDPProxyCertFile, cfg.RDPProxyKeyFile
+			if cert == "" {
+				cert = cfg.TLSCertFile
+			}
+			if key == "" {
+				key = cfg.TLSKeyFile
+			}
+			rdpBrokerInit = rdpgw.NewBroker(cfg.RDPPublicHost, cfg.RDPProxyBin, cert, key,
+				filepath.Join(cfg.RecordingsDir, "rdp-proxy"), sessions.Redis(), assetsSvc, sessSvc)
+			rdpBroker = rdpBrokerInit
+			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
+		}
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -499,6 +521,11 @@ func main() {
 						slog.Warn("scheduled rotation", "err", err)
 					} else if n > 0 {
 						slog.Info("scheduled rotation done", "count", n)
+					}
+					if n, err := assetsSvc.ReconcilePendingRotations(runCtx); err != nil {
+						slog.Warn("rotation reconcile", "err", err)
+					} else if n > 0 {
+						slog.Info("rotation reconcile done", "count", n)
 					}
 				}
 			}

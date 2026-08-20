@@ -157,6 +157,7 @@ export type Asset = {
   supervisor_group_id?: string;
   supervisor_group_name?: string;
   ad_privileged_group_dn?: string;
+  krb_spn?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -376,9 +377,15 @@ export type SAMLIdP = {
 };
 
 export type SSHSettings = {
-  ssh_auth_mode: "vault_secret" | "ssh_cert" | string;
+  ssh_auth_mode: "vault_secret" | "ssh_cert" | "gssapi" | string;
   ssh_ca_public: string;
   ssh_cert_ttl_hours: number;
+  krb5_realm?: string;
+  krb5_config?: string;
+  krb5_principal?: string;
+  krb5_spn_template?: string;
+  has_krb5_keytab?: boolean;
+  krb5_keytab?: string;
   has_ssh_ca: boolean;
   rotate_ca?: boolean;
   updated_at?: string;
@@ -1139,6 +1146,7 @@ export const api = {
     supervisor_group_id?: string | null;
     pam_only?: boolean;
     ad_privileged_group_dn?: string;
+  krb_spn?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1166,6 +1174,7 @@ export const api = {
       supervisor_group_id?: string | null;
       pam_only?: boolean;
       ad_privileged_group_dn?: string;
+  krb_spn?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1476,6 +1485,7 @@ export const api = {
       method: "POST",
     }),
   getRecordingMp4Url: (id: string) => `/api/v1/admin/sessions/${id}/recording.mp4`,
+  downloadRdpUrl: (id: string) => `/api/v1/admin/sessions/${id}/rdp.rdp`,
   createSession: (
     asset_id: string,
     account_id: string,
@@ -2097,6 +2107,10 @@ export type AccessPolicy = {
   ocr_lang?: string;
   ocr_interval_sec?: number;
   ocr_max_frames?: number;
+  rdp_clipboard?: boolean;
+  rdp_drive?: boolean;
+  rdp_printer?: boolean;
+  rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -2131,6 +2145,10 @@ export type AccessPolicyInput = {
   ocr_lang?: string;
   ocr_interval_sec?: number;
   ocr_max_frames?: number;
+  rdp_clipboard?: boolean;
+  rdp_drive?: boolean;
+  rdp_printer?: boolean;
+  rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
@@ -2196,6 +2214,14 @@ export type PamSession = {
   wire_addr?: string;
   wire_user?: string;
   wire_hint?: string;
+  rdp_token?: string;
+  rdp_addr?: string;
+  rdp_port?: number;
+  rdp_user?: string;
+  rdp_hint?: string;
+  rdp_file?: string;
+  rdp_proxy?: boolean;
+  rdp_filename?: string;
   kubeconfig?: string;
   k8s_addr?: string;
   k8s_token?: string;

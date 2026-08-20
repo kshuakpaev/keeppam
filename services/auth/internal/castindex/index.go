@@ -17,6 +17,7 @@ type Service struct {
 	sess       *sessionsvc.Service
 	store      recstore.Store
 	guacencURL string
+	uebaHook   UEBAHook
 }
 
 func New(sess *sessionsvc.Service, store recstore.Store, guacencURL string) *Service {
@@ -172,7 +173,7 @@ func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessio
 		return Result{}, err
 	}
 	defer f.Close()
-	lines, err := guacindex.ParseKeys(f)
+	lines, tim, err := guacindex.ParseKeysAndTiming(f)
 	if err != nil {
 		return Result{}, err
 	}
@@ -201,6 +202,7 @@ func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessio
 	if ev := dlpPayload(&piiTotal, "keystroke"); ev != nil {
 		_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
 	}
+	s.evaluateKeystrokeUEBA(ctx, row, tim)
 	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
 	n, _ = s.sess.CountKeystrokes(ctx, sessionID)
 	return Result{Indexed: true, Source: "guac", Keystrokes: n}, nil

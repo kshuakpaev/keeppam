@@ -230,9 +230,10 @@ func (s *Service) OverviewFiltered(ctx context.Context, f OverviewFilter) (Overv
 	bruteforce, _ := topLoginFailures(ctx, pool, from)
 	multiAsset, _ := multiAssetActors(ctx, pool, from)
 	uebaHits, _ := uebaNewAssetActors(ctx, pool, from, now)
+	keystrokeHits, _ := uebaKeystrokeActors(ctx, pool, from)
 
 	out.UEBA = uebaHits
-	out.Anomalies = detect(out.Stats, out.Series.LoginsByHour, windowHours, out.SIEM, bruteforce, multiAsset, uebaHits)
+	out.Anomalies = detect(out.Stats, out.Series.LoginsByHour, windowHours, out.SIEM, bruteforce, multiAsset, uebaHits, keystrokeHits)
 	out.Chains = buildChains(out.Anomalies, bruteforce, multiAsset, uebaHits, out.Stats)
 
 	if f.Severity != "" {
@@ -493,6 +494,38 @@ func uebaNewAssetActors(ctx context.Context, pool *pgxpool.Pool, windowFrom, now
 	return out, rows.Err()
 }
 
+type keystrokeHit struct {
+	Actor string
+	Count int
+}
+
+func uebaKeystrokeActors(ctx context.Context, pool *pgxpool.Pool, from time.Time) ([]keystrokeHit, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT COALESCE(u.username, s.user_id::text), COUNT(*)
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		JOIN users u ON u.id = s.user_id
+		WHERE e.ts >= $1
+		  AND e.event_type IN ('ueba','risk')
+		  AND e.payload->>'factor' = $2
+		GROUP BY 1
+		ORDER BY 2 DESC
+		LIMIT 8`, from, ueba.FactorKeystrokeFast)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []keystrokeHit
+	for rows.Next() {
+		var h keystrokeHit
+		if err := rows.Scan(&h.Actor, &h.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func siemCorrelation(ctx context.Context, pool *pgxpool.Pool, now time.Time) (SIEMCorr, error) {
 	var c SIEMCorr
 	var lastExport *time.Time
@@ -539,7 +572,7 @@ func siemCorrelation(ctx context.Context, pool *pgxpool.Pool, now time.Time) (SI
 	return c, nil
 }
 
-func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bruteforce, multiAsset []NamedCount, uebaHits []UEBAHit) []Anomaly {
+func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bruteforce, multiAsset []NamedCount, uebaHits []UEBAHit, keystrokeHits []keystrokeHit) []Anomaly {
 	var out []Anomaly
 	if stats.LoginsFail >= 20 || (windowHours <= 24 && stats.LoginsFail >= 10 && stats.LoginsFail > stats.LoginsOK) {
 		out = append(out, Anomaly{
@@ -590,6 +623,13 @@ func detect(stats Stats, hours []HourBucket, windowHours int, siem SIEMCorr, bru
 		out = append(out, Anomaly{
 			Severity: sev, Code: code, Title: title,
 			Detail: detail, Count: h.NewAssets, Actor: h.Actor,
+		})
+	}
+	for _, k := range keystrokeHits {
+		out = append(out, Anomaly{
+			Severity: "high", Code: ueba.FactorKeystrokeFast, Title: "Аномально быстрый ввод (клавиши)",
+			Detail: fmt.Sprintf("%s — %d срабатываний UEBA keystroke timing", k.Actor, k.Count),
+			Count:  k.Count, Actor: k.Actor,
 		})
 	}
 	if stats.OffHoursSessions >= 3 {

@@ -6,6 +6,8 @@ keeppam_compose() {
   args+=(-f "$ROOT/deploy/docker-compose.yml")
   if [[ "${KEEPPAM_HA:-}" == "1" ]]; then
     args+=(-f "$ROOT/deploy/compose.ha.yml")
+  elif [[ "${KEEPPAM_HA:-}" == "3" ]]; then
+    args+=(-f "$ROOT/deploy/compose.ha.yml" -f "$ROOT/deploy/compose.ha3.yml")
   fi
   if [[ "${KEEPPAM_OBS:-}" == "1" ]]; then
     args+=(--profile obs)

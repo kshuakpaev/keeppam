@@ -89,9 +89,8 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** kill одного api — login/JIT через edge; stop одного worker — SSH на другом жива.
 
 ### T-07. HA-кластер, несколько площадок
-**Статус: частично** (P3: 2+2 один DC + HAProxy). Multi-site / 3+2 — P5.
-**План:** P5 — active/standby PG + object storage; split-brain — T-19.
-**DoD P3:** убийство одного api-контейнера — login и JIT живы. P5 — отдельный SOW.
+**Статус: частично** — 2+2 (`compose.ha.yml`) + 3+2 (`compose.ha3.yml`, Helm api=3). Multi-site async — SOW/P5.
+**DoD P3:** убийство одного api — login/JIT живы. **DoD 3+2:** два api down — третий обслуживает edge.
 
 ### T-08. Интеграция с AD / глобальными каталогами
 **Статус: есть** (LDAP/AD, SAML, OIDC, SCIM).
@@ -146,14 +145,12 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** смена в KeepPAM меняет local unix + AD (+ DB/MSSQL) в одном наборе.
 
 ### T-18. Ротация и JIT в многоузловом HA
-**Статус: частично** (advisory lock на scheduled rotate; JIT binding в общей БД).
-**Реализация:** `pg_try_advisory_lock` в `RunDueRotations`. Двухфазный rotate halfway — ещё P3.
-**DoD остаток:** kill во время rotate — пароль не «завис» halfway.
+**Статус: есть** — advisory lock на schedule; `secret_rotation_pending` двухфазный remote→vault (`083`).
+**DoD:** kill во время rotate — pending + reconcile не оставляют пароль halfway.
 
 ### T-19. Восстановление после split-brain
-**Сейчас:** нет.
-**План (P5):** fencing (один writer PG); reconciliation: сравнить vault version vs last-success на цели; если drift — force rotate. Runbook в `docs/ha.txt`.
-**DoD:** изоляция DC на 10 мин → restore → нет двух разных паролей в vault vs host.
+**Статус: есть (срез)** — `ReconcilePendingRotations`, `docs/ha.txt`.
+**DoD:** после сбоя mid-rotate vault и цель сходятся (commit new / drop / force rotate + critical audit).
 
 ### T-20. Динамические группы по имени/тегу/платформе/адресу
 **Сейчас:** теги + policy overlay + nested tags/groups. Нет auto-membership по regex адреса.
@@ -190,17 +187,15 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** не менять модель; native RDP — T-29.
 
 ### T-27. Контроль буфера / принтеров / дисков RDP
-**Сейчас:** Guacamole; DLP скорее режет, чем «сохраняет все возможности».
-**План (P4):** policy flags `rdp_clipboard`, `rdp_drive`, `rdp_printer` (default off). Включение — явное исключение DLP. Запись clipboard — T-31.
-**DoD:** два профиля: DLP-strict (всё off) и full (clipboard on, файл в capture).
+**Статус: есть** — `rdp_clipboard|drive|printer` в Policy (`085`), guac handshake, `docs/native-rdp.txt`. Default off.
+**DoD:** два профиля: DLP-strict (всё off) и full (clipboard on). Запись clipboard в capture — нет (T-31).
 
 ### T-28. Сессия без раскрытия пароля
 **Статус: есть.**
 
 ### T-29. Любой клиент (PuTTY, Windows RDP, Royal TSX)
-**Сейчас:** любой SSH-клиент на :2222; RDPСпаси — только браузер.
-**План (P4/P5):** RDP gateway (RDG/HTTPS или TCP 3389 terminate → inject creds → target). Сложность высокая; конфликт с T-27 DLP.
-**DoD SSH:** PuTTY/SecureCRT/Royal TSX — уже. DoD RDP: mstsc → KeepPAM → target без пароля в клиенте. Citrix — T-33.
+**Статус: есть (срез)** — SSH ✓; RDP native через freerdp-proxy + `.rdp` (`rdp_native`, `KEEPPAM_RDP_*`), `docs/native-rdp.txt`.
+**DoD SSH:** PuTTY/SecureCRT/Royal TSX — уже. DoD RDP: mstsc → KeepPAM → target без пароля в клиенте (при proxy bin). Citrix — T-33.
 
 ### T-30. Шлюз: auth на gateway, затем целевая УЗ
 **Статус: есть** (SSH menu / portal).
@@ -234,9 +229,9 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Citrix:** P5 SOW.
 
 ### T-35. GSSAPI / Kerberos в SSH
-**Сейчас:** нет (password/key/cert).
-**План (P4/P5):** session-worker как Kerberos client (keytab PAM service) или constrained delegation. Сложный AD-контур.
-**DoD:** `ssh -K` через KeepPAM на цель с SPN `host/asset`.
+**Статус: есть (срез)** — миграция `084`, пакет `sshkrb`, `docs/ssh-kerberos.txt`.
+**Реализация:** `ssh_auth_mode=gssapi` или `auth_method=gssapi`; password→TGT или keytab; `gssapi-with-mic` на `host/<fqdn>`; поле `krb_spn`.
+**DoD:** сессия через KeepPAM на цель с SPN `host/asset` без password auth на sshd (GSSAPI).
 
 ### T-36. Live view + kill, свой проигрыватель
 **Сейчас:** SSH live-watch + kill; RDP — статус; replay свой (не HTML5 video file).
@@ -291,18 +286,16 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Остаток:** EAP/RadSec; map client cert CN → user (не только mTLS к API).
 
 ### T-49. UEBA: нетипичное поведение, индекс риска
-**Сейчас:** baseline 30д, risk на connect (`docs/ueba.txt`).
-**План:** расширить индекс (агрегат session+command+time); UI «карточка риска».
+**Статус: есть** — baseline 30д + keystroke post-session (`docs/ueba.txt`).
 
 ### T-50. Факторы UEBA: время, серверы, активности, динамика клавиш, мышь
-**Сейчас:** время/серверы/spread. Клавиши/мышь — нет.
-**План (P5):** inter-key interval из keystroke events; mouse — из guac motion (sampling). ML не обязателен — z-score vs baseline.
+**Статус: есть (клавиши)** — IKI из guac key+sync, z-score vs baseline; `ueba_keystroke_fast` +30.
+**Мышь:** нет (guac motion sampling — later).
 **DoD:** аномально быстрый ввод поднимает risk; notify — T-51.
 
 ### T-51. Уведомление при нетипичном поведении
-**Сейчас:** notify на JIT/break-glass.
-**План (P2–P5):** hook `ueba.anomaly` → SMTP/webhook (существующий notify service).
-**DoD:** письмо при risk > порога на сессии.
+**Статус: есть** — `OnUEBAAnomaly` → inbox/SMTP/webhook `ueba.anomaly`.
+**DoD:** письмо/webhook при `ueba_keystroke_fast` на сессии.
 
 ---
 
@@ -341,7 +334,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   │
   ├─ P4.1  MSSQL TDS                                     [T-33]  ✓ wire `:11433`
   ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09, T-17, T-25]
-  └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27, T-29]
+  └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27✓, T-29✓]
   │
   └─ P5    OVA/Hyper-V ✓ pipeline; 3+2, Kerberos, Citrix, UEBA mouse [T-01✓, T-02✓, T-07, T-35, T-33, T-50]
 ```

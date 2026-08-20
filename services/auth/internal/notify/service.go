@@ -381,6 +381,41 @@ func (s *Service) OnCheckoutCreated(ctx context.Context, req assets.CheckoutRequ
 	s.fireMail(ctx, to, title, body)
 }
 
+func (s *Service) OnUEBAAnomaly(ctx context.Context, sess sessionsvc.Session, payload map[string]any) {
+	if s == nil || payload == nil {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "audit.read")
+	if err != nil {
+		return
+	}
+	factor, _ := payload["factor"].(string)
+	if factor == "" {
+		factor = "ueba.anomaly"
+	}
+	who := nonEmpty(sess.Username, sess.UserID.String())
+	what := nonEmpty(sess.AssetName, sess.AssetID.String())
+	title := "UEBA: аномальный ввод (клавиши)"
+	body := fmt.Sprintf("%s @ %s — %s", who, what, factor)
+	if v, ok := payload["median_iki_ms"]; ok {
+		body = fmt.Sprintf("%s @ %s — median IKI %vms (z=%v)", who, what, v, payload["z"])
+	}
+	to := FilterRecipients(ids, sess.UserID)
+	s.insert(ctx, to, "ueba.anomaly", title, body, "session", sess.ID.String())
+	hook := map[string]any{
+		"source": "keeppam", "event": "ueba.anomaly",
+		"session_id": sess.ID.String(), "user_id": sess.UserID.String(),
+		"username": sess.Username, "asset_id": sess.AssetID.String(),
+		"asset_name": sess.AssetName, "protocol": sess.Protocol,
+		"ts": time.Now().UTC().Format(time.RFC3339),
+	}
+	for k, v := range payload {
+		hook[k] = v
+	}
+	s.fireWebhook(ctx, hook)
+	s.fireMail(ctx, to, title, body)
+}
+
 func (s *Service) OnCheckoutDecided(ctx context.Context, req assets.CheckoutRequest) {
 	kind := "checkout.approved"
 	title := "Checkout одобрен"

@@ -61,3 +61,26 @@ func TestParseKeysEmpty(t *testing.T) {
 		t.Fatalf("%v %v", got, err)
 	}
 }
+
+func TestParseKeysTiming(t *testing.T) {
+	dump := enc("sync", "0") +
+		enc("key", "97", "1") +
+		enc("sync", "100") +
+		enc("key", "98", "1") +
+		enc("sync", "200") +
+		enc("key", "99", "1") +
+		enc("sync", "300") +
+		enc("key", "100", "1")
+	_, tim, err := ParseKeysAndTiming(strings.NewReader(dump))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tim.NKeys != 4 || tim.Intervals != 3 {
+		t.Fatalf("timing %+v", tim)
+	}
+	if tim.MedianMs != 100 {
+		t.Fatalf("median=%v", tim.MedianMs)
+	}
+}
+
+

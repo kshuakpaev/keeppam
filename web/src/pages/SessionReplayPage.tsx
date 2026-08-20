@@ -247,12 +247,6 @@ export function SessionReplayPage() {
     else rec.play();
   }
 
-  function onSeek(value: number) {
-    const rec = recordingRef.current;
-    if (!rec) return;
-    rec.seek(value, () => setPosition(rec.getPosition()));
-  }
-
   async function exportWebM() {
     if (!id || !hostRef.current || !ready) return;
     setExporting(true);

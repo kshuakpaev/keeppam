@@ -37,10 +37,10 @@
 | 2.1 | Virtual Appliance OVA (VMware) + Hyper-V | п.5–6 | ✓ `docs/appliance-ova.txt` |
 | 2.2 | AD privileged group JIT (add/remove + rotate) | п.31 | ✓ миграция `081`, `docs/ad-group-jit.txt` |
 | 2.3 | Password sync AD ↔ local ↔ DB | п.23 | ✓ миграция `082`, `docs/password-sync.txt` |
-| 2.4 | HA 3 control + 2 session + split-brain recovery | п.9, 24–25, 81 | |
-| 2.5 | Kerberos/GSSAPI SSH | п.52 | |
-| 2.6 | Native RDP gateway path (опция; конфликт с DLP) | п.33–35 | |
-| 2.7 | UEBA keystroke timing / session anomaly notify | п.77–78 | |
+| 2.4 | HA 3 control + 2 session + split-brain recovery | п.9, 24–25, 81 | ✓ `compose.ha3.yml`, миграция `083`, `docs/ha.txt` |
+| 2.5 | Kerberos/GSSAPI SSH | п.52 | ✓ миграция `084`, `docs/ssh-kerberos.txt` |
+| 2.6 | Native RDP gateway path (опция; конфликт с DLP) | п.33–35 | ✓ миграция `085`, `docs/native-rdp.txt` |
+| 2.7 | UEBA keystroke timing / session anomaly notify | п.77–78 | ✓ `docs/ueba.txt` T-50/T-51 |
 
 ## Фаза КП-3 — только SOW / партнёр
 
@@ -58,4 +58,4 @@
 
 ## Следующий шаг реализации
 
-**КП-2.4** HA 3 control + 2 session + split-brain recovery.
+Фаза КП-2 закрыта. Дальше — **КП-3** только по SOW (Citrix / TN3270 / Telnet, полный DLP/NLP, NAC, eIDAS).

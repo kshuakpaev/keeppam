@@ -35,6 +35,10 @@ type Snapshot struct {
 	OCRLang               string       `json:"ocr_lang,omitempty"`
 	OCRIntervalSec        int          `json:"ocr_interval_sec,omitempty"`
 	OCRMaxFrames          int          `json:"ocr_max_frames,omitempty"`
+	RDPClipboard          bool         `json:"rdp_clipboard,omitempty"`
+	RDPDrive              bool         `json:"rdp_drive,omitempty"`
+	RDPPrinter            bool         `json:"rdp_printer,omitempty"`
+	RDPNative             bool         `json:"rdp_native,omitempty"`
 	DlpPatterns           []DlpPattern `json:"dlp_patterns,omitempty"`
 }
 
@@ -133,6 +137,25 @@ func (s *Service) EnrichSnapshot(ctx context.Context, sn *Snapshot) {
 	}
 	s.loadDlpPatternsForSnapshot(ctx, sn)
 	s.loadOCRForSnapshot(ctx, sn)
+	s.loadRDPForSnapshot(ctx, sn)
+}
+
+func (s *Service) loadRDPForSnapshot(ctx context.Context, sn *Snapshot) {
+	if sn == nil || sn.AccessPolicyID == nil || s.db == nil {
+		return
+	}
+	var clip, drive, printer, native bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(rdp_clipboard,false), COALESCE(rdp_drive,false),
+		       COALESCE(rdp_printer,false), COALESCE(rdp_native,false)
+		FROM access_policies WHERE id=$1`, *sn.AccessPolicyID).Scan(&clip, &drive, &printer, &native)
+	if err != nil {
+		return
+	}
+	sn.RDPClipboard = clip
+	sn.RDPDrive = drive
+	sn.RDPPrinter = printer
+	sn.RDPNative = native
 }
 
 func (s *Service) loadOCRForSnapshot(ctx context.Context, sn *Snapshot) {

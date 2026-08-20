@@ -76,6 +76,10 @@ type Config struct {
 	PDFLTVFetch            bool
 	PDFLTA                 bool
 	DrainTimeout           time.Duration
+	RDPPublicHost          string // hostname in .rdp for native mstsc; empty/off = disabled
+	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
+	RDPProxyCertFile       string
+	RDPProxyKeyFile        string
 }
 
 func Load() (Config, error) {
@@ -142,6 +146,10 @@ func Load() (Config, error) {
 		PDFLTVFetch:            boolEnv("KEEPPAM_PDF_LTV_FETCH", true),
 		PDFLTA:                 boolEnv("KEEPPAM_PDF_LTA", false),
 		DrainTimeout:           durationEnv("KEEPPAM_DRAIN_TIMEOUT", 90*time.Second),
+		RDPPublicHost:          env("KEEPPAM_RDP_PUBLIC_HOST", ""),
+		RDPProxyBin:            env("KEEPPAM_RDP_PROXY_BIN", ""),
+		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
+		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

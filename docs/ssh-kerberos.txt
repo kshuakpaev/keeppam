@@ -1,0 +1,32 @@
+# Kerberos / GSSAPI SSH (КП-2.5 / T-35)
+
+Outbound SSH к цели через `gssapi-with-mic` (RFC 4462), клиент — gokrb5.
+
+## Режимы
+
+1. **Config → SSH → gssapi** (глобально для всех SSH-активов), или
+2. **Учётка** `auth_method=gssapi` (когда глобальный режим `vault_secret`).
+
+## Настройка
+
+1. Realm (`CORP.LOCAL`), опционально полный `krb5.conf` (пусто = DNS lookup KDC).
+2. Пароль учётки в vault = пароль AD/Kerberos пользователя `username@REALM`.
+3. На активе FQDN в `hostname` (или `krb_spn` = `host/fqdn` / `fqdn`).
+4. На цели: `sshd` с GSSAPIAuthentication yes, SPN `host/<fqdn>` в keytab.
+
+Опционально: keytab + principal (вместо пароля vault) — для сервисной УЗ.
+
+## Поток
+
+PAM → Login (AS-REQ) → TGS `host/<fqdn>` → SSH `gssapi-with-mic` → shell (запись как обычно).
+
+Библиотека `golang.org/x/crypto/ssh` всегда строит SPN как `host/<target>`; template в UI — документация / будущие расширения. Override — поле актива `krb_spn`.
+
+## Миграция
+
+`084_ssh_kerberos.sql` — режим `gssapi` в `ssh_settings`, колонки krb5_*, `assets.krb_spn`.
+
+## Ограничения
+
+- Constrained delegation (S4U2Proxy) без пароля пользователя — не в этом срезе.
+- Клиентский `ssh -K` к KeepPAM gateway (:2222) не нужен: Kerberos только **PAM → цель**.

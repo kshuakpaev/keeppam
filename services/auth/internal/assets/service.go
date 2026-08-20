@@ -14,6 +14,7 @@ import (
 
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/sshkrb"
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/tagpath"
 )
@@ -26,10 +27,12 @@ type Service struct {
 	ldapPass LDAPPasswordChanger
 }
 
-// SSHCertIssuer signs ephemeral user certificates when ssh_auth_mode=ssh_cert.
+// SSHCertIssuer signs ephemeral user certificates when ssh_auth_mode=ssh_cert
+// and supplies Kerberos settings for gssapi mode.
 type SSHCertIssuer interface {
 	Mode(ctx context.Context) string
 	SignUser(ctx context.Context, principal string) (ssh.Signer, error)
+	KerberosConfig(ctx context.Context) (sshkrb.Config, []byte, error)
 }
 
 // LDAPPasswordChanger rotates a vault account password in AD/LDAP (unicodePwd / userPassword).
@@ -71,6 +74,7 @@ type Asset struct {
 	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id,omitempty"`
 	SupervisorGroupName string     `json:"supervisor_group_name,omitempty"`
 	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn,omitempty"`
+	KrbSPN              string     `json:"krb_spn,omitempty"`
 	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
@@ -135,6 +139,7 @@ type CreateAssetInput struct {
 	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id"`
 	PamOnly             *bool      `json:"pam_only"`
 	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn"`
+	KrbSPN              string     `json:"krb_spn"`
 }
 
 type UpdateAssetInput struct {
@@ -157,6 +162,7 @@ type UpdateAssetInput struct {
 	SupervisorGroupID   *uuid.UUID `json:"supervisor_group_id"`
 	PamOnly             *bool      `json:"pam_only"`
 	ADPrivilegedGroupDN *string    `json:"ad_privileged_group_dn"`
+	KrbSPN              *string    `json:"krb_spn"`
 }
 
 type CreateAccountInput struct {
@@ -201,7 +207,7 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
-			COALESCE(a.ad_privileged_group_dn, '')
+			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -233,7 +239,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
-			COALESCE(a.ad_privileged_group_dn, '')
+			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -290,15 +296,16 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 		a.SupervisorGroupID = nil
 	}
 	a.ADPrivilegedGroupDN = strings.TrimSpace(in.ADPrivilegedGroupDN)
+	a.KrbSPN = strings.TrimSpace(in.KrbSPN)
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -407,6 +414,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.ADPrivilegedGroupDN != nil {
 		a.ADPrivilegedGroupDN = strings.TrimSpace(*in.ADPrivilegedGroupDN)
 	}
+	if in.KrbSPN != nil {
+		a.KrbSPN = strings.TrimSpace(*in.KrbSPN)
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -420,11 +430,11 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			firewall_probe_at=CASE WHEN $19 THEN NULL ELSE firewall_probe_at END,
 			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END,
 			approval_mode=$20, quorum_n=$21, quorum_m=$22, approver_group_id=$23,
-			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26
+			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26, krb_spn=$27
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
-		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN)
+		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -471,7 +481,7 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 		in.AuthMethod = "password"
 	}
 	switch in.AuthMethod {
-	case "password", "ssh_key", "kubeconfig", "sa_token":
+	case "password", "ssh_key", "gssapi", "kubeconfig", "sa_token":
 	default:
 		return Account{}, fmt.Errorf("invalid auth_method")
 	}
@@ -935,7 +945,7 @@ func scanAsset(row scannable) (Asset, error) {
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
 		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt,
 		&a.ApprovalMode, &a.QuorumN, &a.QuorumM, &a.ApproverGroupID, &a.ApproverGroupName,
-		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN)
+		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN, &a.KrbSPN)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}

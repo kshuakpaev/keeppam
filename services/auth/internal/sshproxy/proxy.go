@@ -79,10 +79,13 @@ type DialConfig struct {
 	Address    string
 	Port       int
 	Username   string
-	AuthMethod string // password | ssh_key | ssh_cert
+	AuthMethod string // password | ssh_key | ssh_cert | gssapi
 	Secret     string
 	// Signer is used when AuthMethod=ssh_cert (ephemeral CA-signed key).
 	Signer ssh.Signer
+	// GSSAPI client + target hostname (x/crypto builds SPN host/<target>).
+	GSSAPI       ssh.GSSAPIClient
+	GSSAPITarget string
 	// HostKey is the previously learned marshaled public key (TOFU). Empty = learn on first connect.
 	HostKey []byte
 	// OnHostKey is called when HostKey is empty and the remote presents a key (first-seen trust).
@@ -92,6 +95,15 @@ type DialConfig struct {
 func Dial(cfg DialConfig) (*ssh.Client, error) {
 	var auth []ssh.AuthMethod
 	switch cfg.AuthMethod {
+	case "gssapi":
+		if cfg.GSSAPI == nil {
+			return nil, fmt.Errorf("gssapi requires client")
+		}
+		target := cfg.GSSAPITarget
+		if target == "" {
+			target = cfg.Address
+		}
+		auth = append(auth, ssh.GSSAPIWithMICAuthMethod(cfg.GSSAPI, target))
 	case "ssh_cert":
 		if cfg.Signer == nil {
 			return nil, fmt.Errorf("ssh_cert requires signer")

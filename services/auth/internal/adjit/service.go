@@ -308,6 +308,28 @@ func (s *Service) ChangeAccountPassword(ctx context.Context, acc assets.Account,
 	return ChangePassword(dir, dn, newPassword)
 }
 
+// VerifyAccountPassword binds as the user DN with the candidate password (split-brain check).
+func (s *Service) VerifyAccountPassword(ctx context.Context, acc assets.Account, password string) error {
+	_ = ctx
+	dir, err := s.resolve(ctx)
+	if err != nil {
+		return err
+	}
+	dn, err := s.resolveUserDN(dir, acc)
+	if err != nil {
+		return err
+	}
+	conn, err := dial(dir)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.Bind(dn, password); err != nil {
+		return fmt.Errorf("ldap user bind: %w", err)
+	}
+	return nil
+}
+
 // ChangePassword sets AD unicodePwd (LDAPS/StartTLS) or OpenLDAP userPassword.
 func ChangePassword(dir DirectoryConfig, userDN, newPassword string) error {
 	conn, err := dial(dir)

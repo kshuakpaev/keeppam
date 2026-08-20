@@ -92,7 +92,10 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 	if actorID != uuid.Nil {
 		actorAny = actorID
 	}
-	fail := func(msg string) (RotateResult, error) {
+	fail := func(msg string, clearPending bool) (RotateResult, error) {
+		if clearPending {
+			_, _ = s.db.Pool.Exec(ctx, `DELETE FROM secret_rotation_pending WHERE account_id=$1`, accountID)
+		}
 		_, _ = s.db.Pool.Exec(ctx, `
 			INSERT INTO secret_rotations (id, asset_id, account_id, actor_id, method, status, apply_remote, error, created_at)
 			VALUES ($1,$2,$3,$4,$5,'failed',$6,$7,NOW())`,
@@ -107,24 +110,42 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 		return RotateResult{}, fmt.Errorf("%s", msg)
 	}
 
+	oldEnc, err := s.env.Encrypt([]byte(oldSecret))
+	if err != nil {
+		return fail("encrypt old: "+err.Error(), true)
+	}
+	newEnc, err := s.env.Encrypt([]byte(newSecret))
+	if err != nil {
+		return fail("encrypt new: "+err.Error(), true)
+	}
 	if applyRemote {
+		// Checkpoint before remote change so crash mid-rotate can be reconciled (T-18/T-19).
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO secret_rotation_pending (id, asset_id, account_id, method, old_secret_enc, new_secret_enc, remote_applied, actor_id, created_at, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,FALSE,$7,NOW(),NOW())
+			ON CONFLICT (account_id) DO UPDATE SET
+				id=$1, asset_id=$2, method=$4, old_secret_enc=$5, new_secret_enc=$6,
+				remote_applied=FALSE, actor_id=$7, updated_at=NOW()`,
+			rotationID, assetID, accountID, method, oldEnc, newEnc, actorAny)
+		if err != nil {
+			return fail("pending insert: "+err.Error(), true)
+		}
 		creds := TargetCreds{Account: acc, Asset: asset, Secret: oldSecret, AuthMethod: method}
 		switch method {
 		case "password":
 			if err := s.applyRemotePassword(ctx, creds, newSecret); err != nil {
-				return fail(err.Error())
+				return fail(err.Error(), true)
 			}
 		case "ssh_key":
 			if err := s.applyRemoteSSHKey(ctx, creds, newSecret, in.RemoveOldKey); err != nil {
-				return fail(err.Error())
+				return fail(err.Error(), true)
 			}
 		}
+		_, _ = s.db.Pool.Exec(ctx, `
+			UPDATE secret_rotation_pending SET remote_applied=TRUE, updated_at=NOW() WHERE account_id=$1`, accountID)
 	}
 
-	enc, err := s.env.Encrypt([]byte(newSecret))
-	if err != nil {
-		return fail("encrypt: " + err.Error())
-	}
+	enc := newEnc
 	now := time.Now().UTC()
 	var nextRotate any
 	if acc.RotateIntervalHours > 0 {
@@ -136,8 +157,10 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, assetID, accountID 
 		UPDATE asset_accounts SET secret_enc=$2, last_rotated_at=$3, next_rotate_at=$4, updated_at=$3 WHERE id=$1`,
 		accountID, enc, now, nextRotate)
 	if err != nil {
-		return fail("vault update: " + err.Error())
+		// Keep pending (remote may already be new) for ReconcilePendingRotations.
+		return fail("vault update: "+err.Error(), !applyRemote)
 	}
+	_, _ = s.db.Pool.Exec(ctx, `DELETE FROM secret_rotation_pending WHERE account_id=$1`, accountID)
 
 	_, _ = s.db.Pool.Exec(ctx, `
 		INSERT INTO secret_rotations (id, asset_id, account_id, actor_id, method, status, apply_remote, error, created_at)

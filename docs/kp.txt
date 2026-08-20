@@ -111,7 +111,7 @@
 | SMB/NFS archive | B | ✓ NFS mount / SMB2–3, checksum, replay с шары |
 | RBAC админов на replay | A | permissions |
 | AD/RADIUS/x509 admin auth | A/B | LDAP/SAML/mTLS; RADIUS PAP консоль A; EAP/x509 map B |
-| UEBA + notify | A/B | Baseline A; keystroke/mouse C |
+| UEBA + notify | A/B | Baseline A; keystroke timing B (`ueba_keystroke_fast` + notify); mouse C |
 | Лицензия 100 ИС, 3+2, 12 мес | C | Контракт |
 
 ## Типовые формулировки для текста КП

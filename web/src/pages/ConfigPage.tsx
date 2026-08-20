@@ -102,6 +102,12 @@ const emptySSH: SSHSettings = {
   ssh_auth_mode: "vault_secret",
   ssh_ca_public: "",
   ssh_cert_ttl_hours: 8,
+  krb5_realm: "",
+  krb5_config: "",
+  krb5_principal: "",
+  krb5_spn_template: "host/%h",
+  has_krb5_keytab: false,
+  krb5_keytab: "",
   has_ssh_ca: false,
 };
 
@@ -488,8 +494,13 @@ export function ConfigPage() {
       const saved = await api.putSSHSettings({
         ssh_auth_mode: ssh.ssh_auth_mode,
         ssh_cert_ttl_hours: ssh.ssh_cert_ttl_hours,
+        krb5_realm: ssh.krb5_realm || "",
+        krb5_config: ssh.krb5_config || "",
+        krb5_principal: ssh.krb5_principal || "",
+        krb5_spn_template: ssh.krb5_spn_template || "host/%h",
+        ...(ssh.krb5_keytab ? { krb5_keytab: ssh.krb5_keytab } : {}),
       });
-      setSsh({ ...emptySSH, ...saved });
+      setSsh({ ...emptySSH, ...saved, krb5_keytab: "" });
       setMsg("SSH сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения SSH");
@@ -507,9 +518,14 @@ export function ConfigPage() {
       const saved = await api.putSSHSettings({
         ssh_auth_mode: ssh.ssh_auth_mode,
         ssh_cert_ttl_hours: ssh.ssh_cert_ttl_hours,
+        krb5_realm: ssh.krb5_realm || "",
+        krb5_config: ssh.krb5_config || "",
+        krb5_principal: ssh.krb5_principal || "",
+        krb5_spn_template: ssh.krb5_spn_template || "host/%h",
+        ...(ssh.krb5_keytab ? { krb5_keytab: ssh.krb5_keytab } : {}),
         rotate_ca: true,
       });
-      setSsh({ ...emptySSH, ...saved });
+      setSsh({ ...emptySSH, ...saved, krb5_keytab: "" });
       setMsg("Новый SSH CA сгенерирован — обновите TrustedUserCAKeys на целях");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка ротации CA");
@@ -1415,6 +1431,7 @@ export function ConfigPage() {
         >
           <option value="vault_secret">Секрет из vault (пароль / ключ учётки)</option>
           <option value="ssh_cert">Эфемерный SSH-сертификат (CA)</option>
+          <option value="gssapi">Kerberos / GSSAPI (gssapi-with-mic)</option>
         </select>
         <label>TTL сертификата (часы)</label>
         <input
@@ -1455,6 +1472,51 @@ export function ConfigPage() {
             <button className="btn secondary" type="button" disabled={busy} onClick={() => void onRotateCA()}>
               Сгенерировать новый CA
             </button>
+          </>
+        )}
+        {ssh.ssh_auth_mode === "gssapi" && (
+          <>
+            <label>Kerberos realm</label>
+            <input
+              className="mono"
+              value={ssh.krb5_realm || ""}
+              onChange={(e) => setSsh({ ...ssh, krb5_realm: e.target.value })}
+              placeholder="CORP.LOCAL"
+            />
+            <label>krb5.conf (опционально; пусто = DNS lookup KDC)</label>
+            <textarea
+              className="mono"
+              rows={6}
+              value={ssh.krb5_config || ""}
+              onChange={(e) => setSsh({ ...ssh, krb5_config: e.target.value })}
+              style={{ width: "100%", fontSize: "0.8rem" }}
+            />
+            <label>SPN template (%h = hostname актива)</label>
+            <input
+              className="mono"
+              value={ssh.krb5_spn_template || "host/%h"}
+              onChange={(e) => setSsh({ ...ssh, krb5_spn_template: e.target.value })}
+            />
+            <p className="muted">
+              По умолчанию PAM логинится в KDC паролем учётки из vault (username@REALM), затем
+              gssapi-with-mic на SPN host/&lt;fqdn&gt;. Опционально — keytab сервиса.
+            </p>
+            <label>Keytab principal (если используете keytab)</label>
+            <input
+              className="mono"
+              value={ssh.krb5_principal || ""}
+              onChange={(e) => setSsh({ ...ssh, krb5_principal: e.target.value })}
+              placeholder="keeppam/gateway$@CORP.LOCAL"
+            />
+            <label>Keytab (base64, write-only){ssh.has_krb5_keytab ? " — загружен" : ""}</label>
+            <textarea
+              className="mono"
+              rows={3}
+              value={ssh.krb5_keytab || ""}
+              onChange={(e) => setSsh({ ...ssh, krb5_keytab: e.target.value })}
+              placeholder="оставьте пустым чтобы не менять"
+              style={{ width: "100%", fontSize: "0.8rem" }}
+            />
           </>
         )}
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>

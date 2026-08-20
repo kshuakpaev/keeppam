@@ -23,6 +23,10 @@ const emptyPolicyForm = {
   ocr_lang: "rus+eng",
   ocr_interval_sec: "15",
   ocr_max_frames: "60",
+  rdp_clipboard: false,
+  rdp_drive: false,
+  rdp_printer: false,
+  rdp_native: false,
   dlp_patterns: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
@@ -530,6 +534,10 @@ export function JeaPage() {
       ocr_lang: p.ocr_lang || "rus+eng",
       ocr_interval_sec: String(p.ocr_interval_sec || 15),
       ocr_max_frames: String(p.ocr_max_frames || 60),
+      rdp_clipboard: !!p.rdp_clipboard,
+      rdp_drive: !!p.rdp_drive,
+      rdp_printer: !!p.rdp_printer,
+      rdp_native: !!p.rdp_native,
       dlp_patterns: formatDlpPatterns(p.dlp_patterns),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
@@ -570,6 +578,14 @@ export function JeaPage() {
     if (p.pii_action) bits.push("pii:" + p.pii_action);
     if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
     if (p.ocr_lang) bits.push("ocr:" + p.ocr_lang + "/" + (p.ocr_interval_sec || 15) + "s");
+    if (p.rdp_clipboard || p.rdp_drive || p.rdp_printer) {
+      const r: string[] = [];
+      if (p.rdp_clipboard) r.push("clip");
+      if (p.rdp_drive) r.push("drive");
+      if (p.rdp_printer) r.push("print");
+      bits.push("rdp:" + r.join("+"));
+    }
+    if (p.rdp_native) bits.push("mstsc");
     if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
@@ -605,6 +621,10 @@ export function JeaPage() {
         ocr_lang: policyForm.ocr_lang || "rus+eng",
         ocr_interval_sec: Number(policyForm.ocr_interval_sec) || 15,
         ocr_max_frames: Number(policyForm.ocr_max_frames) || 60,
+        rdp_clipboard: !!policyForm.rdp_clipboard,
+        rdp_drive: !!policyForm.rdp_drive,
+        rdp_printer: !!policyForm.rdp_printer,
+        rdp_native: !!policyForm.rdp_native,
         dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
@@ -1580,6 +1600,38 @@ export function JeaPage() {
               <p className="muted" style={{ marginTop: "-0.5rem" }}>
                 Не live OCR каждого кадра. Post-session Tesseract, индекс screen_text.
               </p>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_clipboard}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_clipboard: e.target.checked })}
+                />
+                RDP clipboard (default off — DLP)
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_drive}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_drive: e.target.checked })}
+                />
+                RDP drive mapping
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_printer}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_printer: e.target.checked })}
+                />
+                RDP printers
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_native}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_native: e.target.checked })}
+                />
+                Native mstsc path (нужен KEEPPAM_RDP_PUBLIC_HOST + freerdp-proxy)
+              </label>
               <label>DLP regex (имя и паттерн на строку, до 16)</label>
               <textarea
                 rows={4}

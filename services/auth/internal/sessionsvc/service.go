@@ -329,6 +329,63 @@ func (s *Service) AddEventAt(ctx context.Context, sessionID uuid.UUID, ts time.T
 	return err
 }
 
+// AppendRisk adds points and a factor to the session (capped at 100). Idempotent per factor name.
+func (s *Service) AppendRisk(ctx context.Context, sessionID uuid.UUID, points int, factor string) (int, []string, error) {
+	factor = strings.TrimSpace(factor)
+	if factor == "" || points <= 0 {
+		row, err := s.Get(ctx, sessionID)
+		return row.RiskScore, row.RiskFactors, err
+	}
+	row, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, f := range row.RiskFactors {
+		if f == factor {
+			return row.RiskScore, row.RiskFactors, nil
+		}
+	}
+	score := row.RiskScore + points
+	if score > 100 {
+		score = 100
+	}
+	factors := append(append([]string{}, row.RiskFactors...), factor)
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE sessions SET risk_score=$2, risk_factors=$3 WHERE id=$1`, sessionID, score, factors)
+	return score, factors, err
+}
+
+// KeystrokeMedians returns historical median IKI (ms) from ueba keystroke_stats events for the user.
+func (s *Service) KeystrokeMedians(ctx context.Context, userID uuid.UUID, since time.Time, excludeSession uuid.UUID) ([]float64, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT (e.payload->>'median_iki_ms')::float8
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		WHERE s.user_id=$1
+		  AND e.event_type='ueba'
+		  AND e.payload->>'factor'=$2
+		  AND e.ts >= $3
+		  AND s.id <> $4
+		  AND (e.payload->>'median_iki_ms') ~ '^[0-9]+(\\.[0-9]+)?$'
+		ORDER BY e.ts DESC
+		LIMIT 50`, userID, "keystroke_stats", since.UTC(), excludeSession)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []float64
+	for rows.Next() {
+		var v float64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v > 0 {
+			out = append(out, v)
+		}
+	}
+	return out, rows.Err()
+}
+
 type SessionEvent struct {
 	Type    string         `json:"type"`
 	Payload map[string]any `json:"payload"`

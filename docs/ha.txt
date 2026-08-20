@@ -1,78 +1,93 @@
-# KeepPAM: HA 2+2 (один DC)
+# KeepPAM: HA
 
-Формулировка КП уровень B: ≥2 control + ≥2 session-worker. 3+2 / multi-site — P5 (`T-07` C).
+## 2+2 (один DC, КП уровень B)
 
-## Compose
-
-Нужен Docker Compose **v2.24+** (теги `!override`).
+Формулировка: ≥2 control + ≥2 session-worker.
 
 ```bash
 cd deploy
 docker compose -f docker-compose.yml -f compose.ha.yml up -d
 ```
 
-Снаружи как раньше: HTTP `:8080`, SSH `:2222`, SQL wire (`:15432`/`:13306`/`:11433`), k8s API — всё на **edge** (HAProxy).
-
 | Сервис | Реплики | Health |
 |--------|---------|--------|
 | `api`, `api-b` | 2 | `GET /readyz` (PG+Redis; при SIGTERM — 503 draining) |
 | `session-worker`, `session-worker-b` | 2 | тот же `/readyz` на `:8080` внутри сети |
-| `edge` | 1 | снимает бэкенд из балансировки за 2 failed check (~6 с) |
-| `postgres` | 1 | SPOF; см. ниже |
+| `edge` | 1 | HAProxy; снимает бэкенд за 2 failed check (~6 с) |
+| `postgres` | 1 | SPOF; см. pg-ha ниже |
 
-`web` ходит в upstream `api` + `api-b`. Общий volume `recordings` и `sshhost` (один SSH host key).
+Снаружи: HTTP `:8080`, SSH `:2222`, SQL wire, k8s API — через **edge**.
 
-### Проверки
+### Проверки 2+2
 
 ```bash
 curl -sf http://127.0.0.1:8080/livez
 curl -sf http://127.0.0.1:8080/readyz
-# убить один API — login жив
 docker compose -f docker-compose.yml -f compose.ha.yml kill api
 curl -sf http://127.0.0.1:8080/api/v1/auth/methods
-```
-
-Drain worker (активная SSH на другом не рвётся):
-
-```bash
 docker compose -f docker-compose.yml -f compose.ha.yml stop session-worker
 ```
 
-`stop` шлёт SIGTERM → `/readyz=503` → HAProxy не даёт новые SSH на этот контейнер; существующие сессии доигрывают до `KEEPPAM_DRAIN_TIMEOUT` (90 с).
+`stop` → SIGTERM → `/readyz=503` → HAProxy не даёт новые SSH; активные сессии до `KEEPPAM_DRAIN_TIMEOUT` (90 с).
 
-### Postgres HA (opt)
+## 3+2 (КП-2.4 / enterprise)
 
-Профиль `pg-ha` поднимает **streaming replica** (`postgres-replica`), без auto-failover:
+Три control API + два session-worker:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
+cd deploy
+docker compose -f docker-compose.yml -f compose.ha.yml -f compose.ha3.yml up -d
 ```
 
-Прод: Patroni / CloudNativePG / внешний VIP. DSN тот же `KEEPPAM_DATABASE_URL`. Promote — `docs/dr-runbook.txt`.
+Добавляется `api-c`; edge использует `ha/haproxy-ha3.cfg`, web — `ha/nginx-ha3.conf`.
 
-## Helm
+### Helm
 
 ```bash
 helm upgrade --install keeppam deploy/helm/keeppam \
   --set image.repository=keeppam/api --set image.tag=1.0.0
 ```
 
-Реплики: `replicaCount.api=2`, `replicaCount.worker=2`. PDB minAvailable=1. Probes: `/livez` / `/readyz`. `terminationGracePeriodSeconds: 100`.
+Default: `replicaCount.api=3`, `worker=2`, PDB `apiMinAvailable=2`. Для 2+2: `--set replicaCount.api=2 --set podDisruptionBudget.apiMinAvailable=1`.
 
-Recordings: для local — PVC ReadWriteMany; иначе `KEEPPAM_RECORDINGS_BACKEND=s3`.
+Recordings: PVC RWX или `KEEPPAM_RECORDINGS_BACKEND=s3`. SSH host key — общий PVC.
 
-SSH host key — общий PVC RWX (`*-sshhost`).
+## Postgres HA (opt)
 
-## API
+Профиль `pg-ha` — streaming replica без auto-failover:
 
-- `GET /livez` — процесс жив (как `/healthz`).
-- `GET /readyz` — PG ping + Redis ping; `503` если draining.
-- `auth-server readyz` — exit 0/1 для Docker healthcheck.
-- Миграции: `pg_advisory_lock` на одном соединении (два API не гоняют schema параллельно).
-- Ротация по расписанию: `pg_try_advisory_lock` — крутит только один replica (`T-18`).
+```bash
+docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
+```
 
-## Чего нет в этом срезе
+Прод: Patroni / CloudNativePG / VIP. Promote — `docs/dr-runbook.txt`.
+
+## Ротация и split-brain (T-18 / T-19)
+
+1. Перед remote change пишется `secret_rotation_pending` (old/new secret enc).
+2. После успешного remote → `remote_applied=true`, затем vault update; pending удаляется.
+3. Job `ReconcilePendingRotations` (advisory lock, раз в цикл scheduler, pending старше 90 с):
+   - remote не применён → drop pending;
+   - цель принимает **new** → commit vault (`status=reconciled`);
+   - цель принимает **old** → drop pending;
+   - ни тот ни другой → audit critical + force rotate.
+
+Миграция: `083_ha_rotate_pending.sql`.
+
+## API / ops
+
+- `GET /livez` — процесс жив.
+- `GET /readyz` — PG + Redis; `503` если draining.
+- Миграции: `pg_advisory_lock` (один writer schema).
+- Scheduled rotate: `pg_try_advisory_lock` (один replica).
+- Reconcile: отдельный advisory lock.
+
+## Multi-site
+
+Два DC с async PG + object storage recordings — SOW / P5. В этом срезе: fencing = один writer PG; reconcile паролей после restore сети.
+
+## Чего нет
 
 - Keepalived VIP на bare metal (edge = VIP).
-- Auto-heal split-brain паролей (`T-19`).
-- 3 control + 2 worker на двух площадках.
+- Auto Patroni failover в compose.
+- Oracle password connector.
