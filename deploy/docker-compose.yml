@@ -56,6 +56,10 @@ services:
       KEEPPAM_PG_WIRE_ADDR: ":15432"
       KEEPPAM_MYSQL_WIRE_ADDR: ":13306"
       KEEPPAM_MSSQL_WIRE_ADDR: ":11433"
+      KEEPPAM_TELNET_ADDR: ":2323"
+      KEEPPAM_TN3270_ADDR: ":2324"
+      KEEPPAM_CITRIX_SOCKS_ADDR: ":1081"
+      KEEPPAM_CITRIX_PUBLIC_HOST: "${KEEPPAM_CITRIX_PUBLIC_HOST:-localhost}"
       KEEPPAM_K8S_API_ADDR: ":16443"
       KEEPPAM_K8S_PUBLIC_URL: "https://localhost:16443"
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
@@ -182,6 +186,9 @@ services:
       - sshhost:/var/lib/keeppam/ssh
     ports:
       - "2222:2222"
+      - "2323:2323"
+      - "2324:2324"
+      - "1081:1081"
     healthcheck:
       test: ["CMD", "/app/auth-server", "readyz"]
       interval: 5s
@@ -200,6 +207,10 @@ services:
       # Prod KMS: те же KEEPPAM_DATA_KEY_SOURCE / KEEPPAM_KMS_CIPHERTEXT, что у api (docs/kms.txt)
       KEEPPAM_SSH_ADDR: ":2222"
       KEEPPAM_SSH_HOST_KEY: "/var/lib/keeppam/ssh/hostkey"
+      KEEPPAM_TELNET_ADDR: ":2323"
+      KEEPPAM_TN3270_ADDR: ":2324"
+      KEEPPAM_CITRIX_SOCKS_ADDR: ":1081"
+      KEEPPAM_CITRIX_PUBLIC_HOST: "${KEEPPAM_CITRIX_PUBLIC_HOST:-localhost}"
       KEEPPAM_OPA_POLICY: "/etc/keeppam/policy.rego"
       KEEPPAM_GEOIP_DB: "/var/lib/keeppam/geoip/country-demo.mmdb"
       KEEPPAM_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32"

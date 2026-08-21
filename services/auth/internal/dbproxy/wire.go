@@ -2,6 +2,7 @@ package dbproxy
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/binary"
 	"errors"
@@ -89,6 +90,22 @@ func IssueWireToken(ctx context.Context, rdb *redis.Client, sessionID uuid.UUID,
 
 func ClearWireToken(ctx context.Context, rdb *redis.Client, sessionID uuid.UUID) {
 	_ = rdb.Del(ctx, wireTokenPrefix+sessionID.String()).Err()
+}
+
+// CheckWireToken returns true if token matches the Redis value for the session.
+func CheckWireToken(ctx context.Context, rdb *redis.Client, sessionID uuid.UUID, token string) bool {
+	if rdb == nil || token == "" {
+		return false
+	}
+	want, err := rdb.Get(ctx, wireTokenPrefix+sessionID.String()).Result()
+	if err != nil {
+		return false
+	}
+	a, b := []byte(want), []byte(token)
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
 func (g *WireGateway) ListenAndServe(ctx context.Context) error {

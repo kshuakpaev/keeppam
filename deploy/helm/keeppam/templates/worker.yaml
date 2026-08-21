@@ -36,6 +36,12 @@ spec:
           ports:
             - name: ssh
               containerPort: 2222
+            - name: telnet
+              containerPort: 2323
+            - name: tn3270
+              containerPort: 2324
+            - name: citrix
+              containerPort: 1081
             - name: health
               containerPort: 8080
           env:
@@ -45,6 +51,12 @@ spec:
               value: ":8080"
             - name: KEEPPAM_SSH_ADDR
               value: ":2222"
+            - name: KEEPPAM_TELNET_ADDR
+              value: ":2323"
+            - name: KEEPPAM_TN3270_ADDR
+              value: ":2324"
+            - name: KEEPPAM_CITRIX_SOCKS_ADDR
+              value: ":1081"
             - name: KEEPPAM_SSH_HOST_KEY
               value: /var/lib/keeppam/ssh/hostkey
             - name: KEEPPAM_DRAIN_TIMEOUT

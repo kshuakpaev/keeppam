@@ -6,7 +6,7 @@ import { useI18n } from "../i18n";
 import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
 
@@ -270,6 +270,46 @@ export function AssetEditPage() {
             `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`,
           );
         }
+      }
+      if (asset.protocol === "telnet" && sess.wire_token) {
+        setMsg(
+          `Telnet wire: telnet PAM ${sess.wire_addr || ":2323"} — login=${sess.wire_user || sess.id} password=${sess.wire_token}`,
+        );
+      }
+      if (asset.protocol === "tn3270" && sess.wire_token) {
+        sessionStorage.setItem(
+          `kp_wire_${sess.id}`,
+          JSON.stringify({
+            token: sess.wire_token,
+            addr: sess.wire_addr || ":2324",
+            user: sess.wire_user || sess.id,
+          }),
+        );
+        setMsg(
+          `TN3270: x3270 PAM ${sess.wire_addr || ":2324"} — UUID=${sess.wire_user || sess.id} token=${sess.wire_token}`,
+        );
+      }
+      if (asset.protocol === "citrix" && (sess.citrix_ica || sess.wire_token)) {
+        sessionStorage.setItem(
+          `kp_wire_${sess.id}`,
+          JSON.stringify({
+            token: sess.wire_token,
+            addr: sess.wire_addr || ":1081",
+            user: sess.wire_user || sess.id,
+            ica: sess.citrix_ica,
+            filename: sess.citrix_filename,
+          }),
+        );
+        if (sess.citrix_ica) {
+          const blob = new Blob([sess.citrix_ica], { type: "application/x-ica" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = sess.citrix_filename || `keeppam-${sess.id.slice(0, 8)}.ica`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        setMsg(sess.wire_hint || `Citrix SOCKS ${sess.wire_addr || ":1081"}`);
       }
       if (asset.protocol === "rdp" && sess.rdp_file) {
         const blob = new Blob([sess.rdp_file], { type: "application/x-rdp" });
@@ -1165,7 +1205,7 @@ export function AssetEditPage() {
         <p className="muted" style={{ marginTop: 0 }}>
           Для GSSAPI: host/fqdn или fqdn. Пусто = hostname актива / address.
         </p>
-        <label>Кодировка терминала (SSH)</label>
+        <label>Кодировка терминала (SSH/Telnet)</label>
         <select
           value={form.terminal_charset || "utf-8"}
           onChange={(e) => setForm({ ...form, terminal_charset: e.target.value })}
@@ -1583,15 +1623,21 @@ export function AssetEditPage() {
                   <div className="row" style={{ flexWrap: "wrap" }}>
                     {canConnect &&
                       (asset.protocol === "ssh" ||
+                        asset.protocol === "telnet" ||
+                        asset.protocol === "tn3270" ||
+                        asset.protocol === "citrix" ||
                         asset.protocol === "rdp" ||
                         asset.protocol === "vnc" ||
                         asset.protocol === "postgres" ||
                         asset.protocol === "mysql" ||
+                        asset.protocol === "mssql" ||
                         asset.protocol === "https" ||
                         asset.protocol === "kubectl") &&
                       asset.status === "active" &&
                       acc.status === "active" &&
                       (acc.has_secret ||
+                        asset.protocol === "tn3270" ||
+                        asset.protocol === "citrix" ||
                         (asset.protocol === "https" && appForm.recording_mode === "isolated")) && (
                         <>
                           {asset.protocol === "https" ? (

@@ -2265,6 +2265,8 @@ export type PamSession = {
   wire_addr?: string;
   wire_user?: string;
   wire_hint?: string;
+  citrix_ica?: string;
+  citrix_filename?: string;
   rdp_token?: string;
   rdp_addr?: string;
   rdp_port?: number;

@@ -1,0 +1,41 @@
+# KeepPAM: Citrix ICA via SOCKS (T-33 MVP / КП-3.3)
+
+MVP как у One Identity SPS «SOCKS mode» и формулировки main22 («SOCKS proxy»): клиент Workspace
+ходит на VDA через SOCKS5 KeepPAM. Полный ICA/CGP terminate + STA + HDX recording — **отдельный SOW/OEM**.
+
+## Как пользоваться
+
+1. Актив `protocol=citrix`, `address` = VDA/XenApp, порт обычно `1494` (CGP `2598` разрешён автоматически).
+2. Env worker/API:
+   - `KEEPPAM_CITRIX_SOCKS_ADDR=:1081`
+   - `KEEPPAM_CITRIX_PUBLIC_HOST=pam.example.com` (попадает в `.ica` ProxyHost)
+3. Create session → UI скачивает `.ica` (`ProxyType=Socks`, user=session UUID, password=wire token).
+4. Открыть `.ica` в Citrix Workspace / Receiver.
+
+## Что делает proxy
+
+| Шаг | Поведение |
+|-----|-----------|
+| Auth | SOCKS5 username/password = session UUID + wire token |
+| Allowlist | CONNECT только на `asset.address|hostname` порты `port` (ICA) и `2598` (CGP) |
+| Relay | transparent TCP copy |
+| Audit | `session.started` / `citrix_connect` event; JSONL connect log |
+| Recording screen | **нет** (нет HDX decode) |
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| SOCKS на worker | `KEEPPAM_CITRIX_SOCKS_ADDR` default `:1081` |
+| Цель ICA | `assets.port` default 1494 |
+| Цель CGP | 2598 |
+
+## Ограничения (явно в КП как C / SOW)
+
+- Нет terminate ICA/CGP на шлюзе (нет inject vault в сессию Citrix).
+- Нет STA ticket validation / StoreFront broker integration.
+- Нет SOCKS→TLS wrap ICA, EDT/UDP, Framehawk.
+- Нет записи экрана / OCR / replay графики.
+- XenApp 6.5 / XenDesktop 7.x «как Fudo» — только после OEM модуля.
+
+Миграция `091_citrix.sql`. Пакеты `internal/citrix`, `internal/citrixgw`.

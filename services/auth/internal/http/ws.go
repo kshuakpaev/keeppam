@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	citrixica "github.com/keeppam/auth/internal/citrix"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
@@ -21,6 +25,7 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
+	"github.com/keeppam/auth/internal/telnet"
 	"github.com/keeppam/auth/internal/termcharset"
 )
 
@@ -70,7 +75,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if creds.Asset.Protocol != "ssh" && creds.Asset.Protocol != "rdp" && creds.Asset.Protocol != "vnc" &&
 		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "mssql" && creds.Asset.Protocol != "https" &&
-		creds.Asset.Protocol != "kubectl" {
+		creds.Asset.Protocol != "kubectl" && creds.Asset.Protocol != "telnet" && creds.Asset.Protocol != "tn3270" &&
+		creds.Asset.Protocol != "citrix" {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
@@ -193,6 +199,55 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				dbHint = "(default)"
 			}
 			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "telnet" && s.cfg.TelnetAddr != "" && s.cfg.TelnetAddr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.TelnetAddr
+			out["wire_user"] = created.ID.String()
+			out["wire_hint"] = "telnet PAM host (wire_addr); login=session UUID, password=wire_token"
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "tn3270" && s.cfg.TN3270Addr != "" && s.cfg.TN3270Addr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.TN3270Addr
+			out["wire_user"] = created.ID.String()
+			out["wire_hint"] = "x3270/c3270 → PAM wire_addr; on KeepPAM login screen: Session UUID + wire_token"
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "citrix" && s.cfg.CitrixSocksAddr != "" && s.cfg.CitrixSocksAddr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			host := s.cfg.CitrixPublicHost
+			if host == "" || host == "off" {
+				host = "127.0.0.1"
+			}
+			socksPort := 1081
+			if _, p, err := net.SplitHostPort(normalizeAddr(s.cfg.CitrixSocksAddr)); err == nil {
+				if n, err := strconv.Atoi(p); err == nil && n > 0 {
+					socksPort = n
+				}
+			}
+			target := creds.Asset.Address
+			if target == "" {
+				target = creds.Asset.Hostname
+			}
+			ica := citrixica.BuildICAFile(citrixica.ICAFileOpts{
+				ProxyHost: host, ProxyPort: socksPort,
+				ProxyUser: created.ID.String(), ProxyPassword: tok,
+				TargetHost: target, TargetPort: creds.Asset.Port,
+				AppName: creds.Asset.Name, Title: creds.Asset.Name,
+			})
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.CitrixSocksAddr
+			out["wire_user"] = created.ID.String()
+			out["citrix_ica"] = ica
+			out["citrix_filename"] = fmt.Sprintf("keeppam-%s.ica", created.ID.String()[:8])
+			out["wire_hint"] = "Workspace: откройте .ica (SOCKS через KeepPAM). Полный ICA decode/STA — SOW."
 		}
 	}
 	if created.Protocol == "kubectl" && !created.WaitingSupervisor {
@@ -611,35 +666,71 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		rec.SetCharset(creds.Asset.TerminalCharset)
 	}
 
-	client, err := s.assets.DialSSH(r.Context(), creds)
-	if err != nil {
-		_ = rec.Close()
-		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
-		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
-		return
+	type ttyBridge interface {
+		Write([]byte) (int, error)
+		Resize(cols, rows int) error
+		CopyOutput(dst io.Writer) error
+		Close()
 	}
 
-	bypass := rbac.HasPermission(authSess.Permissions, "users.write")
-	var injectMu sync.Mutex
-	opts := sshcmd.Deps{Policy: s.policy, Ops: s.ops, Sessions: s.sessionsvc, Audit: s.audit}.BuildOpts(r.Context(), sshcmd.Meta{
-		UserID: authSess.UserID, AssetID: row.AssetID, SessionID: id,
-		Username: authSess.Username, AssetName: row.AssetName, IP: s.clientIP(r),
-		Roles: authSess.Roles, Bypass: bypass, BreakGlass: row.BreakGlass,
-		TicketID: row.TicketID, Snap: row.PolicySnapshot,
-		Inject: func(p []byte) {
-			injectMu.Lock()
-			defer injectMu.Unlock()
-			_ = conn.WriteMessage(websocket.BinaryMessage, p)
-		},
-	})
-	bridge, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
-	if err != nil {
-		_ = client.Close()
-		_ = rec.Close()
-		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
-		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		return
+	var bridge ttyBridge
+	if creds.Asset.Protocol == "telnet" || row.Protocol == "telnet" {
+		host := creds.Asset.Address
+		if host == "" {
+			host = creds.Asset.Hostname
+		}
+		up, err := telnet.Dial(r.Context(), host, creds.Asset.Port)
+		if err != nil {
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+			return
+		}
+		tb, err := telnet.StartBridge(up, cols, rows, rec, telnet.SessionOpts{
+			Username: creds.Account.Username, Password: creds.Secret,
+			InjectLogin: true, TermType: "xterm-256color",
+		})
+		if err != nil {
+			_ = up.Close()
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			return
+		}
+		bridge = tb
+	} else {
+		client, err := s.assets.DialSSH(r.Context(), creds)
+		if err != nil {
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+			return
+		}
+
+		bypass := rbac.HasPermission(authSess.Permissions, "users.write")
+		var injectMu sync.Mutex
+		opts := sshcmd.Deps{Policy: s.policy, Ops: s.ops, Sessions: s.sessionsvc, Audit: s.audit}.BuildOpts(r.Context(), sshcmd.Meta{
+			UserID: authSess.UserID, AssetID: row.AssetID, SessionID: id,
+			Username: authSess.Username, AssetName: row.AssetName, IP: s.clientIP(r),
+			Roles: authSess.Roles, Bypass: bypass, BreakGlass: row.BreakGlass,
+			TicketID: row.TicketID, Snap: row.PolicySnapshot,
+			Inject: func(p []byte) {
+				injectMu.Lock()
+				defer injectMu.Unlock()
+				_ = conn.WriteMessage(websocket.BinaryMessage, p)
+			},
+		})
+		sb, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
+		if err != nil {
+			_ = client.Close()
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			return
+		}
+		bridge = sb
 	}
 	defer bridge.Close()
 
@@ -735,6 +826,21 @@ func parseInt(s string) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	return n, nil
+}
+
+// normalizeAddr ensures host:port form for net.SplitHostPort (":1081" → "0.0.0.0:1081").
+func normalizeAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return addr
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "0.0.0.0" + addr
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return net.JoinHostPort(addr, "1081")
+	}
+	return addr
 }
 
 func snapPtr(sn policy.Snapshot) *policy.Snapshot {

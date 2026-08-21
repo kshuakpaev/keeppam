@@ -44,10 +44,14 @@
 
 ## Фаза КП-3 — только SOW / партнёр
 
-- Citrix ICA, TN3270, Telnet
-- Полный классификатор DLP / NLP
-- NAC-клиент
-- Qualified eIDAS / ФСТЭК
+| # | Функция | main22 | Статус |
+|---|---------|--------|--------|
+| 3.1 | **Telnet** tty proxy + charset + wire `:2323` | п.47 | ✓ `docs/telnet.txt` |
+| 3.2 | **TN3270** negotiate + login screen + bridge `:2324` | п.47 | ✓ `docs/tn3270.txt` |
+| 3.3 | **Citrix** SOCKS5 + `.ica` rewrite `:1081` | п.42 | ✓ MVP `docs/citrix-socks.txt` (HDX/STA — SOW) |
+| 3.4 | Полный классификатор DLP / NLP | — | SOW |
+| 3.5 | NAC-клиент | — | партнёр |
+| 3.6 | Qualified eIDAS / ФСТЭК | — | партнёр |
 
 ## Что НЕ делать, если КП = пилот mid-market
 
@@ -55,7 +59,8 @@
 - OpenSearch prod 3-node (если не в контракте SIEM)
 - PAdES qualified / eIDAS
 - Shell AST heredoc
+- Citrix HDX decode / STA / StoreFront broker (нужен OEM)
 
 ## Следующий шаг реализации
 
-Фаза КП-2 закрыта. T-09 / T-20 / T-42 / T-43 / T-50 / T-52 — есть. КП-3 (Citrix/TN3270/…) — только SOW.
+КП-3.1–3.3 протокольные MVP закрыты. Дальше: полировка acceptance / OEM Citrix HDX, или NLP/NAC по SOW.

@@ -173,6 +173,12 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if in.Protocol == "kubectl" {
 		recPath = filepath.Join(s.recordingsDir, "k8s", id.String()+".jsonl")
 	}
+	if in.Protocol == "tn3270" {
+		recPath = filepath.Join(s.recordingsDir, "tn3270", id.String()+".jsonl")
+	}
+	if in.Protocol == "citrix" {
+		recPath = filepath.Join(s.recordingsDir, "citrix", id.String()+".jsonl")
+	}
 	dbPriv := "readonly"
 	if in.Protocol == "postgres" || in.Protocol == "mysql" {
 		if in.DBPrivilege == "readwrite" {

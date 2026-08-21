@@ -1058,6 +1058,12 @@ func defaultPort(protocol string) int {
 		return 1433
 	case "kubectl":
 		return 6443
+	case "telnet":
+		return 23
+	case "tn3270":
+		return 23
+	case "citrix":
+		return 1494
 	default:
 		return 22
 	}

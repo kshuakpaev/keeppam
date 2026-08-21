@@ -4,7 +4,7 @@ import { api, hasPerm, type Asset } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 
 export function AssetsPage() {

@@ -56,6 +56,9 @@ import (
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/telnetgw"
+	"github.com/keeppam/auth/internal/tn3270gw"
+	"github.com/keeppam/auth/internal/citrixgw"
 	"github.com/keeppam/auth/internal/users"
 )
 
@@ -555,6 +558,39 @@ func main() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := sshGw.ListenAndServe(); err != nil {
 				slog.Error("ssh gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.TelnetAddr != "" && cfg.TelnetAddr != "off" {
+		tnGw := telnetgw.New(cfg.TelnetAddr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("telnet worker starting", "addr", cfg.TelnetAddr, "mode", cfg.Mode)
+			if err := tnGw.ListenAndServe(runCtx); err != nil {
+				slog.Error("telnet gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.TN3270Addr != "" && cfg.TN3270Addr != "off" {
+		t3Gw := tn3270gw.New(cfg.TN3270Addr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("tn3270 worker starting", "addr", cfg.TN3270Addr, "mode", cfg.Mode)
+			if err := t3Gw.ListenAndServe(runCtx); err != nil {
+				slog.Error("tn3270 gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.CitrixSocksAddr != "" && cfg.CitrixSocksAddr != "off" {
+		cxGw := citrixgw.New(cfg.CitrixSocksAddr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("citrix socks starting", "addr", cfg.CitrixSocksAddr, "mode", cfg.Mode)
+			if err := cxGw.ListenAndServe(runCtx); err != nil {
+				slog.Error("citrix socks", "err", err)
 				os.Exit(1)
 			}
 		}()

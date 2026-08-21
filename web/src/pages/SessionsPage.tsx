@@ -248,6 +248,9 @@ export function SessionsPage() {
               <select value={eventProtocol} onChange={(e) => { setEventProtocol(e.target.value); setOffset(0); }}>
                 <option value="">{t("common.all")}</option>
                 <option value="ssh">ssh</option>
+                <option value="telnet">telnet</option>
+                <option value="tn3270">tn3270</option>
+                <option value="citrix">citrix</option>
                 <option value="rdp">rdp</option>
                 <option value="vnc">vnc</option>
                 <option value="postgres">postgres</option>
@@ -281,6 +284,9 @@ export function SessionsPage() {
             <select value={protocol} onChange={(e) => { setProtocol(e.target.value); setOffset(0); }}>
               <option value="">{t("common.all")}</option>
               <option value="ssh">ssh</option>
+              <option value="telnet">telnet</option>
+              <option value="tn3270">tn3270</option>
+              <option value="citrix">citrix</option>
               <option value="rdp">rdp</option>
               <option value="vnc">vnc</option>
               <option value="postgres">postgres</option>

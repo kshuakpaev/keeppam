@@ -33,6 +33,10 @@ type Config struct {
 	S3ObjectLockDays       int
 	SSHAddr                string
 	SSHHostKeyPath         string
+	TelnetAddr             string // native telnet gateway; empty/off = disabled
+	TN3270Addr             string // native TN3270 gateway; empty/off = disabled
+	CitrixSocksAddr        string // SOCKS5 for Citrix ICA; empty/off = disabled
+	CitrixPublicHost       string // hostname in .ica ProxyHost; empty = localhost
 	Mode                   string // all | api | ssh
 	GuacdAddr              string
 	GuacencURL             string
@@ -107,6 +111,10 @@ func Load() (Config, error) {
 		S3ObjectLockDays:       intEnv("KEEPPAM_S3_OBJECT_LOCK_DAYS", 90),
 		SSHAddr:                env("KEEPPAM_SSH_ADDR", ":2222"),
 		SSHHostKeyPath:         env("KEEPPAM_SSH_HOST_KEY", "/tmp/keeppam-ssh-hostkey"),
+		TelnetAddr:             env("KEEPPAM_TELNET_ADDR", ":2323"),
+		TN3270Addr:             env("KEEPPAM_TN3270_ADDR", ":2324"),
+		CitrixSocksAddr:        env("KEEPPAM_CITRIX_SOCKS_ADDR", ":1081"),
+		CitrixPublicHost:       env("KEEPPAM_CITRIX_PUBLIC_HOST", ""),
 		Mode:                   env("KEEPPAM_MODE", "all"),
 		GuacdAddr:              env("KEEPPAM_GUACD_ADDR", "127.0.0.1:4822"),
 		GuacencURL:             env("KEEPPAM_GUACENC_URL", ""),

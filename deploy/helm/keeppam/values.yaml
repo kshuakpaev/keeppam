@@ -23,6 +23,12 @@ service:
   worker:
     type: LoadBalancer
     port: 2222
+  telnet:
+    port: 2323
+  tn3270:
+    port: 2324
+  citrix:
+    port: 1081
   web:
     type: ClusterIP
     port: 80
