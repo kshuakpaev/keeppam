@@ -1,0 +1,43 @@
+# KeepPAM branded image names (T-03). Applied when KEEPPAM_BRAND!=0 (default on install/upgrade).
+# Requires scripts/keeppam-retag.sh after docker load / local build.
+services:
+  postgres:
+    image: keeppam-db:16-alpine
+  redis:
+    image: keeppam-cache:7-alpine
+  api:
+    image: keeppam-api:latest
+  api-b:
+    image: keeppam-api:latest
+  session-worker:
+    image: keeppam-api:latest
+  session-worker-b:
+    image: keeppam-api:latest
+  guacd:
+    image: keeppam-session-gateway:1.5.5
+  demo-postgres:
+    image: keeppam-db:16-alpine
+  prometheus:
+    image: keeppam-metrics:v2.54.1
+  alertmanager:
+    image: keeppam-alertmanager:v0.27.0
+  otel-collector:
+    image: keeppam-otel-collector:0.109.0
+  tempo:
+    image: keeppam-tempo:2.6.1
+  nats:
+    image: keeppam-nats:2.10-alpine
+  opensearch:
+    image: keeppam-search:2.18.0
+  opensearch-init:
+    image: keeppam-curl:8.5.0
+  opensearch-dashboards:
+    image: keeppam-search-ui:2.18.0
+  opensearch-dashboards-init:
+    image: keeppam-curl:8.5.0
+  grafana:
+    image: keeppam-grafana:11.4.0
+  edge:
+    image: keeppam-edge:2.9-alpine
+  postgres-replica:
+    image: keeppam-db:16-alpine

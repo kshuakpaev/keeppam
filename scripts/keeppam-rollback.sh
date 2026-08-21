@@ -23,6 +23,10 @@ while read -r img id; do
   echo "  $img <- $id"
 done < "$STATE"
 
+KEEPPAM_BRAND="${KEEPPAM_BRAND:-1}"
+export KEEPPAM_BRAND
+keeppam_retag
+
 echo "== compose up --pull never --no-build =="
 keeppam_compose up -d --pull never --no-build
 

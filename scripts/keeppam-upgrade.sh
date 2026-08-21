@@ -48,25 +48,21 @@ if [[ -z "${KEEPPAM_OBS:-}" ]]; then
     KEEPPAM_OBS=0
   fi
 fi
+KEEPPAM_BRAND="${KEEPPAM_BRAND:-1}"
+export KEEPPAM_OBS KEEPPAM_BRAND
 
 echo "== verify checksums =="
 ( cd "$DIR" && sha256sum -c SHA256SUMS )
 
 echo "== snapshot running image ids for rollback =="
 mkdir -p "$(dirname "$STATE")"
-: > "$STATE"
-if [[ -f "$DIR/images.txt" ]]; then
-  while read -r img; do
-    [[ -z "$img" ]] && continue
-    if id="$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null)"; then
-      echo "$img $id" >> "$STATE"
-    fi
-  done < "$DIR/images.txt"
-fi
+keeppam_snapshot_images "$STATE" "$DIR/images.txt"
 echo "state=$STATE"
 
 echo "== docker load (no registry) =="
 docker load -i "$DIR/images.tar"
+
+keeppam_retag
 
 echo "== backup DB + recordings =="
 "$ROOT/scripts/backup.sh" "$ROOT/backups" || echo "WARN: backup.sh failed; continue at your risk" >&2

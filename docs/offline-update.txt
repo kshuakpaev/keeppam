@@ -46,6 +46,10 @@ KEEPPAM_HA=3 ./scripts/keeppam-upgrade.sh /path/to/bundle.tar.gz   # 3+2
 
 `--pull never` — compose **не ходит** в registry.
 
+После `docker load` скрипты делают **retag** upstream → `keeppam-*` и поднимают
+стек с `deploy/compose.branded.yml` (`KEEPPAM_BRAND=1`, default). Подробно: `docs/runtime-brand.txt`.
+Локальная разработка без brand: `KEEPPAM_BRAND=0`.
+
 Профиль `obs` (Prometheus/Grafana/OpenSearch): бандл `SET=full` включает его сам; иначе `KEEPPAM_OBS=1`. Core-бандл не требует этих образов.
 
 Первичная установка (не только update): `docs/install.txt`.

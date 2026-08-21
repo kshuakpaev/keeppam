@@ -52,14 +52,16 @@ cp "$ROOT/scripts/keeppam-compose.inc.sh" \
   "$ROOT/scripts/keeppam-install.sh" \
   "$ROOT/scripts/keeppam-upgrade.sh" \
   "$ROOT/scripts/keeppam-rollback.sh" \
+  "$ROOT/scripts/keeppam-retag.sh" \
   "$ROOT/scripts/keeppam-images.sh" \
   "$ROOT/scripts/backup.sh" \
   "$ROOT/scripts/restore.sh" \
   "$STAGE/scripts/"
 chmod +x "$STAGE/scripts/"*.sh
-cp "$ROOT/docs/offline-update.txt" "$ROOT/docs/install.txt" "$ROOT/docs/demo-45min.txt" "$STAGE/docs/"
+cp "$ROOT/docs/offline-update.txt" "$ROOT/docs/install.txt" "$ROOT/docs/demo-45min.txt" "$ROOT/docs/runtime-brand.txt" "$STAGE/docs/"
 cp -a "$ROOT/services/auth/migrations" "$STAGE/services/auth/"
 cp "$ROOT/deploy/docker-compose.yml" "$ROOT/deploy/compose.ha.yml" "$ROOT/deploy/compose.ha3.yml" \
+  "$ROOT/deploy/compose.branded.yml" "$ROOT/deploy/image-brand-map.txt" \
   "$ROOT/deploy/.env.example" "$ROOT/deploy/images-core.txt" "$ROOT/deploy/images-full.txt" \
   "$STAGE/deploy/"
 for d in opa geoip demo-postgres demo-ssh prometheus grafana otel-collector tempo alertmanager opensearch ha pades; do

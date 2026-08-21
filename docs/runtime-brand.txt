@@ -1,0 +1,46 @@
+# KeepPAM: брендированный runtime (T-03)
+
+Требование «без ПО других производителей» закрывается как **единый дистрибутив KeepPAM**:
+сторонние бинарники входят в бандл как KeepPAM Session Gateway / Search / OCR / …,
+а на площадке compose использует теги `keeppam-*` (не `guacamole/guacd`, не `opensearchproject/…`).
+
+Исходный код guacd / OpenSearch / Tesseract **не переписывается** — см. `NOTICE`.
+
+## Как работает
+
+| Артефакт | Назначение |
+|----------|------------|
+| `deploy/image-brand-map.txt` | upstream → `keeppam-*` |
+| `scripts/keeppam-retag.sh` | `docker tag` после `docker load` / локальной сборки |
+| `deploy/compose.branded.yml` | overlay имён образов |
+| `KEEPPAM_BRAND` | `1` (default в install/upgrade) — brand on; `0` — upstream-имена для `make up` |
+
+`keeppam-install.sh` / `keeppam-upgrade.sh` / `keeppam-rollback.sh`: load → retag → `compose … -f compose.branded.yml … --pull never`.
+
+Локальная разработка без brand:
+
+```bash
+KEEPPAM_BRAND=0 docker compose -f deploy/docker-compose.yml up -d
+# или после make up:
+./scripts/keeppam-retag.sh   # опционально создать keeppam-* aliases
+```
+
+## Имена (фрагмент)
+
+| KeepPAM tag | Bundled component |
+|-------------|-------------------|
+| `keeppam-session-gateway` | Apache Guacamole guacd |
+| `keeppam-search` / `keeppam-search-ui` | OpenSearch + Dashboards |
+| `keeppam-db` / `keeppam-cache` | PostgreSQL / Redis |
+| `keeppam-api` | first-party API/worker (`deploy-api`) |
+| `keeppam-guacenc` | OCR helper (уже first-party) |
+| `keeppam-edge` | HAProxy (HA) |
+
+Полный map — `deploy/image-brand-map.txt`.
+
+## DoD
+
+- Offline install/upgrade не ходит в registry (`--pull never`).
+- `docker compose … config` (с brand) показывает `keeppam-*` для runtime-сервисов.
+- `NOTICE` перечисляет bundled components.
+- Пересборка guacd из исходников под своим Dockerfile — не этот срез.

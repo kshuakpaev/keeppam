@@ -1,19 +1,21 @@
 KeepPAM bundled runtime (on-prem)
 
-This distribution may include third-party components as KeepPAM runtime,
-not as a separate vendor product the customer must license from us:
+This distribution ships third-party components as KeepPAM runtime
+(not as separate vendor products the customer must license from us):
 
-- PostgreSQL (metadata)
-- Redis (sessions / pubsub)
-- Apache Guacamole guacd (KeepPAM Session Gateway)
-- Tesseract OCR via guacenc helper (KeepPAM OCR)
-- OpenSearch + Dashboards (KeepPAM Search, optional stand)
+- PostgreSQL          → keeppam-db              (metadata)
+- Redis               → keeppam-cache           (sessions / pubsub)
+- Apache Guacamole guacd → keeppam-session-gateway (KeepPAM Session Gateway)
+- Tesseract OCR via guacenc → keeppam-guacenc   (KeepPAM OCR)
+- OpenSearch + Dashboards → keeppam-search / keeppam-search-ui (KeepPAM Search, optional)
 - Prometheus, Grafana, Tempo, OpenTelemetry Collector (observability stand)
-- HAProxy (HA edge, optional)
-- NATS (optional SIEM transport)
-- Alpine / curl images (ops helpers)
+- HAProxy             → keeppam-edge            (HA edge, optional)
+- NATS                → keeppam-nats            (optional SIEM transport)
+- Alpine / curl       → keeppam-helper-alpine / keeppam-curl (ops helpers)
 
-First-party images: deploy-api / keeppam-web / keeppam-guacenc /
-keeppam-firewall-probe / keeppam-iso-browser.
+First-party images: keeppam-api (alias of deploy-api), keeppam-web,
+keeppam-guacenc, keeppam-firewall-probe, keeppam-iso-browser, keeppam-demo-ssh.
 
-See docs/offline-update.txt and docs/kp.txt (T-03).
+Install/upgrade retags upstream names to keeppam-* and runs compose with
+deploy/compose.branded.yml (KEEPPAM_BRAND=1). See docs/runtime-brand.txt,
+docs/offline-update.txt, docs/kp.txt (T-03).

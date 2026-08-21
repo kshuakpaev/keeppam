@@ -37,6 +37,7 @@ if [[ -n "$BUNDLE" ]]; then
   fi
   if [[ -z "${KEEPPAM_OBS:-}" ]] && grep -q '^set=full' "$DIR/MANIFEST.txt" 2>/dev/null; then
     KEEPPAM_OBS=1
+    export KEEPPAM_OBS
   fi
   # Bundle may be a full tree (deploy/ + scripts/) — prefer it as ROOT.
   if [[ -f "$DIR/deploy/docker-compose.yml" ]]; then
@@ -52,10 +53,13 @@ elif [[ -f "$ROOT/images.tar" ]]; then
   docker load -i "$ROOT/images.tar"
   if [[ -z "${KEEPPAM_OBS:-}" ]] && grep -q '^set=full' "$ROOT/MANIFEST.txt" 2>/dev/null; then
     KEEPPAM_OBS=1
+    export KEEPPAM_OBS
   fi
 fi
 
 KEEPPAM_OBS="${KEEPPAM_OBS:-0}"
+KEEPPAM_BRAND="${KEEPPAM_BRAND:-1}"
+export KEEPPAM_OBS KEEPPAM_BRAND
 
 if [[ ! -f "$ROOT/deploy/docker-compose.yml" ]]; then
   echo "no deploy/docker-compose.yml under $ROOT" >&2
@@ -67,9 +71,15 @@ if [[ ! -f "$ROOT/deploy/.env" && -f "$ROOT/deploy/.env.example" ]]; then
   echo "wrote $ROOT/deploy/.env from .env.example — change the bootstrap password"
 fi
 
+keeppam_retag
+
+API_IMG="deploy-api:latest"
+if docker image inspect keeppam-api:latest >/dev/null 2>&1; then
+  API_IMG="keeppam-api:latest"
+fi
 if [[ ! -f "$ROOT/deploy/auth-server" ]]; then
-  echo "== extract auth-server from deploy-api:latest =="
-  cid="$(docker create deploy-api:latest)"
+  echo "== extract auth-server from $API_IMG =="
+  cid="$(docker create "$API_IMG")"
   docker cp "$cid:/app/auth-server" "$ROOT/deploy/auth-server"
   docker rm "$cid" >/dev/null
   chmod +x "$ROOT/deploy/auth-server"

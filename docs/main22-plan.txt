@@ -36,8 +36,8 @@ P4 протоколы/AD ✓    →  P5 appliance / UEBA / Telnet·TN3270·Citri
 
 | Статус | Кол-во (ориентир) | Примеры |
 |--------|-------------------|---------|
-| есть / есть (срез) | ~46 | T-04…06, T-08–16, T-18–35*, T-37–52 (T-48 PAP+x509 map) |
-| частично | 2 | T-03 NOTICE/upstream tags; T-07 multi-site |
+| есть / есть (срез) | ~47 | T-03 brand, T-04…06, T-08–16, T-18–35*, T-37–52 |
+| частично | 1 | T-07 multi-site async |
 | нет (top-level) | 0 | дыры внутри срезов / SOW (Oracle, HDX, geo…) |
 | не код | 2 | T-53 контракт; T-54 поддержка 12 мес |
 
@@ -74,9 +74,10 @@ P4 протоколы/AD ✓    →  P5 appliance / UEBA / Telnet·TN3270·Citri
 **DoD:** стенд VMware + стенд Hyper-V поднимают control+worker из одного qcow2.
 
 ### T-03. Без ПО других производителей
-**Статус: частично** (`NOTICE` + install/upgrade `--pull never`; образы guacd/OS остаются upstream tag).
-**План (P0):** в КП и `NOTICE` перечислить bundled components; брендировать как KeepPAM Session Gateway / Search / OCR. Не переписывать guacd.
-**DoD P0:** `keeppam-install.sh` / `keeppam-upgrade.sh` не ходят в registry (`--pull never`). OVA и перетегирование всех upstream-имён — не этот срез.
+**Статус: есть (срез)** (`NOTICE` + install/upgrade `--pull never` + brand retag `keeppam-*`).
+**Реализация:** `docs/runtime-brand.txt`, `deploy/image-brand-map.txt`, `deploy/compose.branded.yml`, `scripts/keeppam-retag.sh`; `KEEPPAM_BRAND=1` в install/upgrade.
+**DoD P0:** `keeppam-install.sh` / `keeppam-upgrade.sh` не ходят в registry; на площадке runtime виден как KeepPAM Session Gateway / Search / …  
+**Остаток:** пересборка guacd/OS из исходников под своим Dockerfile (не требуется для КП mid-market).
 
 ### T-04. Без агентов
 **Статус: есть.** SSH/RDP/VNC/HTTP/SQL через шлюз.

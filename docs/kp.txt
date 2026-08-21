@@ -52,7 +52,7 @@
 Уже в коде как **срез** — в КП указать ограничения DoD:
 
 - Virtual Appliance: pipeline Packer→OVA/VHDX; готовый образ собирается у Исполнителя/на стенде KVM.
-- «Без ПО других производителей»: единый дистрибутив + NOTICE; guacd/Tesseract/OpenSearch — **bundled runtime**.
+- «Без ПО других производителей»: единый дистрибутив + NOTICE + brand `keeppam-*` (`docs/runtime-brand.txt`); guacd/Tesseract/OpenSearch — **bundled runtime**.
 - MSSQL: TDS wire без client→PAM TLS / SSPI / RPC.
 - Discovery: нет WinRM / локальный Windows SAM.
 - RDP clipboard/drive/printer — только политикой (default off / DLP-strict).
@@ -75,7 +75,7 @@
 | Блок main22 | Уровень | Комментарий |
 |-------------|---------|-------------|
 | Virtual Appliance, VMware/Hyper-V | A/B | Pipeline ✓; готовый .ova — сборка на KVM |
-| Без ПО других производителей | B* | NOTICE + `--pull never`; disclose runtime |
+| Без ПО других производителей | A/B* | NOTICE + brand `keeppam-*` + `--pull never`; disclose runtime |
 | Без агентов | A | ✓ |
 | Трафик сессии, не граббинг | A | ✓; OCR — кадры, не full-video |
 | Scale / HA 2+2 / 3+2 | A | multi-site async — C |
