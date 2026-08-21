@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,12 +32,13 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
-	Email       *string   `json:"email"`
-	DisplayName *string   `json:"display_name"`
-	Status      *string   `json:"status"`
-	Roles       *[]string `json:"roles"`
-	Tags        *[]string `json:"tags"`
-	GroupIDs    *[]string `json:"group_ids"`
+	Email        *string   `json:"email"`
+	DisplayName  *string   `json:"display_name"`
+	Status       *string   `json:"status"`
+	Roles        *[]string `json:"roles"`
+	Tags         *[]string `json:"tags"`
+	GroupIDs     *[]string `json:"group_ids"`
+	X509Identity *string   `json:"x509_identity"`
 }
 
 type CreateResult struct {
@@ -113,6 +115,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 	}
 	if in.DisplayName != nil {
 		u.DisplayName = *in.DisplayName
+	}
+	if in.X509Identity != nil {
+		u.X509Identity = strings.TrimSpace(*in.X509Identity)
 	}
 	if in.Status != nil {
 		switch *in.Status {

@@ -131,6 +131,8 @@ export const catalog = {
   "login.samlBad": { ru: "SAML включён, но не настроен (IdP metadata / cert + SP key)", en: "SAML is enabled but not configured (IdP metadata / cert + SP key)" },
   "login.radius": { ru: "RADIUS", en: "RADIUS" },
   "login.radiusBad": { ru: "RADIUS включён, но нет сервера или shared secret", en: "RADIUS is enabled but host or shared secret is missing" },
+  "login.cert": { ru: "Войти по сертификату", en: "Sign in with certificate" },
+  "login.certBad": { ru: "Клиентский сертификат не предъявлен или не сопоставлен с пользователем", en: "Client certificate missing or not mapped to a user" },
 
   "setup.title": { ru: "Первичная настройка", en: "Initial setup" },
   "setup.lead": { ru: "Смена пароля и MFA (TOTP или Passkey) обязательны", en: "Password change and MFA (TOTP or Passkey) are required" },

@@ -20,6 +20,7 @@ export function LoginPage() {
   const [oidcReady, setOidcReady] = useState(false);
   const [samlReady, setSamlReady] = useState(false);
   const [radiusReady, setRadiusReady] = useState(false);
+  const [certLogin, setCertLogin] = useState(false);
   const [samlIdps, setSamlIdps] = useState<{ slug: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function LoginPage() {
         setOidcReady(m.oidc_ready);
         setSamlReady(!!m.saml_ready);
         setRadiusReady(!!m.radius_ready);
+        setCertLogin(!!m.cert_login);
         setSamlIdps(m.saml_idps || []);
       } catch {
         /* default local */
@@ -59,6 +61,25 @@ export function LoginPage() {
       nav(res.status === "must_setup" ? "/setup" : "/");
     } catch (err) {
       setError(te(err, "login.failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCertLogin() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api.loginCert();
+      if (res.status === "mfa_required" && res.challenge_token) {
+        setChallenge(res.challenge_token);
+        return;
+      }
+      if (res.user) setUser(res.user);
+      else setUser(await api.me());
+      nav(res.status === "must_setup" ? "/setup" : "/");
+    } catch (err) {
+      setError(te(err, "login.certBad"));
     } finally {
       setBusy(false);
     }
@@ -160,6 +181,13 @@ export function LoginPage() {
         )}
         {!challenge && mode === "radius" && !radiusReady && (
           <p className="error">{t("login.radiusBad")}</p>
+        )}
+        {!challenge && certLogin && (
+          <div style={{ marginBottom: "1rem" }}>
+            <button className="btn secondary" type="button" disabled={busy} onClick={() => void onCertLogin()}>
+              {t("login.cert")}
+            </button>
+          </div>
         )}
         {showPasswordForm && !challenge && (
           <form onSubmit={onLogin}>

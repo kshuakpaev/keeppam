@@ -19,43 +19,46 @@
 2. Сначала то, что видно в демо согласования и портала (T-16, T-15, T-23), затем HA/архив, затем протоколы.
 3. Третьесторонний runtime (guacd, Tesseract, OpenSearch) не выкидывать: в КП раскрыть как bundled runtime единого дистрибутива KeepPAM (T-03).
 4. Native RDP / clipboard / printers / drives (T-27, T-29) конфликтуют с DLP по умолчанию — включать только политикой, не «всегда on».
-5. Citrix ICA / TN3270 / Telnet (T-33) — отдельные модули session-worker, не расширение Guacamole «на глаз».
+5. Citrix HDX / TN3270 DBCS — SOW; в базе: Telnet, TN3270 MVP, Citrix SOCKS (не guac «на глаз»).
 6. Каждый пункт закрывается миграцией + API + UI + audit-событием + строкой в `docs/kp-acceptance.txt` (или приложении к акту).
 
-Порядок фаз:
+Порядок фаз (исторический; все закрыты для mid-market):
 
 ```
-P0 упаковка          →  P1 JIT/портал/4-eyes
-P2 запись файлов     →  P3 HA 2+2 / архив
-P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
+P0 упаковка ✓        →  P1 JIT/портал/4-eyes ✓
+P2 запись файлов ✓   →  P3 HA 2+2/3+2 / архив ✓
+P4 протоколы/AD ✓    →  P5 appliance / UEBA / Telnet·TN3270·Citrix SOCKS ✓
 ```
 
 ---
 
 ## 2. Сводка покрытия
 
-| Статус    | Кол-во | Примеры |
-|-----------|--------|---------|
-| есть      | 22     | T-04 агенты, T-06 2+2, T-14 offline, T-15 i18n, T-16 quorum, T-46 archive, T-48 RADIUS PAP |
-| частично  | 22     | T-01 compose, T-03 NOTICE, T-07 multi-site, T-48 RADIUS (без EAP/x509 map), T-10 OCR |
-| нет       | 5     | (остатки C без MVP) |
+| Статус | Кол-во (ориентир) | Примеры |
+|--------|-------------------|---------|
+| есть / есть (срез) | ~46 | T-04…06, T-08–16, T-18–35*, T-37–52 (T-48 PAP+x509 map) |
+| частично | 2 | T-03 NOTICE/upstream tags; T-07 multi-site |
+| нет (top-level) | 0 | дыры внутри срезов / SOW (Oracle, HDX, geo…) |
+| не код | 2 | T-53 контракт; T-54 поддержка 12 мес |
 
-Цель плана: **частично → есть** для всех пунктов уровня B; **нет → опция SOW** для уровня C.
+\* T-33/T-34: протокольные MVP (Telnet/TN3270/Citrix SOCKS/RemoteApp/MSSQL); хвосты HDX/STA — SOW.
+
+Цель: **частично → есть** для B, где возможно без OEM; **хвосты C → SOW**.
 
 ---
 
 ## 3. Фазы
 
-| Фаза | Срок     | Цель для ТЗ                         | Пункты |
-|------|----------|-------------------------------------|--------|
-| P0   | 2–3 нед. | Дистрибутив, offline update, демо   | T-01*, T-03, T-13, T-14, T-52* |
-| P1   | 8–12 нед.| Согласование и портал как в ТЗ      | T-15 ✓, T-16 ✓, T-23 ✓ |
-| P2   | 6–8 нед. | Файлы, метаданные, OCR, кодировки   | T-10, T-31, T-32, T-37, T-43, T-44 |
-| P3   | 8–12 нед.| HA, архив, RADIUS, scale            | T-06, T-07, T-18, T-19, T-46, T-48 |
-| P4   | 4–6 мес. | Протоколы и AD-sync                 | T-09, T-17, T-25, T-27, T-29, T-33*, T-35 |
-| P5   | 6–12 мес.| Appliance, 3+2, UEBA динамика       | T-01, T-02, T-33 Citrix, T-49–T-51 |
+| Фаза | Срок (исторический) | Цель | Статус |
+|------|---------------------|------|--------|
+| P0 | 2–3 нед. | Дистрибутив, offline, демо | ✓ |
+| P1 | 8–12 нед. | JIT/портал/4-eyes | ✓ |
+| P2 | 6–8 нед. | Файлы, OCR, charset, dynamic ACL | ✓ |
+| P3 | 8–12 нед. | HA 2+2/3+2, архив, RADIUS PAP + x509 map | ✓ (EAP — хвост C) |
+| P4 | — | AD sync, native RDP, MSSQL, RemoteApp | ✓ срезы |
+| P5 | — | OVA pipeline, UEBA mouse, Telnet/TN3270/Citrix SOCKS | ✓ MVP; HDX/geo — SOW |
 
-\* T-01 в P0 — только «единый дистрибутив compose/k8s», не OVA. T-52 — лицензионный счётчик активов, не юридическая лицензия.
+\* Исторически T-01 в P0 = compose; OVA pipeline закрыт в P5/КП-2.
 
 ---
 
@@ -270,10 +273,12 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** явный permission `sessions.stdin.read` vs metadata-only; проверка в API replay.
 
 ### T-48. Admin auth: AD, RADIUS, x509
-**Статус: частично** (RADIUS PAP консоль+SSH; AD/LDAP/SAML были; x509 = mTLS задел).
+**Статус: есть** (RADIUS PAP консоль+SSH; AD/LDAP/SAML были; x509 = mTLS + map CN/SAN→user).
 **Реализация RADIUS:** `docs/radius-auth.txt`, миграция `076`, Config mode `radius`.
+**Реализация x509 login:** `docs/x509-auth.txt`, миграция `093`, `POST /auth/login/cert`, поле пользователя `x509_identity`.
 **DoD RADIUS:** login по Access-Accept тестового сервера; Filter-Id → роль.
-**Остаток:** EAP/RadSec; map client cert CN → user (не только mTLS к API).
+**DoD x509:** client cert с CN/email → сессия (или MFA); несмапленный cert → отказ; аудит via=`x509`.
+**Остаток:** EAP/RadSec (вне mid-market).
 
 ### T-49. UEBA: нетипичное поведение, индекс риска
 **Статус: есть** — baseline 30д + keystroke post-session (`docs/ueba.txt`).
@@ -319,16 +324,18 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   │
   ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
   ├─ P3.2  SMB/NFS archive                               [T-46]  ✓
-  └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ RADIUS PAP
+  └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ PAP + cert→user
   │
   ├─ P4.1  MSSQL TDS                                     [T-33]  ✓ wire `:11433`
-  ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09 ✓, T-17, T-25]
-  └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27✓, T-29✓]
+  ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09✓, T-17✓, T-25✓]
+  └─ P4.3  RDP policy; native RDP; RemoteApp             [T-27✓, T-29✓, T-34✓]
   │
-  └─ P5    … Telnet✓; TN3270✓; Citrix SOCKS MVP✓; HDX/STA SOW [T-33*]
+  └─ P5    OVA pipeline✓; 3+2✓; Kerberos✓; UEBA✓; Telnet✓; TN3270✓; Citrix SOCKS✓; HDX/STA SOW
 ```
 
 Параллелить можно: P1.3 (i18n) с P1.1; P2.2 с P2.1; P3.3 с P3.2.
+
+**Очередь кода (mid-market):** закрыта. Остаток — sync КП-docs (этот файл / `kp.txt`) и SOW из §9.
 
 ---
 
@@ -355,14 +362,15 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
 
 | Риск | Решение |
 |------|---------|
-| Citrix ICA / TN3270 — годы у Fudo | SOW / OEM, не в критическом пути |
-| Native RDP vs DLP | два профиля политики, default deny clipboard |
+| Citrix HDX / STA — годы у Fudo | SOCKS MVP в базе; HDX — SOW / OEM |
+| TN3270 полный DBCS | MVP wire ✓; DBCS — SOW |
+| Native RDP vs DLP | два профиля политики, default deny clipboard; freerdp-proxy на площадке |
 | «Без чужого ПО» vs guacd | bundled runtime + NOTICE, не форк с нуля |
 | Метаданные процессов Windows без агента | не обещать; OCR/RAIL best-effort |
-| Split-brain паролей | fencing PG + force-rotate, не multi-master vault |
-| 3+2 как в T-52 | P5; в пилоте 2+2 (P3) с оговоркой в КП |
+| Split-brain паролей | fencing PG + force-rotate (`083`) |
+| 3+2 / multi-site | 3+2 compose/Helm ✓; geo async — SOW |
 
-Не делать в этом плане: полное live OCR, NAC, eIDAS, shell AST (см. `docs/main21.txt`).
+Не делать в базовом плане: полное live OCR, NAC, eIDAS, shell AST, Citrix HDX, Oracle sync (см. `docs/kp.txt` уровень C).
 
 ---
 

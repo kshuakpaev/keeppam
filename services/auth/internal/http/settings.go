@@ -20,7 +20,18 @@ func (s *Server) handleAuthMethods(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, m)
+	certReady := s.cfg.MTLSMode() != "off"
+	certPresented := r.TLS != nil && len(r.TLS.PeerCertificates) > 0
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":           m.Mode,
+		"oidc_ready":     m.OIDCReady,
+		"ldap_ready":     m.LDAPReady,
+		"saml_ready":     m.SAMLReady,
+		"saml_idps":      m.SAMLIdPs,
+		"radius_ready":   m.RADIUSReady,
+		"cert_login":     certReady,
+		"cert_presented": certPresented,
+	})
 }
 
 func (s *Server) handleGetAuthSettings(w http.ResponseWriter, r *http.Request) {

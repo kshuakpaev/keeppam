@@ -147,6 +147,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
+				r.Post("/login/cert", s.handleLoginCert)
 				r.Post("/mfa/verify", s.handleMFAVerify)
 				r.Post("/mfa/webauthn/begin", s.handleWebAuthnLoginBegin)
 				r.Post("/mfa/webauthn/finish", s.handleWebAuthnLoginFinish)
@@ -559,6 +560,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.auth.Login(r.Context(), body.Username, body.Password, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if res.SessionToken != "" {
+		if err := s.completeLogin(w, r, res.SessionToken); err != nil {
+			writeErr(w, http.StatusInternalServerError, "session error")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleLoginCert(w http.ResponseWriter, r *http.Request) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		writeErr(w, http.StatusUnauthorized, "client certificate required")
+		return
+	}
+	res, err := s.auth.LoginCert(r.Context(), r.TLS.PeerCertificates[0], s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return

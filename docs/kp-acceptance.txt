@@ -5,6 +5,7 @@
 ## 1. Identity и доступ
 
 - [ ] Вход local / LDAP / OIDC / SAML / RADIUS (минимум 2 источника из согласованных)
+- [ ] (опц.) Вход по client cert: CN/email → user (`docs/x509-auth.txt`), при включённом mTLS
 - [ ] MFA TOTP или WebAuthn обязателен для привилегированных ролей
 - [ ] JIT: заявка → согласование (этап manager/security **или** кворум N из M) → временный ACL → истечение binding
 - [ ] Четыре глаза: актив с `require_supervisor` — SSH/RDP не стартует без Authorize другого пользователя; deny/timeout 15 мин закрывает сессию

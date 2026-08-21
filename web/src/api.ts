@@ -10,6 +10,7 @@ export type User = {
   last_login_at?: string;
   created_at: string;
   updated_at: string;
+  x509_identity?: string;
   roles?: string[];
   groups?: string[];
   group_ids?: string[];
@@ -829,6 +830,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  loginCert: () =>
+    request<{
+      status: string;
+      challenge_token?: string;
+      user?: User;
+    }>("/api/v1/auth/login/cert", { method: "POST", body: "{}" }),
   verifyMfa: (challenge_token: string, code: string) =>
     request<{ status: string; user?: User }>("/api/v1/auth/mfa/verify", {
       method: "POST",
@@ -898,6 +905,8 @@ export const api = {
       ldap_ready: boolean;
       saml_ready: boolean;
       radius_ready?: boolean;
+      cert_login?: boolean;
+      cert_presented?: boolean;
       saml_idps?: { slug: string; name: string }[];
     }>("/api/v1/auth/methods"),
   listSAMLIdPs: () => request<{ idps: SAMLIdP[] }>("/api/v1/admin/settings/saml/idps"),
@@ -1083,6 +1092,7 @@ export const api = {
       roles?: string[];
       tags?: string[];
       group_ids?: string[];
+      x509_identity?: string;
     },
   ) =>
     request<User>(`/api/v1/admin/users/${id}`, {

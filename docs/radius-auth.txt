@@ -28,7 +28,7 @@
 
 FreeRADIUS/NPS: пользователь Accept → вход в портал; Reject → `invalid credentials`; аудит `user.login.failure` reason=`radius`.
 
-x509 client cert → user: по-прежнему mTLS (`docs` TLS), не этот срез.
+x509 client cert → user: `docs/x509-auth.txt` (`POST /auth/login/cert`, поле `x509_identity`).
 
 ## Вне scope
 

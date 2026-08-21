@@ -78,4 +78,5 @@ cat ~/KEEP-PAM-README.txt
 | Нет PDF | `compliance.read`; скачать всё равно JSON/CSV |
 | MFA блокирует seed | `ADMIN_TOTP=123456 ./scripts/demo-seed.sh` |
 
-Не в этом срезе: Citrix, TN3270, native RDP, полный OCR каждого кадра.
+Не в этом срезе: Citrix HDX/STA, TN3270 на мейнфрейме заказчика, native mstsc без RemoteApp seed, полный OCR каждого кадра.
+Опционально 1 мин: x509 login (`docs/x509-auth.txt`) — только если стенд с client CA.
