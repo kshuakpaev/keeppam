@@ -66,4 +66,7 @@
 Инженерная очередь mid-market **закрыта** (КП-0…3 + T-34 RemoteApp + T-48 x509 + T-03 brand).  
 `docs/kp.txt` / сводка `main22-plan` синхронизированы с фактом.
 
-Дальше только по запросу: **сохранить и запушить**, SOW (Citrix HDX, multi-site, Oracle, EAP…) или приёмка на стенде.
+Дальше только по запросу: **сохранить и запушить**, SOW (Citrix HDX, multi-site, Oracle, EAP…),  
+полный ручной прогон `docs/kp-acceptance.txt` или MR в GitLab.
+
+Авто-поднабор: `make acceptance-smoke` → `docs/kp-acceptance-lab.txt`.

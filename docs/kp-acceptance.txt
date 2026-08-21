@@ -2,6 +2,9 @@
 
 Использовать как приложение к контракту / акту внедрения. Все пункты — pass/fail на стенде Заказчика.
 
+Авто-поднабор (readyz, docs, порты, brand): `make acceptance-smoke` / `scripts/kp-acceptance-smoke.sh`.
+Пример прогона lab: `docs/kp-acceptance-lab.txt`.
+
 ## 1. Identity и доступ
 
 - [ ] Вход local / LDAP / OIDC / SAML / RADIUS (минимум 2 источника из согласованных)
