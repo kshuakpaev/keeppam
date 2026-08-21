@@ -70,3 +70,5 @@
 полный ручной прогон `docs/kp-acceptance.txt` или MR в GitLab.
 
 Авто-поднабор: `make acceptance-smoke` → `docs/kp-acceptance-lab.txt`.
+
+Merge Request (ветка `feature/jit-quorum` → `master`): создать/открыть в GitLab UI, если ещё нет.
