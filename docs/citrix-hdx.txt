@@ -7,38 +7,42 @@
 
 | Фаза | Содержание | Статус |
 |------|------------|--------|
-| **1** | Asset metadata (published app, StoreFront URL, STA URLs, transport); KeepPAM **STA ticket stub**; richer `.ica`; SOCKS bytes + disconnect events; `GET /api/v1/citrix/sta/{ticket}` | **есть (срез)** |
-| **2** | Реальный STA CGI / ticket redeem с Citrix Delivery Controller; StoreFront resource enumeration (read-only broker) | план |
+| **1** | Asset metadata; KeepPAM STA ticket; richer `.ica`; SOCKS bytes; JSON validate | **есть** |
+| **2** | CtxSta.dll CGI; probe внешних STA; StoreFront discovery + resources (read-only) | **есть** |
 | **3** | HDX/ICA **terminate** на шлюзе (OEM binary / partner stack) | OEM |
 | **4** | Запись экрана ICA → replay / forensic / OCR | OEM + storage |
 
 ## Phase 1 DoD
 
 - [x] Миграция `094_citrix_hdx.sql`
-- [x] Поля актива: `citrix_published_app`, `citrix_storefront_url`, `citrix_sta_urls`, `citrix_transport` (`socks` \| `hdx_pending`)
-- [x] При create session: STA ticket в Redis + в `.ica` (`STATicket` / `KeepPAMSTATicket`)
-- [x] `InitialProgram` / `LocHttpBrowserAddress` / `Username` в `.ica`
-- [x] SOCKS: события `citrix_connect` / `citrix_disconnect` + `bytes_up`/`bytes_down` в JSONL
-- [x] Validate: `GET /api/v1/citrix/sta/{ticket}`
-- [x] UI: поля Citrix на карточке актива
-- [x] Acceptance строка SOW
+- [x] Поля актива + STA ticket в `.ica` + JSONL bytes
+- [x] `GET /api/v1/citrix/sta/{ticket}`
+- [x] UI полей Citrix
+
+## Phase 2 DoD
+
+- [x] `GET /Scripts/CtxSta.dll?ticket=` и `/citrix/Scripts/CtxSta.dll?ticket=` → text/plain (совместимость Workspace)
+- [x] `POST /api/v1/admin/assets/{id}/citrix/sta/probe` — опрос внешних STA из `citrix_sta_urls`
+- [x] `GET /api/v1/admin/assets/{id}/citrix/discovery` — StoreFront discovery
+- [x] `GET /api/v1/admin/assets/{id}/citrix/resources` — enum published apps (Basic auth от учётки актива)
+- [x] Клиент `internal/citrix/storefront.go` + STA CGI helpers
+- [x] Docs / UI кнопка enum
 
 `citrix_transport=hdx_pending` — маркер «ждём OEM»; трафик по-прежнему SOCKS.
 
-## Phase 2+ (не этот срез)
+## Phase 3+ (OEM)
 
-- Полный CtxSta.dll protocol
-- StoreFront auth + launch ICA от SF
 - Decode HDX / CGP на KeepPAM, vault inject без SOCKS
 - Screen recording как у RDP `.guac`
+- Полный StoreFront launch ICA от SF (write path)
 
-## Acceptance (модуль)
+## Acceptance
 
-1. Актив citrix с published app → session → `.ica` содержит `InitialProgram` и `STATicket`.
-2. `GET /api/v1/citrix/sta/{ticket}` → 200 + session_id.
-3. Workspace через SOCKS → connect + disconnect в recording JSONL с байтами.
-4. (фаза 3+) StoreFront → HDX terminate → forensic hit по кадру — **OEM**.
+1. Session → `.ica` + STA ticket; `GET /Scripts/CtxSta.dll?ticket=…` → 200 text/plain.
+2. StoreFront URL на активе → `…/citrix/resources` возвращает список (или явная ошибка HTTP от SF).
+3. Workspace через SOCKS → connect/disconnect JSONL.
+4. (фаза 3+) HDX terminate → forensic — **OEM**.
 
 ## Связанные файлы
 
-`internal/citrix/{ica,sta,socks}.go`, `internal/citrixgw`, `docs/citrix-socks.txt`, `docs/sow-backlog.txt`.
+`internal/citrix/{ica,sta,sta_cgi,storefront,socks}.go`, `http/citrix_*.go`, `docs/citrix-socks.txt`, `docs/sow-backlog.txt`.

@@ -1241,6 +1241,28 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  citrixSFResources: (id: string, accountId?: string) =>
+    request<{
+      asset_id: string;
+      storefront: string;
+      count: number;
+      resources: {
+        id: string;
+        name: string;
+        path?: string;
+        launch_url?: string;
+        initial_program?: string;
+      }[];
+    }>(
+      `/api/v1/admin/assets/${id}/citrix/resources${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ""}`,
+    ),
+  citrixSFDiscovery: (id: string) =>
+    request<{ asset_id: string; discovery: unknown }>(`/api/v1/admin/assets/${id}/citrix/discovery`),
+  citrixSTAProbe: (id: string, ticket: string) =>
+    request<{ ok: boolean; sta_url?: string; body_preview?: string }>(
+      `/api/v1/admin/assets/${id}/citrix/sta/probe`,
+      { method: "POST", body: JSON.stringify({ ticket }) },
+    ),
   deleteAsset: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/assets/${id}`, { method: "DELETE" }),
   clearAssetHostKey: (id: string) =>

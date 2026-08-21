@@ -71,6 +71,7 @@ export function AssetEditPage() {
   const [accessPolicies, setAccessPolicies] = useState<AccessPolicy[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [citrixResources, setCitrixResources] = useState("");
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [k8sLease, setK8sLease] = useState<AppLease | null>(null);
@@ -431,6 +432,19 @@ export function AssetEditPage() {
     }
   }
 
+
+  async function onCitrixResources() {
+    if (!id) return;
+    setError("");
+    setCitrixResources("");
+    try {
+      const res = await api.citrixSFResources(id);
+      setCitrixResources(JSON.stringify(res.resources || [], null, 2));
+      setMsg(`StoreFront: ${res.count ?? 0} resources`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "StoreFront enum failed");
+    }
+  }
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -1308,8 +1322,24 @@ export function AssetEditPage() {
               <option value="hdx_pending">hdx_pending (OEM)</option>
             </select>
             <p className="muted" style={{ marginTop: 0 }}>
-              SOW-CITRIX-HDX: STA ticket stub + richer .ica. HDX terminate — OEM (`docs/citrix-hdx.txt`).
+              SOW-CITRIX-HDX фаза 2: STA CGI <code>/Scripts/CtxSta.dll</code>, StoreFront resources.
+              HDX terminate — OEM (`docs/citrix-hdx.txt`).
             </p>
+            {id && (
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!form.citrix_storefront_url}
+                onClick={() => void onCitrixResources()}
+              >
+                Enum StoreFront resources
+              </button>
+            )}
+            {citrixResources && (
+              <pre className="mono" style={{ maxHeight: 180, overflow: "auto", fontSize: 12 }}>
+                {citrixResources}
+              </pre>
+            )}
           </>
         )}
         <label>{t("common.description")}</label>

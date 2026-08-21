@@ -145,6 +145,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 			r.Post("/alerts/webhook", s.handleAlertWebhook)
 			r.Get("/citrix/sta/{ticket}", s.handleCitrixSTAValidate)
+			r.Get("/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
+			r.Get("/citrix/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
@@ -280,6 +282,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)
 				r.With(s.requirePerm("assets.read")).Get("/license", s.handleGetLicense)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
+				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/resources", s.handleCitrixSFResources)
+				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/discovery", s.handleCitrixSFDiscovery)
+				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/citrix/sta/probe", s.handleCitrixSTAProbe)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/firewall-applied", s.handleMarkFirewallApplied)

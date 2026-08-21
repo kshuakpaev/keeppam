@@ -271,8 +271,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			if creds.Asset.CitrixTransport == "hdx_pending" {
 				out["wire_hint"] = "Workspace: .ica через SOCKS. citrix_transport=hdx_pending — HDX terminate ещё OEM (docs/citrix-hdx.txt)."
 			} else {
-				out["wire_hint"] = "Workspace: откройте .ica (SOCKS + STA ticket stub). HDX decode — SOW phase 2+."
+				out["wire_hint"] = "Workspace: .ica (SOCKS). STA: KeepPAM /Scripts/CtxSta.dll или JSON /api/v1/citrix/sta/{ticket}. StoreFront enum — assets/…/citrix/resources."
 			}
+			out["citrix_sta_cgi"] = "/Scripts/CtxSta.dll"
 		}
 	}
 	if created.Protocol == "kubectl" && !created.WaitingSupervisor {
