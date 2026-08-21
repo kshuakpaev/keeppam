@@ -71,4 +71,4 @@
 
 - Пилот A: `docs/kp-acceptance.txt`, `make acceptance-smoke`
 - КП: `docs/kp.txt`
-- MR: `feature/jit-quorum` → `master`
+- Mid-market: влит в `master` (`818d6e3`)

@@ -63,12 +63,13 @@
 
 ## Следующий шаг реализации
 
-Инженерная очередь mid-market **закрыта** (КП-0…3 + T-34 RemoteApp + T-48 x509 + T-03 brand).  
+Инженерная очередь mid-market **закрыта** и **влита в `master`** (`818d6e3`, бывший `feature/jit-quorum`).  
 `docs/kp.txt` / сводка `main22-plan` синхронизированы с фактом.
 
 Дальше только по запросу:
-- мерж MR `feature/jit-quorum` → `master` (человек в GitLab);
 - **«SOW: id»** из `docs/sow-backlog.txt` (Citrix HDX, geo-HA, Oracle, EAP…);
 - полный ручной прогон `docs/kp-acceptance.txt`.
 
 Авто-поднабор: `make acceptance-smoke` → `docs/kp-acceptance-lab.txt`.
+
+MR: http://10.0.126.233/root/keeppam/-/merge_requests/1 — закрыть в UI, если ещё Open.
