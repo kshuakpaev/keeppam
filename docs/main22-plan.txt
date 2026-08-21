@@ -336,7 +336,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
 
 Параллелить можно: P1.3 (i18n) с P1.1; P2.2 с P2.1; P3.3 с P3.2.
 
-**Очередь кода (mid-market):** закрыта. Остаток — sync КП-docs (этот файл / `kp.txt`) и SOW из §9.
+**Очередь кода (mid-market):** закрыта. SOW-модули — `docs/sow-backlog.txt` (только по «SOW: id»).
 
 ---
 

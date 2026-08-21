@@ -1,0 +1,74 @@
+# KeepPAM: бэклог SOW / OEM (после mid-market)
+
+Базовый mid-market закрыт в ветке `feature/jit-quorum` (MR → `master`).
+Ниже — **отдельные коммерческие модули**. Не включать в базовую цену без явного SOW.
+
+Источник: `docs/kp.txt` уровень C, `docs/main22-plan.txt` §9.
+
+## Как брать в работу
+
+1. Заказчик выбирает модуль(и) и DoD.
+2. В чате/задаче: «SOW: &lt;id&gt;» (например `SOW-CITRIX-HDX`).
+3. Исполнитель оценивает недели и зависимости OEM/партнёр.
+4. Acceptance — приложение к модулю (не заменяет `docs/kp-acceptance.txt` пилота A).
+
+---
+
+## Приоритет для тендеров (типичный)
+
+| ID | Модуль | Зачем в тендере | Зависимости / риск |
+|----|--------|-----------------|-------------------|
+| **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | OEM/партнёр; годы; сейчас есть SOCKS+`.ica` MVP |
+| **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | Сейчас HA 2+2/3+2 в одном сайте |
+| **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | Нет в password-sync A |
+| **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | Сейчас PAP + x509 map |
+| **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | DLP-политика; не metadata-only |
+| **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
+| **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | Не OCR-index |
+| **SOW-NAC** | NAC-клиент | Сетевой контроль | Вне PAM-ядра |
+| **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | PAdES B-B уже опция |
+| **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | Сейчас heuristics + notify |
+| **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | Сейчас SSH+AD LDAP |
+| **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | MVP wire есть |
+| **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
+
+---
+
+## Черновик DoD (коротко)
+
+### SOW-CITRIX-HDX
+- Terminate HDX на шлюзе KeepPAM; STA ticket flow; StoreFront broker (или документированный subset).
+- Запись/replay экрана ICA на уровне, согласованном с OEM.
+- Acceptance: сессия через StoreFront → запись → forensic hit.
+
+### SOW-GEO-HA
+- Два сайта; async репликация метаданных (+ политика RPO/RGO).
+- Failover runbook; split-brain fencing согласован с PG.
+- Acceptance: kill site A — login/JIT на site B в SLA.
+
+### SOW-ORACLE
+- Rotate/sync пароля Oracle УЗ из KeepPAM vault.
+- Thick-client path или явный out-of-scope в SOW.
+- Acceptance: rotate → connect SQL*Plus/app с новым секретом без показа оператору.
+
+### SOW-RADIUS-EAP
+- EAP-TTLS или PEAP (указать в SOW); опционально RadSec.
+- Map Filter-Id/групп → роль как у PAP.
+- Acceptance: тестовый FreeRADIUS EAP → portal login.
+
+### SOW-RDP-FILE
+- Файл из RDP clipboard/drive redirection в storage + replay download (как SCP capture).
+- Default deny; policy enable.
+- Acceptance: copy file in RDP → artifact SHA совпадает.
+
+---
+
+## Что НЕ стартовать без фразы «SOW: …»
+
+Любую реализацию из таблицы выше. Полировка mid-market (docs, smoke, bugfix) — отдельно, без SOW-id.
+
+## Связанные документы
+
+- Пилот A: `docs/kp-acceptance.txt`, `make acceptance-smoke`
+- КП: `docs/kp.txt`
+- MR: `feature/jit-quorum` → `master`

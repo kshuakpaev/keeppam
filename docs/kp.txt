@@ -122,6 +122,7 @@
 - `docs/kp-roadmap.txt` — фазы КП-0…3 (фактический статус)
 - `docs/main22-plan.txt` — инженерный план T-xx
 - `docs/kp-acceptance.txt` — чек-лист приёмки
+- `docs/sow-backlog.txt` — модули уровня C (только с «SOW: id»)
 - `docs/demo-45min.txt` — демо 45 мин
 - `docs/appliance-ova.txt`, `docs/ha.txt`, `docs/native-rdp.txt`, `docs/remoteapp.txt`
 - `docs/telnet.txt`, `docs/tn3270.txt`, `docs/citrix-socks.txt`, `docs/mssql-wire.txt`
