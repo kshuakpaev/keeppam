@@ -53,7 +53,7 @@ export function AnalyticsPage() {
       <div className="page-head">
         <div>
           <h1>Аналитика</h1>
-          <p className="muted">SLO, аномалии, UEBA (обычный набор активов), SIEM-корреляция и цепочки сигналов</p>
+          <p className="muted">SLO, аномалии, UEBA (активы + keystroke timing), SIEM-корреляция и цепочки сигналов</p>
         </div>
         <div className="row gap">
           {WINDOWS.map((h) => (

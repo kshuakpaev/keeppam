@@ -25,6 +25,7 @@
 | `from` / `to` | RFC3339; иначе `hours` (default 24, max 2160, окно не длиннее 90 суток) |
 | `source` | `all` (default) / `audit` / `session` |
 | `q` | ILIKE по kind, payload, имени актива |
+| `filename` | только `file_transfer` по `filename`/`path` |
 | `limit` / `offset` | max 200 |
 | `format=csv` | выгрузка текущей страницы (limit до 200) |
 
@@ -37,7 +38,7 @@
 
 ## UI
 
-**Расследование** в меню (`sessions.read`). Фильтр: пользователь, окно, источник, поиск. Клик «Сессия» — replay/sql/k8s. Кнопка CSV.
+**Расследование** в меню (`sessions.read`). Фильтр: пользователь, окно, источник, поиск, **имя файла**. Клик «Сессия» — replay/sql/k8s. Кнопка CSV.
 
 ## Вне scope
 

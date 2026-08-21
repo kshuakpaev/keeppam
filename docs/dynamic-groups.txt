@@ -1,0 +1,25 @@
+# KeepPAM: динамический WHAT (T-20)
+
+Именованные «динамические группы целей» = ACL-binding с `asset_id=NULL` и селектором WHAT.
+WHO по-прежнему user / role / **PAM group** (`docs/groups.txt`). Активы в `user_group_members` не пишутся.
+
+## Селектор (AND по непустым полям)
+
+| Поле | Пример |
+|------|--------|
+| `asset_match_tags` + mode all/any | `prod` |
+| `asset_match_name` (glob) | `prod-*` |
+| `asset_match_hostname` (glob) | `*.corp.local` |
+| `asset_match_types` | `ssh`, `rdp` |
+| `asset_match_cidrs` | `10.1.0.0/16` |
+
+Хотя бы одно поле обязательно. Миграция `086_dynamic_asset_match.sql`.
+
+## DoD
+
+ACL: группа `linux-ops` + tags=`prod` + name=`prod-*`.  
+Новый актив `prod-db-01` с тегом `prod` → Evaluate OK без per-asset bind.
+
+UI: JEA → Tag / dynamic ACL. Карточка актива показывает inherited bindings.
+
+Runtime-match (как tag ACL) — cron reconcile не нужен.

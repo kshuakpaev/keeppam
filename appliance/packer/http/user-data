@@ -1,0 +1,29 @@
+#cloud-config
+hostname: keeppam
+manage_etc_hosts: true
+users:
+  - name: keeppam
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    # password: keeppam
+    passwd: "$6$VJKCNcNwp5PUPqzz$gjx2xmDwfIvociLIp5ExLQIXtLGLECIXYKtbkP.xM0neJ045K1cKmDf.kdy0OYhmFPZ0mTQHUkgmzJCwbOQFY/"
+ssh_pwauth: true
+disable_root: false
+package_update: true
+packages:
+  - qemu-guest-agent
+  - open-vm-tools
+  - cloud-init
+  - curl
+  - ca-certificates
+  - gnupg
+runcmd:
+  - [ systemctl, enable, --now, qemu-guest-agent ]
+  - [ systemctl, enable, --now, ssh ]
+growpart:
+  mode: auto
+  devices: ["/"]
+  ignore_growroot_disabled: false
+final_message: "KeepPAM cloud-init done"

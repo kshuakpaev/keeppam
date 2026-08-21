@@ -1,0 +1,30 @@
+# Images saved into the offline bundle. Lines: name  (comments with #).
+# SET=core is enough to run PAM; SET=full adds the stand observability stack.
+
+# --- core ---
+postgres:16-alpine
+redis:7-alpine
+alpine:3.21
+deploy-api:latest
+keeppam-web:local
+guacamole/guacd:1.5.5
+keeppam-guacenc:1.5.5
+keeppam-firewall-probe:local
+keeppam-demo-ssh:local
+
+# --- full (observability / SIEM stand) ---
+# prom/prometheus:v2.54.1
+# prom/alertmanager:v0.27.0
+# otel/opentelemetry-collector:0.109.0
+# grafana/tempo:2.6.1
+# grafana/grafana:11.4.0
+# nats:2.10-alpine
+# opensearchproject/opensearch:2.18.0
+# opensearchproject/opensearch-dashboards:2.18.0
+# curlimages/curl:8.5.0
+
+# --- ha overlay ---
+# haproxy:2.9-alpine
+
+# --- optional ---
+# keeppam-iso-browser:local

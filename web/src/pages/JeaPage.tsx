@@ -19,6 +19,14 @@ const emptyPolicyForm = {
   allowed_namespaces: "",
   allowed_egress: "",
   pii_action: "",
+  file_transfer: "deny",
+  ocr_lang: "rus+eng",
+  ocr_interval_sec: "15",
+  ocr_max_frames: "60",
+  rdp_clipboard: false,
+  rdp_drive: false,
+  rdp_printer: false,
+  rdp_native: false,
   dlp_patterns: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
@@ -44,6 +52,49 @@ function formatDlpPatterns(patterns?: { name: string; pattern: string }[]): stri
   return (patterns || []).map((p) => `${p.name} ${p.pattern}`).join("\n");
 }
 
+/** Client-side parse for new packs (server ParsePatternList for existing). */
+function parseJeaImportText(text: string, filename: string): string[] {
+  const name = filename.toLowerCase();
+  const trim = text.trim();
+  if (!trim) return [];
+  if (name.endsWith(".json") || trim.startsWith("{") || trim.startsWith("[")) {
+    try {
+      const j = JSON.parse(trim);
+      const arr: string[] = Array.isArray(j)
+        ? j
+        : j.patterns || j.commands || j.list || [];
+      return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
+    } catch {
+      return [];
+    }
+  }
+  const lines = trim.split(/\r?\n/);
+  const out: string[] = [];
+  let start = 0;
+  if (name.endsWith(".csv") || (lines[0]?.includes(",") && /pattern|command|glob/i.test(lines[0] || ""))) {
+    const header = (lines[0] || "").split(",").map((x) => x.trim().toLowerCase());
+    let col = 0;
+    const idx = header.findIndex((h) => h === "pattern" || h === "command" || h === "cmd" || h === "glob");
+    if (idx >= 0) {
+      col = idx;
+      start = 1;
+    }
+    for (const line of lines.slice(start)) {
+      if (!line.trim() || line.trim().startsWith("#")) continue;
+      const cells = line.split(",");
+      const p = (cells[col] || "").trim();
+      if (p) out.push(p);
+    }
+    return [...new Set(out)];
+  }
+  for (const line of lines) {
+    const p = line.trim();
+    if (!p || p.startsWith("#")) continue;
+    out.push(p);
+  }
+  return [...new Set(out)];
+}
+
 function splitCSV(s: string): string[] {
   return s
     .split(",")
@@ -58,6 +109,10 @@ const emptyTagForm = {
   group_id: "",
   asset_match_tags: "",
   asset_match_mode: "all" as "all" | "any",
+  asset_match_name: "",
+  asset_match_hostname: "",
+  asset_match_types: "",
+  asset_match_cidrs: "",
   access_policy_id: "",
   duration_minutes: "",
 };
@@ -522,6 +577,14 @@ export function JeaPage() {
       allowed_namespaces: (p.allowed_namespaces || []).join(", "),
       allowed_egress: (p.allowed_egress || []).join(", "),
       pii_action: p.pii_action || "",
+      file_transfer: p.file_transfer || "deny",
+      ocr_lang: p.ocr_lang || "rus+eng",
+      ocr_interval_sec: String(p.ocr_interval_sec || 15),
+      ocr_max_frames: String(p.ocr_max_frames || 60),
+      rdp_clipboard: !!p.rdp_clipboard,
+      rdp_drive: !!p.rdp_drive,
+      rdp_printer: !!p.rdp_printer,
+      rdp_native: !!p.rdp_native,
       dlp_patterns: formatDlpPatterns(p.dlp_patterns),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
@@ -560,6 +623,16 @@ export function JeaPage() {
     if ((p.allowed_namespaces || []).length) bits.push("ns:" + p.allowed_namespaces.join(","));
     if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
     if (p.pii_action) bits.push("pii:" + p.pii_action);
+    if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
+    if (p.ocr_lang) bits.push("ocr:" + p.ocr_lang + "/" + (p.ocr_interval_sec || 15) + "s");
+    if (p.rdp_clipboard || p.rdp_drive || p.rdp_printer) {
+      const r: string[] = [];
+      if (p.rdp_clipboard) r.push("clip");
+      if (p.rdp_drive) r.push("drive");
+      if (p.rdp_printer) r.push("print");
+      bits.push("rdp:" + r.join("+"));
+    }
+    if (p.rdp_native) bits.push("mstsc");
     if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
@@ -591,6 +664,14 @@ export function JeaPage() {
         allowed_namespaces: splitCSV(policyForm.allowed_namespaces),
         allowed_egress: splitCSV(policyForm.allowed_egress),
         pii_action: policyForm.pii_action || "",
+        file_transfer: policyForm.file_transfer || "deny",
+        ocr_lang: policyForm.ocr_lang || "rus+eng",
+        ocr_interval_sec: Number(policyForm.ocr_interval_sec) || 15,
+        ocr_max_frames: Number(policyForm.ocr_max_frames) || 60,
+        rdp_clipboard: !!policyForm.rdp_clipboard,
+        rdp_drive: !!policyForm.rdp_drive,
+        rdp_printer: !!policyForm.rdp_printer,
+        rdp_native: !!policyForm.rdp_native,
         dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
@@ -644,6 +725,10 @@ export function JeaPage() {
       who: tagForm.who,
       asset_match_tags: tagForm.asset_match_tags,
       asset_match_mode: tagForm.asset_match_mode,
+      asset_match_name: tagForm.asset_match_name,
+      asset_match_hostname: tagForm.asset_match_hostname,
+      asset_match_types: tagForm.asset_match_types,
+      asset_match_cidrs: tagForm.asset_match_cidrs,
     });
   }
 
@@ -662,6 +747,10 @@ export function JeaPage() {
         group_id: raw.group_id || "",
         asset_match_tags: (raw.asset_match_tags || []).join(", "),
         asset_match_mode: raw.asset_match_mode === "any" ? "any" : "all",
+        asset_match_name: raw.asset_match_name || "",
+        asset_match_hostname: raw.asset_match_hostname || "",
+        asset_match_types: (raw.asset_match_types || []).join(", "),
+        asset_match_cidrs: (raw.asset_match_cidrs || []).join(", "),
         access_policy_id: raw.access_policy_id || "",
         duration_minutes: "",
       });
@@ -675,8 +764,16 @@ export function JeaPage() {
     e.preventDefault();
     if (!canACL) return;
     const tags = splitCSV(tagForm.asset_match_tags);
-    if (!tags.length) {
-      setError("укажите теги активов");
+    const types = splitCSV(tagForm.asset_match_types);
+    const matchCidrs = splitCSV(tagForm.asset_match_cidrs);
+    if (
+      !tags.length &&
+      !tagForm.asset_match_name.trim() &&
+      !tagForm.asset_match_hostname.trim() &&
+      !types.length &&
+      !matchCidrs.length
+    ) {
+      setError("укажите теги, имя, hostname, тип или CIDR");
       return;
     }
     setBusy(true);
@@ -697,6 +794,7 @@ export function JeaPage() {
           allowed_namespaces: tagRaw.allowed_namespaces || [],
           allowed_egress: tagRaw.allowed_egress || [],
           pii_action: tagRaw.pii_action || "",
+          file_transfer: tagRaw.file_transfer || "",
           command_policy_pack_id: tagRaw.command_policy_pack_id || null,
           sql_policy_pack_id: tagRaw.sql_policy_pack_id || null,
           http_policy_pack_id: tagRaw.http_policy_pack_id || null,
@@ -705,6 +803,10 @@ export function JeaPage() {
           risk_action: tagRaw.risk_action || "deny",
           asset_match_tags: tags,
           asset_match_mode: tagForm.asset_match_mode,
+          asset_match_name: tagForm.asset_match_name.trim(),
+          asset_match_hostname: tagForm.asset_match_hostname.trim(),
+          asset_match_types: types,
+          asset_match_cidrs: matchCidrs,
           access_policy_id: tagForm.access_policy_id || null,
         };
         if (tagPermanent) body.permanent = true;
@@ -716,6 +818,10 @@ export function JeaPage() {
         const body: Parameters<typeof api.createTagACL>[0] = {
           asset_match_tags: tags,
           asset_match_mode: tagForm.asset_match_mode,
+          asset_match_name: tagForm.asset_match_name.trim() || undefined,
+          asset_match_hostname: tagForm.asset_match_hostname.trim() || undefined,
+          asset_match_types: types.length ? types : undefined,
+          asset_match_cidrs: matchCidrs.length ? matchCidrs : undefined,
         };
         if (tagForm.who === "user" && tagForm.user_id) body.user_id = tagForm.user_id;
         else if (tagForm.who === "role" && tagForm.role_id) body.role_id = tagForm.role_id;
@@ -728,7 +834,7 @@ export function JeaPage() {
         if (tagForm.access_policy_id) body.access_policy_id = tagForm.access_policy_id;
         if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
         await api.createTagACL(body);
-        setMsg("Tag ACL создан");
+        setMsg("Динамический ACL создан");
         setTagForm({
           who: tagForm.who,
           user_id: "",
@@ -736,6 +842,10 @@ export function JeaPage() {
           group_id: "",
           asset_match_tags: tagForm.asset_match_tags,
           asset_match_mode: tagForm.asset_match_mode,
+          asset_match_name: tagForm.asset_match_name,
+          asset_match_hostname: tagForm.asset_match_hostname,
+          asset_match_types: tagForm.asset_match_types,
+          asset_match_cidrs: tagForm.asset_match_cidrs,
           access_policy_id: "",
           duration_minutes: "",
         });
@@ -951,6 +1061,59 @@ export function JeaPage() {
                 onChange={(e) => setForm({ ...form, patterns: e.target.value })}
                 style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
               />
+              <label>Загрузить список (txt / csv / json)</label>
+              <input
+                type="file"
+                accept=".txt,.csv,.json,text/plain,text/csv,application/json"
+                disabled={busy}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file || !canWrite) return;
+                  setBusy(true);
+                  setError("");
+                  setMsg("");
+                  try {
+                    if (editId) {
+                      const merge = confirm(
+                        "Объединить с текущими паттернами?\nОК = merge, Отмена = заменить список."
+                      );
+                      const out = await api.importCommandPack(editId, file, merge);
+                      setForm({
+                        ...form,
+                        patterns: (out.pack.patterns || []).join("\n"),
+                        mode: out.pack.mode || form.mode,
+                        name: out.pack.name || form.name,
+                        description: out.pack.description || form.description,
+                      });
+                      setMsg(`Импорт: +${out.added}, всего ${out.total}`);
+                      await load();
+                    } else {
+                      const text = await file.text();
+                      const parsed = parseJeaImportText(text, file.name);
+                      if (!parsed.length) {
+                        setError("в файле нет паттернов");
+                        return;
+                      }
+                      const merge = form.patterns.trim()
+                        ? confirm("Добавить к полю паттернов? ОК = добавить, Отмена = заменить.")
+                        : false;
+                      const next = merge
+                        ? `${form.patterns.trim()}\n${parsed.join("\n")}`.trim()
+                        : parsed.join("\n");
+                      setForm({ ...form, patterns: next });
+                      setMsg(`Загружено ${parsed.length} паттернов в форму — нажмите Создать`);
+                    }
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Ошибка импорта");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              />
+              <p className="muted" style={{ marginTop: 0 }}>
+                До 10 000 globs (`rm *`, `dd`). Для существующего пакета — сразу в БД; для нового — в форму.
+              </p>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
                   {editId ? "Сохранить" : "Создать"}
@@ -1528,6 +1691,75 @@ export function JeaPage() {
                 <option value="mask">mask</option>
                 <option value="deny">deny</option>
               </select>
+              <label>SCP/SFTP</label>
+              <select
+                value={policyForm.file_transfer}
+                onChange={(e) => setPolicyForm({ ...policyForm, file_transfer: e.target.value })}
+              >
+                <option value="deny">deny</option>
+                <option value="audit">audit</option>
+                <option value="capture">capture</option>
+              </select>
+              <label>OCR RDP/VNC (язык)</label>
+              <select
+                value={policyForm.ocr_lang}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_lang: e.target.value })}
+              >
+                <option value="rus+eng">rus+eng</option>
+                <option value="eng">eng</option>
+                <option value="rus">rus</option>
+              </select>
+              <label>OCR интервал кадров (сек, 5–120)</label>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={policyForm.ocr_interval_sec}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_interval_sec: e.target.value })}
+              />
+              <label>OCR макс. кадров (1–120)</label>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={policyForm.ocr_max_frames}
+                onChange={(e) => setPolicyForm({ ...policyForm, ocr_max_frames: e.target.value })}
+              />
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>
+                Не live OCR каждого кадра. Post-session Tesseract, индекс screen_text.
+              </p>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_clipboard}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_clipboard: e.target.checked })}
+                />
+                RDP clipboard (default off — DLP)
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_drive}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_drive: e.target.checked })}
+                />
+                RDP drive mapping
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_printer}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_printer: e.target.checked })}
+                />
+                RDP printers
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.rdp_native}
+                  onChange={(e) => setPolicyForm({ ...policyForm, rdp_native: e.target.checked })}
+                />
+                Native mstsc path (нужен KEEPPAM_RDP_PUBLIC_HOST + freerdp-proxy)
+              </label>
               <label>DLP regex (имя и паттерн на строку, до 16)</label>
               <textarea
                 rows={4}
@@ -1667,7 +1899,17 @@ export function JeaPage() {
                           </>
                         )}
                       </td>
-                      <td className="mono">{(b.asset_match_tags || []).join(", ") || "—"}</td>
+                      <td className="mono">
+                        {[
+                          (b.asset_match_tags || []).length ? `tags:${(b.asset_match_tags || []).join(",")}` : "",
+                          b.asset_match_name ? `name:${b.asset_match_name}` : "",
+                          b.asset_match_hostname ? `host:${b.asset_match_hostname}` : "",
+                          (b.asset_match_types || []).length ? `type:${(b.asset_match_types || []).join(",")}` : "",
+                          (b.asset_match_cidrs || []).length ? `cidr:${(b.asset_match_cidrs || []).join(",")}` : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
+                      </td>
                       <td>{b.asset_match_mode === "any" ? "любой" : "все"}</td>
                       <td className="mono">{b.access_policy_name || "—"}</td>
                       <td className="mono">
@@ -1788,6 +2030,34 @@ export function JeaPage() {
                 <option value="all">Все перечисленные (AND)</option>
                 <option value="any">Любой из перечисленных (OR)</option>
               </select>
+              <label>Имя актива (glob)</label>
+              <input
+                value={tagForm.asset_match_name}
+                onChange={(e) => setTagForm({ ...tagForm, asset_match_name: e.target.value })}
+                placeholder="prod-*"
+              />
+              <label>Hostname (glob)</label>
+              <input
+                value={tagForm.asset_match_hostname}
+                onChange={(e) => setTagForm({ ...tagForm, asset_match_hostname: e.target.value })}
+                placeholder="*.corp.local"
+              />
+              <label>Типы активов</label>
+              <input
+                value={tagForm.asset_match_types}
+                onChange={(e) => setTagForm({ ...tagForm, asset_match_types: e.target.value })}
+                placeholder="ssh, rdp"
+              />
+              <label>CIDR адреса</label>
+              <input
+                value={tagForm.asset_match_cidrs}
+                onChange={(e) => setTagForm({ ...tagForm, asset_match_cidrs: e.target.value })}
+                placeholder="10.1.0.0/16"
+              />
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>
+                Хотя бы одно поле WHAT. Непустые комбинируются через AND — новый актив покрывается без
+                ручного bind.
+              </p>
               <label>Policy (опц.)</label>
               <select
                 value={tagForm.access_policy_id}

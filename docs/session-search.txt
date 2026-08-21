@@ -2,7 +2,7 @@
 
 Поиск по `session_events`: SQL, kubectl, **команды SSH**, **вывод SSH**, **клавиши RDP/VNC**, JEA deny, DLP, risk, HTTP/object ACL, **SSH egress**.
 
-SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`).
+SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`). Имена файлов SCP/SFTP — тип `file_transfer`.
 
 RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео).
 
@@ -15,7 +15,10 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 | Query | Смысл |
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
-| `type` | пусто = forensic (`sql`, …, `output`, `keystroke`, `screen_text`, `dlp`, …); `all` = любые; иначе точный тип |
+| `filename` | имя/путь `file_transfer` (payload `filename`/`path`); без `type` — только эти события |
+| `protocol` | протокол сессии |
+| `client_ip` | подстрока `sessions.client_ip` |
+| `type` | пусто = forensic (`sql`, …, `file_transfer`); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 
@@ -28,11 +31,11 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 
 ## UI
 
-Сессии → вкладка **События**. Replay SSH: команды + вывод. Replay RDP/VNC: **Клавиши** + **Экран (OCR)**. Кнопки «Индексировать запись» / «OCR экрана».
+Сессии → вкладка **События**: тип, имя файла, протокол, IP. Replay SSH: команды + вывод + **файлы** (клик — seek по offset). Replay RDP/VNC: клавиши + OCR + **окна** (первая строка кадра). Скорость SSH 1×/2×/4×.
 
 ## Индекс
 
-До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 20 `screen_text`. Строка ≤ 512 рун.
+До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 120 `screen_text` (Policy, default 60). Строка ≤ 512 рун.
 
 ## Вне scope
 

@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type SecretCheckoutRequest } from "../api";
+import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type PamSession, type SecretCheckoutRequest } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 export function AccessRequestsPage() {
   const { user } = useAuth();
+  const { t, te, formatDate } = useI18n();
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [checkouts, setCheckouts] = useState<SecretCheckoutRequest[]>([]);
   const [glasses, setGlasses] = useState<BreakGlassEvent[]>([]);
   const [ops, setOps] = useState<OpApproval[]>([]);
+  const [waitingSessions, setWaitingSessions] = useState<PamSession[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("pending");
   const [error, setError] = useState("");
@@ -17,6 +20,7 @@ export function AccessRequestsPage() {
   const canApproveSecurity = hasPerm(user, "access.approve.security");
   const canVault = hasPerm(user, "assets.write");
   const canBreakGlass = hasPerm(user, "access.breakglass");
+  const canSupervise = hasPerm(user, "sessions.supervise");
 
   const load = useCallback(async () => {
     try {
@@ -40,21 +44,25 @@ export function AccessRequestsPage() {
         const op = await api.listOpApprovals();
         setOps(op.approvals || []);
       }
+      if (canSupervise) {
+        const wait = await api.listSessions({ waiting_supervisor: true, limit: 100 });
+        setWaitingSessions(wait.sessions || []);
+      }
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err));
     }
-  }, [status, canVault, canRequest, canApprove, canApproveSecurity, canBreakGlass]);
+  }, [status, canVault, canRequest, canApprove, canApproveSecurity, canBreakGlass, canSupervise]);
 
   useEffect(() => {
-    if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass) void load();
-  }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, load]);
+    if (canRequest || canApprove || canApproveSecurity || canVault || canBreakGlass || canSupervise) void load();
+  }, [canRequest, canApprove, canApproveSecurity, canVault, canBreakGlass, canSupervise, load]);
 
   useEffect(() => {
-    if (!(canApprove || canApproveSecurity)) return;
+    if (!(canApprove || canApproveSecurity || canSupervise)) return;
     const id = window.setInterval(() => void load(), 4000);
     return () => window.clearInterval(id);
-  }, [canApprove, canApproveSecurity, load]);
+  }, [canApprove, canApproveSecurity, canSupervise, load]);
 
   async function onApprove(id: string) {
     setError("");
@@ -62,7 +70,7 @@ export function AccessRequestsPage() {
       await api.approveAccessRequest(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось одобрить");
+      setError(te(err, "req.failApprove"));
     }
   }
 
@@ -72,7 +80,7 @@ export function AccessRequestsPage() {
       await api.denyAccessRequest(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось отклонить");
+      setError(te(err, "req.failDeny"));
     }
   }
 
@@ -82,7 +90,7 @@ export function AccessRequestsPage() {
       await api.cancelAccessRequest(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось отменить");
+      setError(te(err, "req.failCancel"));
     }
   }
 
@@ -92,7 +100,7 @@ export function AccessRequestsPage() {
       await api.approveSecretCheckout(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось одобрить checkout");
+      setError(te(err, "req.failApprove"));
     }
   }
 
@@ -102,7 +110,7 @@ export function AccessRequestsPage() {
       await api.denySecretCheckout(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось отклонить checkout");
+      setError(te(err, "req.failDeny"));
     }
   }
 
@@ -112,7 +120,7 @@ export function AccessRequestsPage() {
       await api.approveOpApproval(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось одобрить операцию");
+      setError(te(err, "req.failApprove"));
     }
   }
 
@@ -122,44 +130,116 @@ export function AccessRequestsPage() {
       await api.denyOpApproval(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось отклонить операцию");
+      setError(te(err, "req.failDeny"));
     }
   }
 
-  if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass) {
-    return <p className="error">Недостаточно прав</p>;
+  async function onApproveSupervisor(id: string) {
+    setError("");
+    try {
+      await api.approveSupervisor(id);
+      await load();
+    } catch (err) {
+      setError(te(err, "req.failSupervise"));
+    }
+  }
+
+  async function onDenySupervisor(id: string) {
+    setError("");
+    try {
+      await api.denySupervisor(id);
+      await load();
+    } catch (err) {
+      setError(te(err, "req.failSuperviseDeny"));
+    }
+  }
+
+  if (!canRequest && !canApprove && !canApproveSecurity && !canVault && !canBreakGlass && !canSupervise) {
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   return (
     <div>
       <div className="toolbar">
         <div>
-          <h1>Запросы доступа</h1>
-          <p className="muted">JIT к активам, операции в сессии (object ACL), dual-control checkout и break-glass</p>
+          <h1>{t("req.title")}</h1>
+          <p className="muted">{t("req.lead")}</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void load()}>
-          Обновить
+          {t("common.refresh")}
         </button>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      {(canApprove || canApproveSecurity) && (
+      {canSupervise && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <h2>Операции в сессии</h2>
-          <p className="muted">
-            HTTP/kubectl object ACL и SSH-команды с risk_action=require_approval. Запрос держится до 60 с,
-            пока кто-то с access.approve не нажмёт. Свой запрос одобрить нельзя. Команда на хост не уходит, пока нет approve.
-          </p>
+          <h2>{t("req.waitingTitle")}</h2>
+          <p className="muted">{t("req.waitingLead")}</p>
           <table>
             <thead>
               <tr>
-                <th>Когда</th>
-                <th>Кто</th>
-                <th>Актив</th>
-                <th>Канал</th>
-                <th>Операция</th>
-                <th>До</th>
+                <th>{t("common.when")}</th>
+                <th>{t("common.who")}</th>
+                <th>{t("common.asset")}</th>
+                <th>{t("common.protocol")}</th>
+                <th>{t("common.group")}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {waitingSessions.map((s) => (
+                <tr key={s.id}>
+                  <td className="mono">{formatDate(s.created_at)}</td>
+                  <td>{s.username || s.user_id}</td>
+                  <td>
+                    <Link to={`/assets/${s.asset_id}`}>{s.asset_name || s.asset_id}</Link>
+                    <div className="muted mono">{s.account_username}</div>
+                  </td>
+                  <td className="mono">{s.protocol}</td>
+                  <td>{s.supervisor_group_name || t("req.anySupervisor")}</td>
+                  <td>
+                    <div className="row">
+                      {s.user_id !== user?.id && (
+                        <>
+                          <button className="btn" type="button" onClick={() => void onApproveSupervisor(s.id)}>
+                            {t("common.allow")}
+                          </button>
+                          <button className="btn danger" type="button" onClick={() => void onDenySupervisor(s.id)}>
+                            {t("common.deny")}
+                          </button>
+                        </>
+                      )}
+                      {s.user_id === user?.id && <span className="muted">{t("req.ownSession")}</span>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {waitingSessions.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="muted">
+                    {t("req.noWaiting")}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(canApprove || canApproveSecurity) && (
+        <div className="card" style={{ marginBottom: "1.25rem" }}>
+          <h2>{t("req.opsTitle")}</h2>
+          <p className="muted">{t("req.opsLead")}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>{t("common.when")}</th>
+                <th>{t("common.who")}</th>
+                <th>{t("common.asset")}</th>
+                <th>{t("req.channel")}</th>
+                <th>{t("req.operation")}</th>
+                <th>{t("req.until")}</th>
                 <th />
               </tr>
             </thead>
@@ -172,7 +252,7 @@ export function AccessRequestsPage() {
                     <Link to={`/assets/${o.asset_id}`}>{o.asset_name || o.asset_id}</Link>
                     <div className="muted mono">
                       <Link to={o.channel === "k8s" ? `/sessions/${o.session_id}/k8s` : o.channel === "ssh" ? `/sessions/${o.session_id}` : `/sessions/${o.session_id}/app`}>
-                        сессия
+                        {t("req.session")}
                       </Link>
                     </div>
                   </td>
@@ -189,14 +269,14 @@ export function AccessRequestsPage() {
                       {o.user_id !== user?.id && (
                         <>
                           <button className="btn" type="button" onClick={() => void onApproveOp(o.id)}>
-                            Одобрить
+                            {t("common.approve")}
                           </button>
                           <button className="btn danger" type="button" onClick={() => void onDenyOp(o.id)}>
-                            Отклонить
+                            {t("common.deny")}
                           </button>
                         </>
                       )}
-                      {o.user_id === user?.id && <span className="muted">свой запрос</span>}
+                      {o.user_id === user?.id && <span className="muted">{t("common.ownRequest")}</span>}
                     </div>
                   </td>
                 </tr>
@@ -204,7 +284,7 @@ export function AccessRequestsPage() {
               {ops.length === 0 && (
                 <tr>
                   <td colSpan={7} className="muted">
-                    Нет операций, ждущих согласования.
+                    {t("req.noOps")}
                   </td>
                 </tr>
               )}
@@ -215,18 +295,18 @@ export function AccessRequestsPage() {
 
       {canBreakGlass && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <h2>Break-glass</h2>
-          <p className="muted">Экстренные открытия доступа. Все события пишутся в аудит с severity=critical.</p>
+          <h2>{t("req.bgTitle")}</h2>
+          <p className="muted">{t("req.bgLead")}</p>
           <table>
             <thead>
               <tr>
-                <th>Когда</th>
-                <th>Кто</th>
-                <th>Актив</th>
+                <th>{t("common.when")}</th>
+                <th>{t("common.who")}</th>
+                <th>{t("common.asset")}</th>
                 <th>TTL</th>
-                <th>До</th>
-                <th>Причина</th>
-                <th>Статус</th>
+                <th>{t("req.until")}</th>
+                <th>{t("req.reason")}</th>
+                <th>{t("common.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -237,7 +317,7 @@ export function AccessRequestsPage() {
                   <td>
                     <Link to={`/assets/${g.asset_id}`}>{g.asset_name}</Link>
                   </td>
-                  <td className="mono">{g.duration_minutes} мин</td>
+                  <td className="mono">{t("req.ttlMin", { n: g.duration_minutes })}</td>
                   <td className="mono">{new Date(g.expires_at).toLocaleString()}</td>
                   <td>{g.reason}</td>
                   <td>
@@ -248,7 +328,7 @@ export function AccessRequestsPage() {
               {glasses.length === 0 && (
                 <tr>
                   <td colSpan={7} className="muted">
-                    Нет break-glass событий.
+                    {t("req.noBg")}
                   </td>
                 </tr>
               )}
@@ -259,16 +339,16 @@ export function AccessRequestsPage() {
 
       {canVault && (
         <div className="card" style={{ marginBottom: "1.25rem" }}>
-          <h2>Checkout секретов (dual-control)</h2>
-          <p className="muted">Одобрить должен другой администратор (не заявитель).</p>
+          <h2>{t("req.checkoutTitle")}</h2>
+          <p className="muted">{t("req.checkoutLead")}</p>
           <table>
             <thead>
               <tr>
-                <th>Создан</th>
-                <th>Кто</th>
-                <th>Актив / учётка</th>
+                <th>{t("req.created")}</th>
+                <th>{t("common.who")}</th>
+                <th>{t("common.asset")} / {t("common.account")}</th>
                 <th>TTL</th>
-                <th>Причина</th>
+                <th>{t("req.reason")}</th>
                 <th />
               </tr>
             </thead>
@@ -281,21 +361,21 @@ export function AccessRequestsPage() {
                     <Link to={`/assets/${r.asset_id}`}>{r.asset_name}</Link>
                     <div className="muted mono">{r.account_username}</div>
                   </td>
-                  <td className="mono">{r.ttl_minutes} мин</td>
+                  <td className="mono">{t("req.ttlMin", { n: r.ttl_minutes })}</td>
                   <td>{r.reason || "—"}</td>
                   <td>
                     <div className="row">
                       {r.requester_id !== user?.id && (
                         <>
                           <button className="btn" type="button" onClick={() => void onApproveCheckout(r.id)}>
-                            Одобрить
+                            {t("common.approve")}
                           </button>
                           <button className="btn danger" type="button" onClick={() => void onDenyCheckout(r.id)}>
-                            Отклонить
+                            {t("common.deny")}
                           </button>
                         </>
                       )}
-                      {r.requester_id === user?.id && <span className="muted">свой запрос</span>}
+                      {r.requester_id === user?.id && <span className="muted">{t("common.ownRequest")}</span>}
                     </div>
                   </td>
                 </tr>
@@ -303,7 +383,7 @@ export function AccessRequestsPage() {
               {checkouts.length === 0 && (
                 <tr>
                   <td colSpan={6} className="muted">
-                    Нет pending checkout-запросов.
+                    {t("req.noCheckout")}
                   </td>
                 </tr>
               )}
@@ -322,25 +402,25 @@ export function AccessRequestsPage() {
                 type="button"
                 onClick={() => setStatus(s)}
               >
-                {s || "все"}
+                {s || t("common.all")}
               </button>
             ))}
           </div>
 
           <div className="card">
-            <h2>JIT доступ</h2>
+            <h2>{t("req.jitTitle")}</h2>
             <table>
               <thead>
                 <tr>
-                  <th>Создан</th>
-                  <th>Кто</th>
-                  <th>Актив</th>
+                  <th>{t("req.created")}</th>
+                  <th>{t("common.who")}</th>
+                  <th>{t("common.asset")}</th>
                   <th>TTL</th>
                   <th>Ticket</th>
                   <th>Risk</th>
-                  <th>Причина</th>
-                  <th>Этап</th>
-                  <th>Статус</th>
+                  <th>{t("req.reason")}</th>
+                  <th>{t("req.stageCol")}</th>
+                  <th>{t("common.status")}</th>
                   <th />
                 </tr>
               </thead>
@@ -353,7 +433,7 @@ export function AccessRequestsPage() {
                       <Link to={`/assets/${r.asset_id}`}>{r.asset_name}</Link>
                       <div className="muted mono">{r.asset_address}</div>
                     </td>
-                    <td className="mono">{r.duration_minutes} мин</td>
+                    <td className="mono">{t("req.ttlMin", { n: r.duration_minutes })}</td>
                     <td className="mono">{r.ticket_id || "—"}</td>
                     <td className="mono" style={{ fontSize: "0.85rem" }}>
                       {r.risk_score ? (
@@ -369,14 +449,29 @@ export function AccessRequestsPage() {
                     </td>
                     <td>{r.reason || "—"}</td>
                     <td>
-                      <span className="badge">{r.stage || "manager"}</span>
-                      {(r.approval_stages || []).length > 1 ? (
-                        <div className="muted" style={{ fontSize: "0.8rem" }}>
-                          {(r.approval_stages || []).join(" → ")}
-                        </div>
-                      ) : null}
+                      {r.approval_mode === "quorum" ? (
+                        <>
+                          <span className="badge">
+                            {t("req.quorum", { votes: r.quorum_votes || 0, n: r.quorum_n || 1, m: r.quorum_m || 1 })}
+                          </span>
+                          {r.approver_group_name ? (
+                            <div className="muted" style={{ fontSize: "0.8rem" }}>
+                              {t("req.groupNamed", { name: r.approver_group_name })}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <span className="badge">{r.stage || "manager"}</span>
+                          {(r.approval_stages || []).length > 1 ? (
+                            <div className="muted" style={{ fontSize: "0.8rem" }}>
+                              {(r.approval_stages || []).join(" → ")}
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                       {(r.approvals || []).map((a) => (
-                        <div key={a.stage} className="muted" style={{ fontSize: "0.8rem" }}>
+                        <div key={a.actor_id || a.stage} className="muted" style={{ fontSize: "0.8rem" }}>
                           {a.stage}: {a.username}
                         </div>
                       ))}
@@ -393,24 +488,35 @@ export function AccessRequestsPage() {
                       <div className="row">
                         {r.status === "pending" &&
                           r.requester_id !== user?.id &&
-                          ((r.stage === "security" && canApproveSecurity) ||
-                            ((r.stage || "manager") === "manager" && canApprove)) && (
+                          (r.approval_mode === "quorum"
+                            ? canApprove && !(r.approvals || []).some((a) => a.actor_id === user?.id)
+                            : (r.stage === "security" && canApproveSecurity) ||
+                              ((r.stage || "manager") === "manager" && canApprove)) && (
                           <>
                             <button className="btn" type="button" onClick={() => void onApprove(r.id)}>
-                              Одобрить {r.stage === "security" ? "ИБ" : ""}
+                              {r.approval_mode === "quorum"
+                                ? t("req.approveQuorum", { next: (r.quorum_votes || 0) + 1, n: r.quorum_n || 1 })
+                                : r.stage === "security"
+                                  ? t("req.approveSec")
+                                  : t("common.approve")}
                             </button>
                             <button className="btn danger" type="button" onClick={() => void onDeny(r.id)}>
-                              Отклонить
+                              {t("common.deny")}
                             </button>
                           </>
                         )}
+                        {r.status === "pending" &&
+                          r.approval_mode === "quorum" &&
+                          (r.approvals || []).some((a) => a.actor_id === user?.id) && (
+                          <span className="muted">{t("req.yourVote")}</span>
+                        )}
                         {r.status === "pending" && r.requester_id === user?.id && (
                           <button className="btn secondary" type="button" onClick={() => void onCancel(r.id)}>
-                            Отменить
+                            {t("req.cancel")}
                           </button>
                         )}
                         {r.status === "pending" && canApprove && r.requester_id === user?.id && (
-                          <span className="muted">свой запрос</span>
+                          <span className="muted">{t("common.ownRequest")}</span>
                         )}
                       </div>
                     </td>
@@ -419,14 +525,14 @@ export function AccessRequestsPage() {
                 {requests.length === 0 && (
                   <tr>
                     <td colSpan={10} className="muted">
-                      Запросов нет{status ? ` со статусом ${status}` : ""}.
+                      {t("req.noneStatus", { suffix: status ? t("req.statusSuffix", { status }) : "" })}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
             <p className="muted" style={{ marginTop: "0.75rem" }}>
-              Всего: {total}
+              {t("req.total", { n: total })}
             </p>
           </div>
         </>

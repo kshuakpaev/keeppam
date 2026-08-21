@@ -13,6 +13,9 @@ import (
 type EventSearchFilter struct {
 	Q        string
 	Type     string // empty = forensic types; "all" = any
+	Filename string // payload filename/path (file_transfer)
+	Protocol string
+	ClientIP string
 	Hours    int
 	OnlyUser *uuid.UUID
 	Limit    int
@@ -138,6 +141,21 @@ func EventSnippet(eventType string, payload map[string]any) string {
 		if r := payloadString(payload, "reason"); r != "" {
 			return "DENIED " + r
 		}
+	case "file_transfer":
+		name := payloadString(payload, "filename")
+		if name == "" {
+			name = payloadString(payload, "path")
+		}
+		if name == "" {
+			break
+		}
+		dir := payloadString(payload, "direction")
+		proto := payloadString(payload, "protocol")
+		line := strings.TrimSpace(strings.Join([]string{proto, dir, name}, " "))
+		if captured, ok := payload["captured"].(bool); ok && !captured {
+			line += " (audit)"
+		}
+		return line
 	case "egress":
 		h := payloadString(payload, "host")
 		if h == "" {
@@ -216,7 +234,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','output','keystroke','screen_text','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','output','keystroke','screen_text','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied','file_transfer')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))
@@ -224,6 +242,19 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 	if q != "" {
 		p := add(likePattern(q))
 		where = append(where, "(e.payload::text ILIKE "+p+" ESCAPE '\\' OR e.event_type ILIKE "+p+" ESCAPE '\\')")
+	}
+	if name := strings.TrimSpace(f.Filename); name != "" {
+		if typ == "" || typ == "forensic" {
+			where = append(where, "e.event_type = 'file_transfer'")
+		}
+		p := add(likePattern(name))
+		where = append(where, "(COALESCE(e.payload->>'filename','') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.payload->>'path','') ILIKE "+p+" ESCAPE '\\')")
+	}
+	if proto := strings.TrimSpace(f.Protocol); proto != "" {
+		where = append(where, "s.protocol = "+add(proto))
+	}
+	if ip := strings.TrimSpace(f.ClientIP); ip != "" {
+		where = append(where, "s.client_ip ILIKE "+add("%"+ip+"%")+" ESCAPE '\\'")
 	}
 	if f.OnlyUser != nil {
 		where = append(where, "s.user_id = "+add(*f.OnlyUser))

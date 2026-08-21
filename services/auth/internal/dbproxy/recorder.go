@@ -34,12 +34,12 @@ func (r *Recorder) Record(statement string, durationMs int64, rowCount int, errM
 		return
 	}
 	payload := map[string]any{
-		"type": "sql",
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-		"sec":  time.Since(r.start).Seconds(),
-		"statement": truncateStmt(statement),
+		"type":        "sql",
+		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
+		"sec":         time.Since(r.start).Seconds(),
+		"statement":   truncateStmt(statement),
 		"duration_ms": durationMs,
-		"row_count": rowCount,
+		"row_count":   rowCount,
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg

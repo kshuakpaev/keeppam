@@ -55,6 +55,7 @@ type AccessResult struct {
 	MatchTags           []string
 	MatchMode           string
 	PIIAction           string
+	FileTransfer        string
 }
 
 func (s *Service) ListCommandPacks(ctx context.Context) ([]CommandPack, error) {
@@ -167,6 +168,48 @@ func (s *Service) DeleteCommandPack(ctx context.Context, actorID, id uuid.UUID, 
 	return s.aud.Record(ctx, &actorID, "jea.pack.deleted", "command_policy_pack", id.String(), ip, ua, nil)
 }
 
+// ImportCommandPackPatterns loads patterns from a file body into an existing pack (T-42).
+func (s *Service) ImportCommandPackPatterns(ctx context.Context, actorID, id uuid.UUID, data []byte, filename string, merge bool, ip, ua string) (ImportPackResult, error) {
+	cur, err := s.GetCommandPack(ctx, id)
+	if err != nil {
+		return ImportPackResult{}, err
+	}
+	incoming, err := ParsePatternList(data, filename)
+	if err != nil {
+		return ImportPackResult{}, err
+	}
+	if len(incoming) == 0 {
+		return ImportPackResult{}, fmt.Errorf("no patterns found in file")
+	}
+	before := len(cur.Patterns)
+	var patterns []string
+	if merge {
+		patterns = normalizePatterns(append(append([]string{}, cur.Patterns...), incoming...))
+	} else {
+		patterns = incoming
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE command_policy_packs SET patterns=$2, updated_at=NOW() WHERE id=$1`, id, patterns)
+	if err != nil {
+		return ImportPackResult{}, err
+	}
+	_ = s.aud.Record(ctx, &actorID, "jea.pack.imported", "command_policy_pack", id.String(), ip, ua, map[string]any{
+		"name": cur.Name, "merge": merge, "incoming": len(incoming), "total": len(patterns), "filename": filename,
+	})
+	pack, err := s.GetCommandPack(ctx, id)
+	if err != nil {
+		return ImportPackResult{}, err
+	}
+	added := len(patterns) - before
+	if !merge {
+		added = len(patterns)
+	}
+	if added < 0 {
+		added = 0
+	}
+	return ImportPackResult{Pack: pack, Added: added, Total: len(patterns), Merged: merge}, nil
+}
+
 func normalizePatterns(in []string) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -258,12 +301,12 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	if err != nil {
 		return AccessResult{}, err
 	}
-	assetTags, err := s.assetTags(ctx, in.AssetID)
+	meta, err := s.assetMeta(ctx, in.AssetID)
 	if err != nil {
 		return AccessResult{}, err
 	}
+	assetTags := expandTagAncestors(meta.Tags)
 	userTagSet := toSet(expandTagAncestors(userTags))
-	assetTags = expandTagAncestors(assetTags)
 	assetTagSet := toSet(assetTags)
 	ticket := strings.TrimSpace(in.TicketID)
 
@@ -275,6 +318,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			COALESCE(b.allowed_namespaces,'{}'), COALESCE(b.allowed_egress,'{}'),
 			b.command_policy_pack_id, b.sql_policy_pack_id, b.http_policy_pack_id, b.app_object_pack_id, r.name,
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'), COALESCE(b.pii_action,''),
+			COALESCE(b.file_transfer,''),
 			b.access_policy_id,
 			p.time_start, p.time_end, COALESCE(p.days_of_week, 127),
 			COALESCE(p.required_tags,'{}'), COALESCE(p.require_ticket,false), COALESCE(p.require_reason,false),
@@ -282,14 +326,17 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			COALESCE(p.allowed_namespaces,'{}'), COALESCE(p.allowed_egress,'{}'),
 			p.command_policy_pack_id, p.sql_policy_pack_id, p.http_policy_pack_id, p.app_object_pack_id,
 			COALESCE(p.max_risk,0), COALESCE(p.risk_action,'deny'), COALESCE(p.pii_action,''),
-			b.asset_id, COALESCE(b.asset_match_tags,'{}'), COALESCE(b.asset_match_mode,'all')
+			COALESCE(p.file_transfer,'deny'),
+			b.asset_id, COALESCE(b.asset_match_tags,'{}'), COALESCE(b.asset_match_mode,'all'),
+			COALESCE(b.asset_match_name,''), COALESCE(b.asset_match_hostname,''),
+			COALESCE(b.asset_match_types,'{}'), COALESCE(b.asset_match_cidrs,'{}')
 		FROM asset_access_bindings b
 		LEFT JOIN roles r ON r.id = b.role_id
 		LEFT JOIN access_policies p ON p.id = b.access_policy_id
 		WHERE (b.asset_id=$1
-		    OR `+tagACLSQL("$3")+`)
+		    OR `+dynamicACLSQL()+`)
 		  AND (b.expires_at IS NULL OR b.expires_at > $2)
-		ORDER BY (b.asset_id IS NULL), b.expires_at NULLS LAST, b.created_at DESC`, in.AssetID, now.UTC(), assetTags)
+		ORDER BY (b.asset_id IS NULL), b.expires_at NULLS LAST, b.created_at DESC`, in.AssetID, now.UTC())
 	if err != nil {
 		return AccessResult{}, err
 	}
@@ -314,38 +361,45 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var reqTags, cidrs, countries, devices, namespaces, egress []string
 		var requireTicket, requireReason bool
 		var maxRisk int
-		var riskAction, piiAction string
+		var riskAction, piiAction, fileTransfer string
 		var pStart, pEnd *time.Time
 		var pDays, pMax int
 		var pTags, pCidrs, pCountries, pDevices, pNS, pEgress []string
 		var pTicket, pReason bool
 		var pCmd, pSQL, pHTTP, pApp *uuid.UUID
-		var pAction, pPII string
+		var pAction, pPII, pFT string
 		var bindAsset *uuid.UUID
-		var matchTags []string
-		var matchMode string
-		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &egress, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &piiAction, &polID,
-			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pEgress, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &pPII, &bindAsset, &matchTags, &matchMode); err != nil {
+		var matchTags, matchTypes, matchCIDRs []string
+		var matchMode, matchName, matchHost string
+		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &egress, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &piiAction, &fileTransfer, &polID,
+			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pEgress, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &pPII, &pFT, &bindAsset, &matchTags, &matchMode,
+			&matchName, &matchHost, &matchTypes, &matchCIDRs); err != nil {
 			return AccessResult{}, err
+		}
+		if bindAsset == nil {
+			sel := AssetSelector{Tags: matchTags, Mode: matchMode, Name: matchName, Hostname: matchHost, Types: matchTypes, CIDRs: matchCIDRs}
+			if !sel.MatchAsset(meta) {
+				continue
+			}
 		}
 		c := overlayConstraints(aclConstraints{
 			TimeStart: tStart, TimeEnd: tEnd, DaysOfWeek: days,
 			RequiredTags: reqTags, RequireTicket: requireTicket, RequireReason: requireReason,
 			AllowedCIDRs: cidrs, AllowedCountries: countries, AllowedDevices: devices, AllowedNamespaces: namespaces, AllowedEgress: egress,
 			CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, AppObjectPackID: appPackID,
-			MaxRisk: maxRisk, RiskAction: riskAction, PIIAction: piiAction,
+			MaxRisk: maxRisk, RiskAction: riskAction, PIIAction: piiAction, FileTransfer: fileTransfer,
 		}, aclConstraints{
 			TimeStart: pStart, TimeEnd: pEnd, DaysOfWeek: pDays,
 			RequiredTags: pTags, RequireTicket: pTicket, RequireReason: pReason,
 			AllowedCIDRs: pCidrs, AllowedCountries: pCountries, AllowedDevices: pDevices, AllowedNamespaces: pNS, AllowedEgress: pEgress,
 			CommandPolicyPackID: pCmd, SQLPolicyPackID: pSQL, HTTPPolicyPackID: pHTTP, AppObjectPackID: pApp,
-			MaxRisk: pMax, RiskAction: pAction, PIIAction: pPII,
+			MaxRisk: pMax, RiskAction: pAction, PIIAction: pPII, FileTransfer: pFT,
 		}, polID != nil)
 		tStart, tEnd, days = c.TimeStart, c.TimeEnd, c.DaysOfWeek
 		reqTags, requireTicket, requireReason = c.RequiredTags, c.RequireTicket, c.RequireReason
 		cidrs, countries, devices, namespaces, egress = c.AllowedCIDRs, c.AllowedCountries, c.AllowedDevices, c.AllowedNamespaces, c.AllowedEgress
 		packID, sqlPackID, httpPackID, appPackID = c.CommandPolicyPackID, c.SQLPolicyPackID, c.HTTPPolicyPackID, c.AppObjectPackID
-		maxRisk, riskAction, piiAction = c.MaxRisk, c.RiskAction, c.PIIAction
+		maxRisk, riskAction, piiAction, fileTransfer = c.MaxRisk, c.RiskAction, c.PIIAction, c.FileTransfer
 		match := matchWHO(in.UserID, uid, rid, gid, roleName, roleSet, groupSet)
 		if !match {
 			continue
@@ -388,7 +442,8 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			AllowedNamespaces: normalizeNamespaces(namespaces),
 			AllowedEgress:     egress,
 			MaxRisk:           maxRisk, RiskAction: riskAction, PIIAction: piiAction,
-			TagACL: bindAsset == nil, MatchTags: normalizeTags(matchTags), MatchMode: matchMode,
+			FileTransfer: EffectiveFileTransfer(fileTransfer),
+			TagACL:       bindAsset == nil, MatchTags: normalizeTags(matchTags), MatchMode: matchMode,
 		}
 		s.applyRisk(ctx, in, &res, expires)
 		if res.OK {

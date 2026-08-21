@@ -12,13 +12,16 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 // Recorder writes asciicast v2 (newline-delimited JSON).
 type Recorder struct {
-	mu    sync.Mutex
-	f     *os.File
-	start time.Time
+	mu      sync.Mutex
+	f       *os.File
+	start   time.Time
+	Charset string // utf-8|cp1251|koi8-r|auto — decode before JSON (valid UTF-8)
 }
 
 func NewRecorder(path string, cols, rows int, title string) (*Recorder, error) {
@@ -45,22 +48,30 @@ func NewRecorder(path string, cols, rows int, title string) (*Recorder, error) {
 	return &Recorder{f: f, start: time.Now()}, nil
 }
 
+func (r *Recorder) SetCharset(cs string) {
+	if r == nil {
+		return
+	}
+	r.Charset = termcharset.Normalize(cs)
+}
+
 func (r *Recorder) WriteOutput(data []byte) {
-	r.writeEvent("o", string(data))
+	r.writeEvent("o", data)
 }
 
 func (r *Recorder) WriteInput(data []byte) {
-	r.writeEvent("i", string(data))
+	r.writeEvent("i", data)
 }
 
-func (r *Recorder) writeEvent(kind, data string) {
+func (r *Recorder) writeEvent(kind string, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.f == nil {
 		return
 	}
+	text := termcharset.Decode(data, r.Charset).Text
 	sec := time.Since(r.start).Seconds()
-	b, _ := json.Marshal([]any{sec, kind, data})
+	b, _ := json.Marshal([]any{sec, kind, text})
 	_, _ = r.f.Write(append(b, '\n'))
 }
 
@@ -79,10 +90,13 @@ type DialConfig struct {
 	Address    string
 	Port       int
 	Username   string
-	AuthMethod string // password | ssh_key | ssh_cert
+	AuthMethod string // password | ssh_key | ssh_cert | gssapi
 	Secret     string
 	// Signer is used when AuthMethod=ssh_cert (ephemeral CA-signed key).
 	Signer ssh.Signer
+	// GSSAPI client + target hostname (x/crypto builds SPN host/<target>).
+	GSSAPI       ssh.GSSAPIClient
+	GSSAPITarget string
 	// HostKey is the previously learned marshaled public key (TOFU). Empty = learn on first connect.
 	HostKey []byte
 	// OnHostKey is called when HostKey is empty and the remote presents a key (first-seen trust).
@@ -92,6 +106,15 @@ type DialConfig struct {
 func Dial(cfg DialConfig) (*ssh.Client, error) {
 	var auth []ssh.AuthMethod
 	switch cfg.AuthMethod {
+	case "gssapi":
+		if cfg.GSSAPI == nil {
+			return nil, fmt.Errorf("gssapi requires client")
+		}
+		target := cfg.GSSAPITarget
+		if target == "" {
+			target = cfg.Address
+		}
+		auth = append(auth, ssh.GSSAPIWithMICAuthMethod(cfg.GSSAPI, target))
 	case "ssh_cert":
 		if cfg.Signer == nil {
 			return nil, fmt.Errorf("ssh_cert requires signer")

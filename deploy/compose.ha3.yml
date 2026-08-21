@@ -1,0 +1,47 @@
+# Overlay: 3 control (API) + 2 session-worker (КП-2.4).
+# Requires Compose v2.24+ and base HA overlay:
+#
+#   docker compose -f docker-compose.yml -f compose.ha.yml -f compose.ha3.yml up -d
+#
+# Edge HAProxy / nginx configs switch to 3 API backends.
+
+services:
+  api-c:
+    extends:
+      file: docker-compose.yml
+      service: api
+    ports: !override []
+    environment:
+      KEEPPAM_ISO_PROXY_BASE: "http://edge:8080"
+      KEEPPAM_DRAIN_TIMEOUT: "90s"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  edge:
+    depends_on:
+      api:
+        condition: service_healthy
+      api-b:
+        condition: service_healthy
+      api-c:
+        condition: service_healthy
+      session-worker:
+        condition: service_healthy
+      session-worker-b:
+        condition: service_healthy
+    volumes: !override
+      - ./ha/haproxy-ha3.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+  web:
+    volumes: !override
+      - ./ha/nginx-ha3.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - api-b
+      - api-c

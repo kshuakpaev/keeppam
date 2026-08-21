@@ -1,0 +1,34 @@
+# KeepPAM: RDS RemoteApp (T-34)
+
+Запуск опубликованного приложения RDS вместо полного desktop. HTML5 — через Guacamole;
+native mstsc — поля в `.rdp`.
+
+## Настройка актива
+
+`protocol=rdp`, поля:
+
+| Поле | Guacamole | mstsc `.rdp` |
+|------|-----------|--------------|
+| `rdp_remote_app` | `remote-app` | `remoteapplicationprogram` |
+| `rdp_remote_app_dir` | `remote-app-dir` | `remoteapplicationdir` |
+| `rdp_remote_app_args` | `remote-app-args` | `remoteapplicationcmdline` |
+
+Пустой `rdp_remote_app` = полный desktop (как раньше).
+
+Пример alias RDS: `||Notepad` (двойная вертикальная черта — синтаксис Microsoft RAIL).
+
+## DoD
+
+1. Актив RDP с `rdp_remote_app=||calc` (или приложение, опубликованное на RDS).
+2. Connect HTML5 → guacd handshake содержит `remote-app`.
+3. При `rdp_native` + broker — в скачанном `.rdp` есть `remoteapplicationmode:i:1`.
+4. Audit `session.started` с `remote_app`.
+
+## Ограничения
+
+- Нужен Windows Server RDS (или RemoteApp Tool на Pro) с опубликованным приложением.
+- FreeRDP/guacd должен иметь RAIL plugin (стандартный образ KeepPAM guacd).
+- Citrix published apps — `docs/citrix-socks.txt`, не этот срез.
+- Запись `.guac` / OCR — как у обычного RDP.
+
+Миграция `092_rdp_remoteapp.sql`.

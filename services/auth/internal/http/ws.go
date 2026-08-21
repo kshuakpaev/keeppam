@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	citrixica "github.com/keeppam/auth/internal/citrix"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
@@ -21,6 +25,8 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
+	"github.com/keeppam/auth/internal/telnet"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -68,8 +74,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if creds.Asset.Protocol != "ssh" && creds.Asset.Protocol != "rdp" && creds.Asset.Protocol != "vnc" &&
-		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "https" &&
-		creds.Asset.Protocol != "kubectl" {
+		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "mssql" && creds.Asset.Protocol != "https" &&
+		creds.Asset.Protocol != "kubectl" && creds.Asset.Protocol != "telnet" && creds.Asset.Protocol != "tn3270" &&
+		creds.Asset.Protocol != "citrix" {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
@@ -123,7 +130,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var sqlPackID, httpPackID, appPackID *uuid.UUID
 	var k8sNS []string
-	if creds.Asset.Protocol == "postgres" || creds.Asset.Protocol == "mysql" {
+	if dbproxy.IsSQLProtocol(creds.Asset.Protocol) {
 		if ev.OK && ev.SQLPolicyPackID != nil {
 			sqlPackID = ev.SQLPolicyPackID
 		}
@@ -146,6 +153,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if at, err := s.policy.AssetTags(r.Context(), assetID); err == nil {
 		labels = sessionsvc.MergeLabels(labels, at)
 	}
+	snap := s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)
+	snap.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: s.clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
@@ -153,7 +162,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 		RiskScore: ev.RiskScore, RiskFactors: ev.RiskFactors, Labels: labels,
 		AccessPolicyID: ev.AccessPolicyID, ClientCountry: s.policy.ClientCountry(s.clientIP(r)),
-		PolicySnapshot: snapPtr(s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)),
+		PolicySnapshot: snapPtr(snap),
 	}, r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -166,15 +175,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"has_recording": created.HasRecording, "ticket_id": created.TicketID, "reason": created.Reason,
 		"db_privilege": created.DBPrivilege, "database_name": created.DatabaseName, "isolated": created.Isolated,
 		"break_glass": created.BreakGlass, "k8s_namespaces": created.K8sNamespaces,
+		"require_supervisor": created.RequireSupervisor, "waiting_supervisor": created.WaitingSupervisor,
+		"supervisor_group_id": created.SupervisorGroupID, "supervisor_group_name": created.SupervisorGroupName,
 	}
-	if created.Protocol == "postgres" || created.Protocol == "mysql" {
+	if created.WaitingSupervisor && s.notify != nil {
+		s.notify.OnSupervisorWait(r.Context(), created)
+	}
+	if !created.WaitingSupervisor && dbproxy.IsSQLProtocol(created.Protocol) {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
 		if err == nil {
 			out["wire_token"] = tok
-			if created.Protocol == "postgres" {
+			switch created.Protocol {
+			case "postgres":
 				out["wire_addr"] = s.cfg.PostgresWireAddr
-			} else {
+			case "mysql":
 				out["wire_addr"] = s.cfg.MySQLWireAddr
+			default:
+				out["wire_addr"] = s.cfg.MSSQLWireAddr
 			}
 			out["wire_user"] = created.ID.String()
 			dbHint := created.DatabaseName
@@ -184,12 +201,74 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
 		}
 	}
-	if created.Protocol == "kubectl" {
+	if !created.WaitingSupervisor && created.Protocol == "telnet" && s.cfg.TelnetAddr != "" && s.cfg.TelnetAddr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.TelnetAddr
+			out["wire_user"] = created.ID.String()
+			out["wire_hint"] = "telnet PAM host (wire_addr); login=session UUID, password=wire_token"
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "tn3270" && s.cfg.TN3270Addr != "" && s.cfg.TN3270Addr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.TN3270Addr
+			out["wire_user"] = created.ID.String()
+			out["wire_hint"] = "x3270/c3270 → PAM wire_addr; on KeepPAM login screen: Session UUID + wire_token"
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "citrix" && s.cfg.CitrixSocksAddr != "" && s.cfg.CitrixSocksAddr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			host := s.cfg.CitrixPublicHost
+			if host == "" || host == "off" {
+				host = "127.0.0.1"
+			}
+			socksPort := 1081
+			if _, p, err := net.SplitHostPort(normalizeAddr(s.cfg.CitrixSocksAddr)); err == nil {
+				if n, err := strconv.Atoi(p); err == nil && n > 0 {
+					socksPort = n
+				}
+			}
+			target := creds.Asset.Address
+			if target == "" {
+				target = creds.Asset.Hostname
+			}
+			ica := citrixica.BuildICAFile(citrixica.ICAFileOpts{
+				ProxyHost: host, ProxyPort: socksPort,
+				ProxyUser: created.ID.String(), ProxyPassword: tok,
+				TargetHost: target, TargetPort: creds.Asset.Port,
+				AppName: creds.Asset.Name, Title: creds.Asset.Name,
+			})
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.CitrixSocksAddr
+			out["wire_user"] = created.ID.String()
+			out["citrix_ica"] = ica
+			out["citrix_filename"] = fmt.Sprintf("keeppam-%s.ica", created.ID.String()[:8])
+			out["wire_hint"] = "Workspace: откройте .ica (SOCKS через KeepPAM). Полный ICA decode/STA — SOW."
+		}
+	}
+	if created.Protocol == "kubectl" && !created.WaitingSupervisor {
 		if kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), created.ID); err == nil {
 			out["kubeconfig"] = kube
 			out["k8s_addr"] = addr
 			out["k8s_token"] = tok
 			out["wire_hint"] = fmt.Sprintf("export KUBECONFIG=./keeppam-%s.yaml && kubectl get ns", created.ID.String()[:8])
+		}
+	}
+	if created.Protocol == "rdp" && !created.WaitingSupervisor && s.rdp != nil && s.rdp.Enabled() {
+		info, err := s.rdp.Prepare(r.Context(), created, created.PolicySnapshot, s.cfg.SessionTTL)
+		if err == nil && info != nil {
+			out["rdp_token"] = info.Token
+			out["rdp_addr"] = info.Addr
+			out["rdp_port"] = info.Port
+			out["rdp_user"] = info.User
+			out["rdp_hint"] = info.Hint
+			out["rdp_file"] = info.File
+			out["rdp_proxy"] = info.ProxyOK
+			out["rdp_filename"] = info.Filename
 		}
 	}
 	writeJSON(w, http.StatusCreated, out)
@@ -198,10 +277,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	f := sessionsvc.EventSearchFilter{
-		Q:     r.URL.Query().Get("q"),
-		Type:  r.URL.Query().Get("type"),
-		Hours: 168,
-		Limit: 50,
+		Q:        r.URL.Query().Get("q"),
+		Type:     r.URL.Query().Get("type"),
+		Filename: r.URL.Query().Get("filename"),
+		Protocol: r.URL.Query().Get("protocol"),
+		ClientIP: r.URL.Query().Get("client_ip"),
+		Hours:    168,
+		Limit:    50,
 	}
 	if v := r.URL.Query().Get("hours"); v != "" {
 		if n, err := parseInt(v); err == nil {
@@ -233,9 +315,10 @@ func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	q := r.URL.Query()
 	f := sessionsvc.TimelineFilter{
-		Q:      q.Get("q"),
-		Source: q.Get("source"),
-		Limit:  50,
+		Q:        q.Get("q"),
+		Filename: q.Get("filename"),
+		Source:   q.Get("source"),
+		Limit:    50,
 	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := parseInt(v); err == nil {
@@ -323,8 +406,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			f.Offset = n
 		}
 	}
-	// Admin/auditor see all; others (operator) see own.
-	if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
+	// Admin/auditor see all; supervisors see waiting four-eyes queue; others see own.
+	if r.URL.Query().Get("waiting_supervisor") == "1" && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+		f.WaitingSupervisor = true
+	} else if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
 		f.OnlyUser = &sess.UserID
 	}
 	list, total, err := s.sessionsvc.List(r.Context(), f)
@@ -382,6 +467,9 @@ func (s *Server) handleGetKubeconfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusGone, "session ended")
 		return
 	}
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 	kube, addr, tok, err := s.issueK8sKubeconfig(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -429,12 +517,22 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if row.UserID != sess.UserID &&
+		!rbac.HasPermission(sess.Permissions, "users.write") &&
+		!rbac.HasPermission(sess.Permissions, "audit.read") &&
+		!rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
 	if row.Status == "ended" || row.Status == "failed" {
 		writeJSON(w, http.StatusOK, row)
 		return
 	}
 	if s.live != nil {
 		s.live.Kill(r.Context(), id)
+	}
+	if s.rdp != nil {
+		s.rdp.Stop(id)
 	}
 	if err := s.sessionsvc.MarkEnded(r.Context(), id, ""); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -469,7 +567,7 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 	if row.Protocol == "rdp" || row.Protocol == "vnc" {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", id.String()+".guac"))
-	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "https" || row.Protocol == "kubectl" {
+	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "mssql" || row.Protocol == "https" || row.Protocol == "kubectl" {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", id.String()+".jsonl"))
 	} else {
@@ -482,7 +580,8 @@ func canViewSession(perms []string, viewer, owner uuid.UUID) bool {
 	if viewer == owner {
 		return true
 	}
-	return rbac.HasPermission(perms, "users.write") || rbac.HasPermission(perms, "audit.read")
+	return rbac.HasPermission(perms, "users.write") || rbac.HasPermission(perms, "audit.read") ||
+		rbac.HasPermission(perms, "sessions.supervise")
 }
 
 func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +624,9 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "session not startable")
 		return
 	}
+	if s.rejectIfWaitingSupervisor(w, row) {
+		return
+	}
 
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
 	if err != nil {
@@ -558,36 +660,77 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
 		return
 	}
-
-	client, err := s.assets.DialSSH(r.Context(), creds)
-	if err != nil {
-		_ = rec.Close()
-		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
-		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
-		return
+	if row.PolicySnapshot != nil {
+		rec.SetCharset(row.PolicySnapshot.TerminalCharset)
+	} else {
+		rec.SetCharset(creds.Asset.TerminalCharset)
 	}
 
-	bypass := rbac.HasPermission(authSess.Permissions, "users.write")
-	var injectMu sync.Mutex
-	opts := sshcmd.Deps{Policy: s.policy, Ops: s.ops, Sessions: s.sessionsvc, Audit: s.audit}.BuildOpts(r.Context(), sshcmd.Meta{
-		UserID: authSess.UserID, AssetID: row.AssetID, SessionID: id,
-		Username: authSess.Username, AssetName: row.AssetName, IP: s.clientIP(r),
-		Roles: authSess.Roles, Bypass: bypass, BreakGlass: row.BreakGlass,
-		TicketID: row.TicketID, Snap: row.PolicySnapshot,
-		Inject: func(p []byte) {
-			injectMu.Lock()
-			defer injectMu.Unlock()
-			_ = conn.WriteMessage(websocket.BinaryMessage, p)
-		},
-	})
-	bridge, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
-	if err != nil {
-		_ = client.Close()
-		_ = rec.Close()
-		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
-		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
-		return
+	type ttyBridge interface {
+		Write([]byte) (int, error)
+		Resize(cols, rows int) error
+		CopyOutput(dst io.Writer) error
+		Close()
+	}
+
+	var bridge ttyBridge
+	if creds.Asset.Protocol == "telnet" || row.Protocol == "telnet" {
+		host := creds.Asset.Address
+		if host == "" {
+			host = creds.Asset.Hostname
+		}
+		up, err := telnet.Dial(r.Context(), host, creds.Asset.Port)
+		if err != nil {
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+			return
+		}
+		tb, err := telnet.StartBridge(up, cols, rows, rec, telnet.SessionOpts{
+			Username: creds.Account.Username, Password: creds.Secret,
+			InjectLogin: true, TermType: "xterm-256color",
+		})
+		if err != nil {
+			_ = up.Close()
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			return
+		}
+		bridge = tb
+	} else {
+		client, err := s.assets.DialSSH(r.Context(), creds)
+		if err != nil {
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			_ = s.audit.Record(r.Context(), &authSess.UserID, "session.failed", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"error": err.Error()})
+			return
+		}
+
+		bypass := rbac.HasPermission(authSess.Permissions, "users.write")
+		var injectMu sync.Mutex
+		opts := sshcmd.Deps{Policy: s.policy, Ops: s.ops, Sessions: s.sessionsvc, Audit: s.audit}.BuildOpts(r.Context(), sshcmd.Meta{
+			UserID: authSess.UserID, AssetID: row.AssetID, SessionID: id,
+			Username: authSess.Username, AssetName: row.AssetName, IP: s.clientIP(r),
+			Roles: authSess.Roles, Bypass: bypass, BreakGlass: row.BreakGlass,
+			TicketID: row.TicketID, Snap: row.PolicySnapshot,
+			Inject: func(p []byte) {
+				injectMu.Lock()
+				defer injectMu.Unlock()
+				_ = conn.WriteMessage(websocket.BinaryMessage, p)
+			},
+		})
+		sb, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
+		if err != nil {
+			_ = client.Close()
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			return
+		}
+		bridge = sb
 	}
 	defer bridge.Close()
 
@@ -683,6 +826,21 @@ func parseInt(s string) (int, error) {
 		n = n*10 + int(c-'0')
 	}
 	return n, nil
+}
+
+// normalizeAddr ensures host:port form for net.SplitHostPort (":1081" → "0.0.0.0:1081").
+func normalizeAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return addr
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "0.0.0.0" + addr
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return net.JoinHostPort(addr, "1081")
+	}
+	return addr
 }
 
 func snapPtr(sn policy.Snapshot) *policy.Snapshot {

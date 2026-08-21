@@ -21,7 +21,7 @@ function fromLocalInput(s: string) {
 function sessionHref(e: TimelineEvent) {
   if (!e.session_id) return "";
   const p = e.protocol || "";
-  if (p === "postgres" || p === "mysql") return `/sessions/${e.session_id}/sql`;
+  if (p === "postgres" || p === "mysql" || p === "mssql") return `/sessions/${e.session_id}/sql`;
   if (p === "kubectl") return `/sessions/${e.session_id}/k8s`;
   if (p === "rdp" || p === "vnc") return `/sessions/${e.session_id}/desktop`;
   if (p === "https") return `/sessions/${e.session_id}/app`;
@@ -39,8 +39,9 @@ export function ForensicPage() {
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
   const [q, setQ] = useState("");
+  const [filename, setFilename] = useState("");
   const [source, setSource] = useState("all");
-  const [applied, setApplied] = useState({ userId: "", from: initialFrom, to: initialTo, q: "", source: "all" });
+  const [applied, setApplied] = useState({ userId: "", from: initialFrom, to: initialTo, q: "", filename: "", source: "all" });
   const [offset, setOffset] = useState(0);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -69,6 +70,7 @@ export function ForensicPage() {
       const res = await api.searchTimeline({
         user_id: applied.userId,
         q: applied.q || undefined,
+        filename: applied.filename || undefined,
         source: applied.source !== "all" ? applied.source : undefined,
         from: fromLocalInput(applied.from) || undefined,
         to: fromLocalInput(applied.to) || undefined,
@@ -94,7 +96,7 @@ export function ForensicPage() {
   function onSearch(e: FormEvent) {
     e.preventDefault();
     setOffset(0);
-    setApplied({ userId, from, to, q: q.trim(), source });
+    setApplied({ userId, from, to, q: q.trim(), filename: filename.trim(), source });
   }
 
   async function onCsv() {
@@ -103,6 +105,7 @@ export function ForensicPage() {
       await api.downloadTimelineCsv({
         user_id: applied.userId || undefined,
         q: applied.q || undefined,
+        filename: applied.filename || undefined,
         source: applied.source !== "all" ? applied.source : undefined,
         from: fromLocalInput(applied.from) || undefined,
         to: fromLocalInput(applied.to) || undefined,
@@ -173,6 +176,10 @@ export function ForensicPage() {
         <label>
           Поиск
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="sql, login, denied…" />
+        </label>
+        <label>
+          Имя файла
+          <input value={filename} onChange={(e) => setFilename(e.target.value)} placeholder="secret.bin" />
         </label>
         <button className="btn" type="submit" disabled={busy}>
           Показать

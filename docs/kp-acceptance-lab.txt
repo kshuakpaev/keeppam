@@ -1,0 +1,28 @@
+# KeepPAM: лабораторный прогон acceptance smoke
+
+Дата: 2026-08-21  
+Стенд: локальный `deploy/docker-compose.yml` (api + session-worker + web + obs).  
+Скрипт: `scripts/kp-acceptance-smoke.sh` (`make acceptance-smoke`).
+
+## Результат авто-проверки
+
+```
+ACCEPTANCE SMOKE OK — pass=26 fail=0
+```
+
+Покрывает **автоматизируемый поднабор** `docs/kp-acceptance.txt`:
+readyz/healthz, артефакты КП/NOTICE/T-03, `/auth/methods` (+ ключ `cert_login`),
+порты SSH/portal/API и опциональные Telnet/TN3270/Citrix/MSSQL,
+merge `compose.branded.yml`.
+
+## Не покрыто скриптом (ручная приёмка на стенде Заказчика)
+
+- JIT / кворум / 4-eyes / break-glass end-to-end
+- Replay, OCR, RemoteApp, compliance PDF, SIEM sink
+- HA kill-node, offline update USB, OVA import
+- Полный демо-сценарий `docs/demo-45min.txt`
+
+## Примечание lab
+
+`cert_login=false` при HTTP без client CA — ожидаемо; ключ в methods есть после rebuild API.
+Рабочий стенд: `make api-build` + `docker compose restart api session-worker`.

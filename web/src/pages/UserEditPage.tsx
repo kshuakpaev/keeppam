@@ -15,6 +15,7 @@ export function UserEditPage() {
   const [passkeys, setPasskeys] = useState<{ id: string; name: string; created_at: string }[]>([]);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [x509Identity, setX509Identity] = useState("");
   const [status, setStatus] = useState("active");
   const [role, setRole] = useState("operator");
   const [tags, setTags] = useState("");
@@ -46,6 +47,7 @@ export function UserEditPage() {
         setTarget(u);
         setEmail(u.email);
         setDisplayName(u.display_name || "");
+        setX509Identity(u.x509_identity || "");
         setStatus(u.status);
         setRole((u.roles && u.roles[0]) || "operator");
         setTags((u.tags || []).join(", "));
@@ -71,12 +73,14 @@ export function UserEditPage() {
         status,
         roles: [role],
         group_ids: groupIds,
+        x509_identity: x509Identity,
         tags: tags
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
       });
       setTarget(updated);
+      setX509Identity(updated.x509_identity || "");
       setTags((updated.tags || []).join(", "));
       setMsg("Сохранено");
     } catch (err) {
@@ -193,6 +197,19 @@ export function UserEditPage() {
           onChange={(e) => setDisplayName(e.target.value)}
           disabled={!canWrite}
         />
+
+        <label htmlFor="x509_identity">x509 identity (CN / email SAN)</label>
+        <input
+          id="x509_identity"
+          className="mono"
+          value={x509Identity}
+          onChange={(e) => setX509Identity(e.target.value)}
+          disabled={!canWrite}
+          placeholder="ops@corp.example или CN из сертификата"
+        />
+        <p className="muted" style={{ marginTop: 0 }}>
+          Явный map для входа по клиентскому сертификату. Пусто — fallback: CN=логин или email SAN=email.
+        </p>
 
         <label htmlFor="status">Статус</label>
         <select

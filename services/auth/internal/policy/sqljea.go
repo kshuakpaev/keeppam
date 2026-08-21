@@ -267,7 +267,7 @@ func ClassifySQL(statement string) (verb string, tables []string) {
 		verb = "DELETE"
 	case "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "COMMENT":
 		verb = "DDL"
-	case "COPY", "LOAD":
+	case "COPY", "LOAD", "BULK":
 		verb = "EXPORT"
 	default:
 		verb = "OTHER"

@@ -38,10 +38,10 @@ type Local struct {
 	Root string
 }
 
-func (l *Local) Backend() string         { return "local" }
-func (l *Local) LocalRoot() string       { return l.Root }
-func (l *Local) ObjectLockMode() string  { return "" }
-func (l *Local) ObjectLockDays() int     { return 0 }
+func (l *Local) Backend() string        { return "local" }
+func (l *Local) LocalRoot() string      { return l.Root }
+func (l *Local) ObjectLockMode() string { return "" }
+func (l *Local) ObjectLockDays() int    { return 0 }
 
 func (l *Local) EnsureLocal(ctx context.Context, absPath string) error {
 	_ = ctx
@@ -232,6 +232,10 @@ func (h *Hybrid) relKey(absPath string) (string, error) {
 		return "", fmt.Errorf("path outside recordings dir")
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+func RecordingFiles(base string) []string {
+	return guacCandidates(base)
 }
 
 func guacCandidates(base string) []string {

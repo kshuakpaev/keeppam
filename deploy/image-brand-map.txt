@@ -1,0 +1,20 @@
+# Upstream image → KeepPAM branded tag (docker tag SRC DST).
+# Used by scripts/keeppam-retag.sh and deploy/compose.branded.yml.
+# Lines: source=destination  (# comments / blank ok)
+
+postgres:16-alpine=keeppam-db:16-alpine
+redis:7-alpine=keeppam-cache:7-alpine
+alpine:3.21=keeppam-helper-alpine:3.21
+deploy-api:latest=keeppam-api:latest
+guacamole/guacd:1.5.5=keeppam-session-gateway:1.5.5
+
+prom/prometheus:v2.54.1=keeppam-metrics:v2.54.1
+prom/alertmanager:v0.27.0=keeppam-alertmanager:v0.27.0
+otel/opentelemetry-collector:0.109.0=keeppam-otel-collector:0.109.0
+grafana/tempo:2.6.1=keeppam-tempo:2.6.1
+grafana/grafana:11.4.0=keeppam-grafana:11.4.0
+nats:2.10-alpine=keeppam-nats:2.10-alpine
+opensearchproject/opensearch:2.18.0=keeppam-search:2.18.0
+opensearchproject/opensearch-dashboards:2.18.0=keeppam-search-ui:2.18.0
+curlimages/curl:8.5.0=keeppam-curl:8.5.0
+haproxy:2.9-alpine=keeppam-edge:2.9-alpine

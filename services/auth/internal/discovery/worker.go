@@ -31,6 +31,8 @@ func (s *Service) Run(ctx context.Context) {
 			var runErr error
 			if job.Kind == "accounts" {
 				runErr = s.runAccountsJob(ctx, *job)
+			} else if job.Kind == "ad_accounts" {
+				runErr = s.runADAccountsJob(ctx, *job)
 			} else {
 				runErr = s.runJob(ctx, *job)
 			}

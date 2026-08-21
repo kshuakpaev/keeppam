@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
@@ -11,11 +12,12 @@ type Props = {
 };
 
 export function TerminalSession({ id, title, visible, onClose }: Props) {
+  const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [status, setStatus] = useState("подключение…");
+  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
 
@@ -49,17 +51,17 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
-    ws.onopen = () => setStatus("соединение установлено");
+    ws.onopen = () => setStatus(t("term.connected"));
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; message?: string };
           if (msg.type === "ready") {
-            setStatus("сессия активна");
+            setStatus(t("term.active"));
             term.focus();
           } else if (msg.type === "error") {
-            setError(msg.message || "ошибка");
-            setStatus("ошибка");
+            setError(msg.message || t("term.error"));
+            setStatus(t("term.error"));
           }
         } catch {
           term.write(ev.data);
@@ -71,10 +73,10 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
     };
     ws.onerror = () => {
       setError("WebSocket error");
-      setStatus("ошибка");
+      setStatus(t("term.error"));
     };
     ws.onclose = () => {
-      setStatus("сессия завершена");
+      setStatus(t("term.ended"));
     };
 
     term.onData((data) => {
@@ -130,14 +132,14 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
     <div className="terminal-page session-panel-inner">
       <div className="toolbar">
         <div>
-          <h1>Терминал</h1>
+          <h1>{t("term.title")}</h1>
           <p className="muted">
-            {title} · {status}
+            {title} · {status || t("term.connecting")}
             <span className="mono"> · {id.slice(0, 8)}</span>
           </p>
         </div>
         <button className="btn secondary" type="button" disabled={closing} onClick={() => void handleClose()}>
-          {closing ? "Завершение…" : "Закрыть"}
+          {closing ? t("common.loading") : t("tabs.close")}
         </button>
       </div>
       {error && <p className="error">{error}</p>}

@@ -1,0 +1,39 @@
+# KeepPAM: архив записей SMB/NFS (T-46)
+
+Job в API (один replica, `pg_try_advisory_lock`): сессии `ended`/`failed` старше N дней, есть `recording_path`, ещё не `archived`.
+
+Копия на **NFS-каталог** (mount в контейнер) или **SMB2/3** (go-smb2, TCP 445). CIFS v1 нет. «SMB 4» в ТЗ = SMB 3.1.1 на той же шаре.
+
+SHA-256 основного файла пишется в `sessions.archive_sha256`. Строки сессии и `session_events` **не** удаляются.
+
+Replay: локальный файл, иначе S3 (если hybrid), иначе качает с архива и сверяет checksum.
+
+## Настройка
+
+Config → **Архив записей**. API:
+
+- `GET/PUT /api/v1/admin/settings/archive` (`settings.write`)
+- `POST /api/v1/admin/settings/archive/sync` — прогон сразу (до 200 сессий за раз)
+
+| Поле | Смысл |
+|------|--------|
+| `backend=nfs` | `nfs_path` — уже примонтированный каталог |
+| `backend=smb` | host, share, user, domain, password (в Envelope) |
+| `age_days` | 0 = сразу после конца сессии |
+| `interval_minutes` | 5–1440, default 60 |
+| `delete_local` | после OK удалить локальную копию (S3 WORM не трогает) |
+
+Compose: смонтировать NFS/CIFS в API и worker:
+
+```yaml
+volumes:
+  - /mnt/keeppam-archive:/var/lib/keeppam/archive
+```
+
+Путь в UI: `/var/lib/keeppam/archive`.
+
+## DoD
+
+Файл на шаре, checksum OK, replay сессии с бейджем `archive` без локального файла.
+
+Purge retention не стирает `recording_path` у `archived=true`.

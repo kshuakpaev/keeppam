@@ -1,35 +1,34 @@
 # KeepPAM: Account discovery
 
-## Что делает
+## SSH (`kind=accounts`)
 
-Скан `kind=accounts` обходит активные SSH-активы, у которых есть vault-учётка с секретом, подключается и читает локальных пользователей:
+Обход активных SSH-активов с vault-секретом → `getent passwd` / `/etc/passwd`.
+Privileged: uid 0 / root/admin. Импорт — учётка без секрета.
+
+## AD / LDAP (`kind=ad_accounts`, T-09)
+
+LDAP из Config → Auth (тот же bind, что AD group JIT).
+
+Фильтр:
+
+- `(adminCount=1)`
+- `memberOf` / nested `LDAP_MATCHING_RULE_IN_CHAIN` для Domain/Enterprise/Schema Admins (+ опц. `group_dns`)
+
+Кандидаты: `protocol=ldap`, `privileged=true`, details `{dn, reasons, member_of}`.
+`already_known` — совпадение username или `ad_user_dn` в vault.
+
+Импорт: нужен `target_asset_id` при старте job → `CreateAccount` с `ad_user_dn`, без секрета.
 
 ```
-getent passwd || cat /etc/passwd
+POST /api/v1/admin/discovery/jobs
+{ "kind": "ad_accounts", "target_asset_id": "…" }
 ```
-
-В кандидаты попадают:
-
-- `root` / uid 0
-- uid ≥ 1000
-- низкие uid с интерактивным shell (не nologin/false)
-
-Privileged: uid 0 или имена root/admin/administrator.
-
-## API
-
-- `POST /api/v1/admin/discovery/jobs` `{ "kind": "accounts" }` или `{ "kind": "accounts", "asset_ids": ["…"] }`
-- Кандидаты: `username`, `source_asset_id`, `privileged`, `details` (uid/shell/…)
-- Импорт: создаёт `asset_accounts` **без секрета** (описание «Discovered…»); секрет потом через rotate/checkout.
-
-Сеть (`kind=network` / по умолчанию) — прежний TCP CIDR-скан.
 
 ## UI
 
-Discovery → тип «Учётки (SSH account discovery)» → Запустить → Импорт новых.
+Discovery → «AD privileged (LDAP)» → Кандидаты (новые Domain Admins) → Импорт.
 
-## Ограничения MVP
+## Ограничения
 
-- Только Linux/passwd по SSH (нет WinRM / AD enumeration).
-- Нужен уже заведённый vault-аккаунт на активе для dial.
-- Импорт не копирует пароль с цели.
+- Нет WinRM / локальных Windows SAM (только LDAP directory).
+- Нужен настроенный LDAP URL + user base DN + bind.

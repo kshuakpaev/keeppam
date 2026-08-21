@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/wwt/guac"
 
+	"github.com/keeppam/auth/internal/assets"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
@@ -66,6 +69,10 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a graphical session", http.StatusBadRequest)
 		return
 	}
+	if row.IsWaitingSupervisor() {
+		http.Error(w, "waiting for supervisor", http.StatusConflict)
+		return
+	}
 
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
 	if err != nil {
@@ -106,7 +113,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		pass = ""
 	}
 
-	tunnel, err := s.openGuacTunnel(guacProto, host, port, user, pass, width, height, id)
+	tunnel, err := s.openGuacTunnel(guacProto, host, port, user, pass, width, height, id, row.PolicySnapshot, creds.Asset)
 	if err != nil {
 		slog.Error("guac tunnel", "err", err, "session", id.String())
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
@@ -137,6 +144,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 	_ = s.sessionsvc.MarkActive(r.Context(), id)
 	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.started", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 		"asset": creds.Asset.Name, "account": creds.Account.Username, "protocol": row.Protocol, "via": "guac",
+		"remote_app": creds.Asset.RDPRemoteApp,
 	})
 
 	unregister := s.live.Register(id, func() {
@@ -200,7 +208,7 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 	_ = s.audit.Record(r.Context(), &authSess.UserID, "session.ended", "session", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{"via": "guac"})
 }
 
-func (s *Server) openGuacTunnel(protocol, address string, port int, username, password string, width, height int, sessID uuid.UUID) (guac.Tunnel, error) {
+func (s *Server) openGuacTunnel(protocol, address string, port int, username, password string, width, height int, sessID uuid.UUID, snap *policy.Snapshot, asset assets.Asset) (guac.Tunnel, error) {
 	if s.cfg.GuacdAddr == "" || s.cfg.GuacdAddr == "off" {
 		return nil, fmt.Errorf("guacd is not configured")
 	}
@@ -224,6 +232,10 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 		"dpi":         "96",
 		"color-depth": "24",
 	}
+	rdp := policy.RDPRedir{}
+	if snap != nil {
+		rdp = snap.RDP()
+	}
 	switch protocol {
 	case "rdp":
 		cfg.Parameters["security"] = "any"
@@ -232,11 +244,42 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 		cfg.Parameters["enable-wallpaper"] = "false"
 		cfg.Parameters["enable-font-smoothing"] = "true"
 		cfg.Parameters["disable-audio"] = "true"
-		cfg.Parameters["disable-copy"] = "true"
-		cfg.Parameters["enable-drive"] = "false"
-		cfg.Parameters["enable-printing"] = "false"
+		if rdp.Clipboard {
+			cfg.Parameters["disable-copy"] = "false"
+			cfg.Parameters["disable-paste"] = "false"
+		} else {
+			cfg.Parameters["disable-copy"] = "true"
+			cfg.Parameters["disable-paste"] = "true"
+		}
+		if rdp.Drive {
+			driveDir := filepath.Join(s.cfg.RecordingsDir, "rdp-drive", sessID.String())
+			cfg.Parameters["enable-drive"] = "true"
+			cfg.Parameters["drive-path"] = driveDir
+			cfg.Parameters["create-drive-path"] = "true"
+		} else {
+			cfg.Parameters["enable-drive"] = "false"
+		}
+		if rdp.Printer {
+			cfg.Parameters["enable-printing"] = "true"
+		} else {
+			cfg.Parameters["enable-printing"] = "false"
+		}
+		if app := strings.TrimSpace(asset.RDPRemoteApp); app != "" {
+			cfg.Parameters["remote-app"] = app
+			if d := strings.TrimSpace(asset.RDPRemoteAppDir); d != "" {
+				cfg.Parameters["remote-app-dir"] = d
+			}
+			if a := strings.TrimSpace(asset.RDPRemoteAppArgs); a != "" {
+				cfg.Parameters["remote-app-args"] = a
+			}
+		}
 	case "vnc":
-		cfg.Parameters["disable-copy"] = "true"
+		if rdp.Clipboard {
+			cfg.Parameters["disable-copy"] = "false"
+			cfg.Parameters["disable-paste"] = "false"
+		} else {
+			cfg.Parameters["disable-copy"] = "true"
+		}
 	}
 	if s.cfg.RecordingsDir != "" {
 		recDir := filepath.Join(s.cfg.RecordingsDir, "guac")

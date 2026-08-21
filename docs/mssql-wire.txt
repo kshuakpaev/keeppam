@@ -1,0 +1,51 @@
+# KeepPAM: MSSQL TDS wire
+
+Native клиент (SSMS, Azure Data Studio, `sqlcmd`) ходит на шлюз KeepPAM, пароль актива не видит. Vault-логин подставляется на стороне proxy (login inject).
+
+## Как пользоваться
+
+1. Актив `protocol=mssql`, порт цели обычно `1433`, `database_name` (default `master`).
+2. Создать сессию (JIT/ACL как у PostgreSQL).
+3. В ответе: `wire_user` = UUID сессии, `wire_token`, `wire_addr` (default `:11433`).
+4. Клиент:
+
+```text
+sqlcmd -S pam.example,11433 -U <session-uuid> -P <wire_token> -d master -No
+```
+
+SSMS: server `pam.example,11433`, SQL auth, **Encrypt = Optional** (не Mandatory).
+
+Web SQL-консоль — тот же путь, что PG/MySQL (`/sessions/{id}/sql`).
+
+## Что делает proxy
+
+| Шаг | Поведение |
+|-----|-----------|
+| Pre-login | Ответ `ENCRYPT_NOT_SUP` — TLS **до PAM не** поднимается |
+| LOGIN7 | `user` = session UUID, `password` = wire token; database должен совпадать с сессией |
+| Upstream | `go-mssqldb` на актив: vault user/password, `encrypt=true` + `TrustServerCertificate` |
+| SQL Batch | JEA pack + DLP; statement → `session_events` type `sql`, recording JSONL, audit `session.sql` |
+| RPC / bulk / TM | отказ (MVP: только simple SQL batch) |
+
+Ephemeral DB role **нет** (только postgres/mysql). Запросы идут под vault-account.
+
+## DLP
+
+Всегда deny: `BULK INSERT`, `OPENROWSET` / `OPENDATASOURCE`, `xp_cmdshell`, плюс общие `COPY`/`OUTFILE`. SQL JEA packs те же, что для PG/MySQL.
+
+## Ограничения (не обещать в пилоте без SOW)
+
+- Нет TLS от клиента до PAM (как PG wire `sslmode=disable`). Канал PAM→SQL Server — с encrypt.
+- Нет MARS, нет SSPI/Kerberos login, нет TDS RPC (`sp_*` из SSMS Object Explorer может не работать).
+- Нет Oracle thick-client sync (вне среза password-sync).
+- Remote rotate MSSQL: `ALTER LOGIN` через `password_set` / account rotate (`docs/password-sync.txt`).
+- Живой байт-форвард без terminate-and-query нет: result set собирается и отдаётся как NVARCHAR — типы/precision упрощены.
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| Wire на PAM | `KEEPPAM_MSSQL_WIRE_ADDR` default `:11433` |
+| Цель | `assets.port` default 1433 |
+
+HA: HAProxy TCP `:11433` → api / api-b. См. `docs/ha.txt`, `docs/db-app-pam.txt`.

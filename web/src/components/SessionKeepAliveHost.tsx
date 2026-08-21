@@ -4,9 +4,11 @@ import { AppSession } from "../sessions/AppSession";
 import { DesktopSession } from "../sessions/DesktopSession";
 import { K8sSession } from "../sessions/K8sSession";
 import { SqlSession } from "../sessions/SqlSession";
+import { CitrixSession } from "../sessions/CitrixSession";
+import { Tn3270Session } from "../sessions/Tn3270Session";
 import { TerminalSession } from "../sessions/TerminalSession";
 
-const SESSION_KINDS = new Set(["terminal", "sql", "desktop", "app", "k8s"]);
+const SESSION_KINDS = new Set(["terminal", "sql", "desktop", "app", "k8s", "tn3270", "citrix"]);
 
 export function SessionKeepAliveHost() {
   const { tabs, closeTab } = useSessionTabs();
@@ -56,5 +58,9 @@ function renderSession(
       return <AppSession id={id} title={title} visible={visible} onClose={onClose} />;
     case "k8s":
       return <K8sSession id={id} title={title} visible={visible} onClose={onClose} />;
+    case "tn3270":
+      return <Tn3270Session id={id} title={title} visible={visible} onClose={onClose} />;
+    case "citrix":
+      return <CitrixSession id={id} title={title} visible={visible} onClose={onClose} />;
   }
 }

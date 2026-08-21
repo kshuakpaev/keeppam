@@ -24,7 +24,7 @@ func TestEventSnippet(t *testing.T) {
 		{"app_approved", map[string]any{"method": "GET", "path": "/api/customers/export", "object": "customer.export"}, "APPROVED GET /api/customers/export (customer.export)"},
 		{"egress", map[string]any{"host": "10.1.2.9", "port": 5432}, "10.1.2.9:5432"},
 		{"egress_denied", map[string]any{"host": "8.8.8.8", "port": 53, "reason": "ssh egress destination not allowed"}, "DENIED 8.8.8.8:53 (ssh egress destination not allowed)"},
-		{"started", map[string]any{}, "started"},
+		{"file_transfer", map[string]any{"filename": "secret.bin", "protocol": "scp", "direction": "upload"}, "scp upload secret.bin"},
 	}
 	for _, tc := range cases {
 		got := EventSnippet(tc.typ, tc.p)
@@ -37,5 +37,22 @@ func TestEventSnippet(t *testing.T) {
 func TestLikePatternEscapes(t *testing.T) {
 	if got := likePattern(`a%b_c\d`); got != `%a\%b\_c\\d%` {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWindowTitleFromOCR(t *testing.T) {
+	if WindowTitleFromOCR("Notepad\nFile Edit") != "Notepad" {
+		t.Fatal("first line")
+	}
+	if WindowTitleFromOCR("x") != "" {
+		t.Fatal("too short")
+	}
+	dup := WindowTitlesFromScreen([]TranscriptLine{
+		{Command: "Chrome\nbody", Offset: 1},
+		{Command: "Chrome\nother", Offset: 2},
+		{Command: "Explorer\n", Offset: 3},
+	})
+	if len(dup) != 2 || dup[0].Command != "Chrome" || dup[1].Command != "Explorer" {
+		t.Fatalf("dedupe %#v", dup)
 	}
 }

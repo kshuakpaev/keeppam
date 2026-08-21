@@ -2,10 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { LangSwitch, useI18n } from "../i18n";
 import { webauthnAssert, webauthnSupported } from "../webauthn";
 
 export function LoginPage() {
   const { user, setUser, loading } = useAuth();
+  const { t, te } = useI18n();
   const nav = useNavigate();
   const [params] = useSearchParams();
   const [username, setUsername] = useState("admin");
@@ -17,6 +19,8 @@ export function LoginPage() {
   const [mode, setMode] = useState("local");
   const [oidcReady, setOidcReady] = useState(false);
   const [samlReady, setSamlReady] = useState(false);
+  const [radiusReady, setRadiusReady] = useState(false);
+  const [certLogin, setCertLogin] = useState(false);
   const [samlIdps, setSamlIdps] = useState<{ slug: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -26,6 +30,8 @@ export function LoginPage() {
         setMode(m.mode);
         setOidcReady(m.oidc_ready);
         setSamlReady(!!m.saml_ready);
+        setRadiusReady(!!m.radius_ready);
+        setCertLogin(!!m.cert_login);
         setSamlIdps(m.saml_idps || []);
       } catch {
         /* default local */
@@ -54,7 +60,26 @@ export function LoginPage() {
       else setUser(await api.me());
       nav(res.status === "must_setup" ? "/setup" : "/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка входа");
+      setError(te(err, "login.failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCertLogin() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api.loginCert();
+      if (res.status === "mfa_required" && res.challenge_token) {
+        setChallenge(res.challenge_token);
+        return;
+      }
+      if (res.user) setUser(res.user);
+      else setUser(await api.me());
+      nav(res.status === "must_setup" ? "/setup" : "/");
+    } catch (err) {
+      setError(te(err, "login.certBad"));
     } finally {
       setBusy(false);
     }
@@ -71,7 +96,7 @@ export function LoginPage() {
       else setUser(await api.me());
       nav(res.status === "must_setup" ? "/setup" : "/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Неверный код");
+      setError(te(err, "login.badCode"));
     } finally {
       setBusy(false);
     }
@@ -89,7 +114,7 @@ export function LoginPage() {
       else setUser(await api.me());
       nav(res.status === "must_setup" ? "/setup" : "/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка WebAuthn");
+      setError(te(err, "common.error"));
     } finally {
       setBusy(false);
     }
@@ -98,6 +123,7 @@ export function LoginPage() {
   const showPasswordForm =
     mode === "local" ||
     mode === "ldap" ||
+    mode === "radius" ||
     !!challenge ||
     (mode === "oidc" && !oidcReady) ||
     (mode === "saml" && !samlReady);
@@ -105,23 +131,27 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <div className="card auth-card">
-        <div className="brand">KeepPAM</div>
-        <h1>{challenge ? "Подтверждение MFA" : "Вход"}</h1>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="brand">KeepPAM</div>
+          <LangSwitch />
+        </div>
+        <h1>{challenge ? t("login.mfaTitle") : t("login.title")}</h1>
         <p className="muted">
           {mode === "oidc" && "SSO (OIDC)"}
           {mode === "saml" && "SSO (SAML 2.0)"}
           {mode === "ldap" && "LDAP / Active Directory"}
-          {mode === "local" && "Контроль привилегированного доступа"}
+          {mode === "radius" && t("login.radius")}
+          {mode === "local" && t("login.tagline")}
         </p>
         {error && <p className="error">{error}</p>}
         {!challenge && mode === "oidc" && (
           <div style={{ marginBottom: "1rem" }}>
             {oidcReady ? (
               <a className="btn" href="/api/v1/auth/oidc/start" style={{ display: "inline-block" }}>
-                Войти через SSO
+                {t("login.sso")}
               </a>
             ) : (
-              <p className="error">OIDC включён, но не настроен (issuer / client / secret)</p>
+              <p className="error">{t("login.oidcBad")}</p>
             )}
           </div>
         )}
@@ -140,18 +170,28 @@ export function LoginPage() {
                     }
                     style={{ display: "inline-block", textAlign: "center" }}
                   >
-                    Войти через {idp.name}
+                    {t("login.ssoNamed", { name: idp.name })}
                   </a>
                 ))}
               </div>
             ) : (
-              <p className="error">SAML включён, но не настроен (IdP metadata / cert + SP key)</p>
+              <p className="error">{t("login.samlBad")}</p>
             )}
+          </div>
+        )}
+        {!challenge && mode === "radius" && !radiusReady && (
+          <p className="error">{t("login.radiusBad")}</p>
+        )}
+        {!challenge && certLogin && (
+          <div style={{ marginBottom: "1rem" }}>
+            <button className="btn secondary" type="button" disabled={busy} onClick={() => void onCertLogin()}>
+              {t("login.cert")}
+            </button>
           </div>
         )}
         {showPasswordForm && !challenge && (
           <form onSubmit={onLogin}>
-            <label htmlFor="username">Логин</label>
+            <label htmlFor="username">{t("login.username")}</label>
             <input
               id="username"
               value={username}
@@ -159,7 +199,7 @@ export function LoginPage() {
               autoComplete="username"
               required
             />
-            <label htmlFor="password">Пароль</label>
+            <label htmlFor="password">{t("login.password")}</label>
             <input
               id="password"
               type="password"
@@ -169,14 +209,14 @@ export function LoginPage() {
               required
             />
             <button className="btn" type="submit" disabled={busy}>
-              Войти
+              {t("login.submit")}
             </button>
           </form>
         )}
         {challenge && (
           <div>
             <form onSubmit={onMfa}>
-              <label htmlFor="code">Код TOTP</label>
+              <label htmlFor="code">{t("login.totp")}</label>
               <input
                 id="code"
                 value={code}
@@ -185,7 +225,7 @@ export function LoginPage() {
                 autoComplete="one-time-code"
               />
               <button className="btn" type="submit" disabled={busy || !code.trim()}>
-                Подтвердить TOTP
+                {t("login.confirmTotp")}
               </button>
             </form>
             {webauthnSupported() && (
@@ -196,7 +236,7 @@ export function LoginPage() {
                 disabled={busy}
                 onClick={() => void onPasskey()}
               >
-                Ключ безопасности / Passkey
+                {t("login.passkey")}
               </button>
             )}
           </div>

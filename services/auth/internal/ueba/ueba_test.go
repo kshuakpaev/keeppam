@@ -2,29 +2,59 @@ package ueba
 
 import "testing"
 
-func TestNewAsset(t *testing.T) {
-	if NewAsset(2, false) {
-		t.Fatal("cold start must not fire")
+func TestFastTypingZ(t *testing.T) {
+	z := ZScore(40, 180, 40)
+	if z > KeystrokeZThreshold {
+		t.Fatalf("z=%v want ≤ %v", z, KeystrokeZThreshold)
 	}
-	if NewAsset(3, true) {
-		t.Fatal("usual asset must not fire")
+	if !FastTyping(40, 30, 5, 180, 40, z) {
+		t.Fatal("expected fast typing")
 	}
-	if !NewAsset(3, false) {
-		t.Fatal("4th host against a 3-asset baseline must fire")
+	if FastTyping(180, 30, 5, 180, 40, ZScore(180, 180, 40)) {
+		t.Fatal("normal should not fire")
 	}
 }
 
-func TestSpread(t *testing.T) {
-	if Spread(3, 4) {
-		t.Fatal("4 in a day is new-asset, not spread")
+func TestFastTypingColdStart(t *testing.T) {
+	if !FastTyping(40, 25, 0, 0, 0, 0) {
+		t.Fatal("cold extreme should fire")
 	}
-	if !Spread(3, 6) {
-		t.Fatal("6 vs usual 3 must fire")
+	if FastTyping(120, 25, 0, 0, 0, 0) {
+		t.Fatal("cold normal should not")
 	}
-	if Spread(8, 12) {
-		t.Fatal("12 vs usual 8 is not 2×")
+	if FastTyping(40, 5, 0, 0, 0, 0) {
+		t.Fatal("too few keys")
 	}
-	if Spread(2, 12) {
-		t.Fatal("no baseline → no spread")
+}
+
+func TestFastMouseZ(t *testing.T) {
+	z := ZScore(2.0, 0.4, 0.2)
+	if z < MouseZThreshold {
+		t.Fatalf("z=%v", z)
+	}
+	if !FastMouse(2.0, 50, 30, 5, 0.4, 0.2, z) {
+		t.Fatal("expected fast mouse")
+	}
+	if FastMouse(0.4, 50, 30, 5, 0.4, 0.2, ZScore(0.4, 0.4, 0.2)) {
+		t.Fatal("normal should not")
+	}
+}
+
+func TestFastMouseColdStart(t *testing.T) {
+	if !FastMouse(1.5, 50, 25, 0, 0, 0, 0) {
+		t.Fatal("cold extreme")
+	}
+	if FastMouse(0.3, 50, 25, 0, 0, 0, 0) {
+		t.Fatal("cold normal")
+	}
+}
+
+func TestMeanStd(t *testing.T) {
+	m, s := MeanStd([]float64{100, 200, 300})
+	if m != 200 {
+		t.Fatalf("mean=%v", m)
+	}
+	if s < 80 || s > 85 {
+		t.Fatalf("std=%v", s)
 	}
 }

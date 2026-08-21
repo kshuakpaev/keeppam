@@ -33,12 +33,17 @@ type Config struct {
 	S3ObjectLockDays       int
 	SSHAddr                string
 	SSHHostKeyPath         string
+	TelnetAddr             string // native telnet gateway; empty/off = disabled
+	TN3270Addr             string // native TN3270 gateway; empty/off = disabled
+	CitrixSocksAddr        string // SOCKS5 for Citrix ICA; empty/off = disabled
+	CitrixPublicHost       string // hostname in .ica ProxyHost; empty = localhost
 	Mode                   string // all | api | ssh
 	GuacdAddr              string
 	GuacencURL             string
 	AccessRequestTTL       time.Duration
 	PostgresWireAddr       string
 	MySQLWireAddr          string
+	MSSQLWireAddr          string
 	K8sAPIAddr             string
 	K8sTLSCertFile         string
 	K8sTLSKeyFile          string
@@ -74,6 +79,12 @@ type Config struct {
 	PDFLTVDir              string
 	PDFLTVFetch            bool
 	PDFLTA                 bool
+	DrainTimeout           time.Duration
+	RDPPublicHost          string // hostname in .rdp for native mstsc; empty/off = disabled
+	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
+	RDPProxyCertFile       string
+	RDPProxyKeyFile        string
+	LicenseFile            string // path to license.json (T-52); empty → default max_assets=100
 }
 
 func Load() (Config, error) {
@@ -100,12 +111,17 @@ func Load() (Config, error) {
 		S3ObjectLockDays:       intEnv("KEEPPAM_S3_OBJECT_LOCK_DAYS", 90),
 		SSHAddr:                env("KEEPPAM_SSH_ADDR", ":2222"),
 		SSHHostKeyPath:         env("KEEPPAM_SSH_HOST_KEY", "/tmp/keeppam-ssh-hostkey"),
+		TelnetAddr:             env("KEEPPAM_TELNET_ADDR", ":2323"),
+		TN3270Addr:             env("KEEPPAM_TN3270_ADDR", ":2324"),
+		CitrixSocksAddr:        env("KEEPPAM_CITRIX_SOCKS_ADDR", ":1081"),
+		CitrixPublicHost:       env("KEEPPAM_CITRIX_PUBLIC_HOST", ""),
 		Mode:                   env("KEEPPAM_MODE", "all"),
 		GuacdAddr:              env("KEEPPAM_GUACD_ADDR", "127.0.0.1:4822"),
 		GuacencURL:             env("KEEPPAM_GUACENC_URL", ""),
 		AccessRequestTTL:       durationEnv("KEEPPAM_ACCESS_REQUEST_TTL", 24*time.Hour),
 		PostgresWireAddr:       env("KEEPPAM_PG_WIRE_ADDR", ":15432"),
 		MySQLWireAddr:          env("KEEPPAM_MYSQL_WIRE_ADDR", ":13306"),
+		MSSQLWireAddr:          env("KEEPPAM_MSSQL_WIRE_ADDR", ":11433"),
 		K8sAPIAddr:             env("KEEPPAM_K8S_API_ADDR", ":16443"),
 		K8sTLSCertFile:         env("KEEPPAM_K8S_TLS_CERT_FILE", ""),
 		K8sTLSKeyFile:          env("KEEPPAM_K8S_TLS_KEY_FILE", ""),
@@ -138,6 +154,12 @@ func Load() (Config, error) {
 		PDFLTVDir:              strings.TrimSpace(env("KEEPPAM_PDF_LTV_DIR", "")),
 		PDFLTVFetch:            boolEnv("KEEPPAM_PDF_LTV_FETCH", true),
 		PDFLTA:                 boolEnv("KEEPPAM_PDF_LTA", false),
+		DrainTimeout:           durationEnv("KEEPPAM_DRAIN_TIMEOUT", 90*time.Second),
+		RDPPublicHost:          env("KEEPPAM_RDP_PUBLIC_HOST", ""),
+		RDPProxyBin:            env("KEEPPAM_RDP_PROXY_BIN", ""),
+		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
+		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
+		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

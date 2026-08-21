@@ -1,0 +1,20 @@
+[Unit]
+Description=KeepPAM Virtual Appliance first-boot wizard
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/keeppam/firstboot.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=KEEPPAM_ROOT=/opt/keeppam
+ExecStart=/usr/local/sbin/keeppam-firstboot
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target

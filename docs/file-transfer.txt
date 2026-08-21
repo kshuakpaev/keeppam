@@ -1,0 +1,38 @@
+# KeepPAM: захват SCP/SFTP
+
+Политика `file_transfer` на named Policy и ACL: **deny** (default) | **audit** | **capture**.
+
+| Режим | Шлюз | Хранение |
+|-------|------|----------|
+| deny | отказ exec `scp` / subsystem `sftp` (как раньше) | нет |
+| audit | прокси на актив | метаданные + SHA-256, байты не пишутся |
+| capture | прокси на актив | файл в `recordings/files/{session_id}/`, download байт-в-байт |
+
+Интерактивный `scp`/`sftp`/`rsync` **в PTY** по-прежнему DLP deny (канал не перехватывается). `rsync` exec — всегда deny.
+
+## Как пользоваться
+
+```
+# цель в пути (OpenSSH scp → remote `scp -t ASSET`)
+scp secret.bin user@keeppam:demo-linux-01
+
+# или логин user+ASSET (sftp / несколько ACL)
+sftp user+demo-linux-01@keeppam
+scp secret.bin user+demo-linux-01@keeppam:
+```
+
+Один SSH-актив в ACL — `sftp user@keeppam` без суффикса.
+
+## UI / API
+
+Replay сессии → «Файлы SCP/SFTP»: список из событий `file_transfer` (audit и capture), клик перематывает запись на `offset`. Download — если `captured`.  
+`GET /api/v1/admin/sessions/{id}/files`  
+`GET /api/v1/admin/sessions/{id}/files/{fileId}` — download (`sessions.files.read`).
+
+Forensic: тип `file_transfer`, поиск по имени файла.
+
+WORM: тот же `recstore`, что recordings (S3 Object Lock). RDP clipboard — не в этом срезе.
+
+## Связанное
+
+`docs/dlp.txt`, `docs/session-search.txt`, `docs/main22-plan.txt` T-31.

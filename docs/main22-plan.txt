@@ -1,0 +1,396 @@
+# KeepPAM: план реализации по docs/main22.txt
+
+Инженерный план закрытия закупочного ТЗ. Не коммерческое предложение (`docs/kp.txt`) и не очередь узких срезов (`docs/main21.txt`).
+
+Источник требований: `docs/main22.txt`. Нумерация **T-xx** — сквозная по абзацам ТЗ (общий блок → функциональный → лицензия).
+
+Статусы:
+- **есть** — закрыто текущим кодом, приёмка без доработки;
+- **частично** — ядро есть, не хватает формулировки ТЗ;
+- **нет** — прямой разрыв.
+
+Оценка трудозатрат — календарные недели при 1–2 инженерах, без параллелизма между зависимыми задачами.
+
+---
+
+## 1. Принципы реализации
+
+1. Не ломать deny-by-default, vault inject и запись из потока (asciicast / `.guac`).
+2. Сначала то, что видно в демо согласования и портала (T-16, T-15, T-23), затем HA/архив, затем протоколы.
+3. Третьесторонний runtime (guacd, Tesseract, OpenSearch) не выкидывать: в КП раскрыть как bundled runtime единого дистрибутива KeepPAM (T-03).
+4. Native RDP / clipboard / printers / drives (T-27, T-29) конфликтуют с DLP по умолчанию — включать только политикой, не «всегда on».
+5. Citrix HDX / TN3270 DBCS — SOW; в базе: Telnet, TN3270 MVP, Citrix SOCKS (не guac «на глаз»).
+6. Каждый пункт закрывается миграцией + API + UI + audit-событием + строкой в `docs/kp-acceptance.txt` (или приложении к акту).
+
+Порядок фаз (исторический; все закрыты для mid-market):
+
+```
+P0 упаковка ✓        →  P1 JIT/портал/4-eyes ✓
+P2 запись файлов ✓   →  P3 HA 2+2/3+2 / архив ✓
+P4 протоколы/AD ✓    →  P5 appliance / UEBA / Telnet·TN3270·Citrix SOCKS ✓
+```
+
+---
+
+## 2. Сводка покрытия
+
+| Статус | Кол-во (ориентир) | Примеры |
+|--------|-------------------|---------|
+| есть / есть (срез) | ~47 | T-03 brand, T-04…06, T-08–16, T-18–35*, T-37–52 |
+| частично | 1 | T-07 multi-site async |
+| нет (top-level) | 0 | дыры внутри срезов / SOW (Oracle, HDX, geo…) |
+| не код | 2 | T-53 контракт; T-54 поддержка 12 мес |
+
+\* T-33/T-34: протокольные MVP (Telnet/TN3270/Citrix SOCKS/RemoteApp/MSSQL); хвосты HDX/STA — SOW.
+
+Цель: **частично → есть** для B, где возможно без OEM; **хвосты C → SOW**.
+
+---
+
+## 3. Фазы
+
+| Фаза | Срок (исторический) | Цель | Статус |
+|------|---------------------|------|--------|
+| P0 | 2–3 нед. | Дистрибутив, offline, демо | ✓ |
+| P1 | 8–12 нед. | JIT/портал/4-eyes | ✓ |
+| P2 | 6–8 нед. | Файлы, OCR, charset, dynamic ACL | ✓ |
+| P3 | 8–12 нед. | HA 2+2/3+2, архив, RADIUS PAP + x509 map | ✓ (EAP — хвост C) |
+| P4 | — | AD sync, native RDP, MSSQL, RemoteApp | ✓ срезы |
+| P5 | — | OVA pipeline, UEBA mouse, Telnet/TN3270/Citrix SOCKS | ✓ MVP; HDX/geo — SOW |
+
+\* Исторически T-01 в P0 = compose; OVA pipeline закрыт в P5/КП-2.
+
+---
+
+## 4. Общий блок ТЗ (T-01 … T-14)
+
+### T-01. Virtual Appliance
+**Статус: есть (pipeline)** — Packer (Ubuntu 24.04 cloudimg) + first-boot wizard + OVA/VHDX export. Compose-дистрибутив P0 без изменений.
+**Реализация:** `docs/appliance-ova.txt`, `appliance/`, `scripts/appliance-build.sh`, `appliance-export-ova.sh`, `appliance-export-vhdx.sh`.
+**DoD:** на build host с KVM: bundle → `appliance-build` → `.ova`; импорт в vSphere → мастер → login. Hyper-V — T-02 (тот же диск → VHDX).
+
+### T-02. VMware и Hyper-V
+**Статус: есть (export)** — `appliance-export-ova.sh` (VMware), `appliance-export-vhdx.sh` (Hyper-V Gen2). Гостевые tools: open-vm-tools в образе; Hyper-V daemons — после импорта по необходимости.
+**DoD:** стенд VMware + стенд Hyper-V поднимают control+worker из одного qcow2.
+
+### T-03. Без ПО других производителей
+**Статус: есть (срез)** (`NOTICE` + install/upgrade `--pull never` + brand retag `keeppam-*`).
+**Реализация:** `docs/runtime-brand.txt`, `deploy/image-brand-map.txt`, `deploy/compose.branded.yml`, `scripts/keeppam-retag.sh`; `KEEPPAM_BRAND=1` в install/upgrade.
+**DoD P0:** `keeppam-install.sh` / `keeppam-upgrade.sh` не ходят в registry; на площадке runtime виден как KeepPAM Session Gateway / Search / …  
+**Остаток:** пересборка guacd/OS из исходников под своим Dockerfile (не требуется для КП mid-market).
+
+### T-04. Без агентов
+**Статус: есть.** SSH/RDP/VNC/HTTP/SQL через шлюз.
+**План:** регресс в attack-sim + acceptance. Не ставить агенты «для метаданных окон» (T-32) — снимать из протокола.
+
+### T-05. Трафик сессии, не граббинг экрана
+**Статус: есть** (asciicast, `.guac`). OCR — выборочные кадры (T-10), не замена записи.
+**План:** в документации и UI явно: «запись из потока»; OCR — индекс, не storage format.
+
+### T-06. Модули access / sessions, scale без остановки
+**Статус: есть** (compose 2+2 + Helm, drain, `/livez` `/readyz`).
+**Реализация:** `deploy/compose.ha.yml`, `deploy/helm/keeppam/`, `docs/ha.txt`. SIGTERM: readyz=503, SSH drain `KEEPPAM_DRAIN_TIMEOUT`.
+**DoD:** kill одного api — login/JIT через edge; stop одного worker — SSH на другом жива.
+
+### T-07. HA-кластер, несколько площадок
+**Статус: частично** — 2+2 (`compose.ha.yml`) + 3+2 (`compose.ha3.yml`, Helm api=3). Multi-site async — SOW/P5.
+**DoD P3:** убийство одного api — login/JIT живы. **DoD 3+2:** два api down — третий обслуживает edge.
+
+### T-08. Интеграция с AD / глобальными каталогами
+**Статус: есть** (LDAP/AD, SAML, OIDC, SCIM).
+**План:** чек-лист пилота: bind, group map, nested groups (`docs/groups.txt`). Расширение — T-17 / T-25 / T-48.
+
+### T-09. Discovery неконтролируемых привилегированных УЗ
+**Статус: есть (срез)** — SSH passwd + AD LDAP (`ad_accounts`, `088`), `docs/account-discovery.txt`.
+**DoD:** в тестовом AD видны Domain Admins, не заведённые в KeepPAM.
+
+### T-10. Встроенный OCR
+**Статус: есть** — rus+eng, interval/max_frames в Policy (`079`), `docs/ocr-rdp.txt`. Не live OCR каждого кадра.
+
+### T-11. MFA
+**Статус: есть** (TOTP, WebAuthn, step-up).
+**План:** не трогать, кроме RADIUS как второго фактора — см. T-48.
+
+### T-12. Журнал и аудит
+**Статус: есть** (audit HMAC-chain, SIEM ECS).
+**План:** новые фичи (quorum, supervisor, file capture) обязаны писать audit action.
+
+### T-13. Без удалённого подключения производителя
+**Статус: есть** (on-prem, нет телеметрии).
+**План (P0):** проверка исходящих в attack-sim; в КП явный пункт.
+
+### T-14. Обновления без интернета
+**Статус: есть** (tarball + `docker load` + `--pull never` + rollback).
+**Реализация:** `docs/offline-update.txt`, `scripts/keeppam-pack.sh`, `keeppam-upgrade.sh`, `keeppam-rollback.sh`.
+**DoD:** стенд без registry обновляется с USB (архив `dist/keeppam-*-offline-*.tar.gz`).
+
+---
+
+## 5. Функциональный блок (T-15 … T-51)
+
+### T-15. Портал EN+RU, запрос доступа без пароля
+**Статус: есть** (сценарий JIT+replay; vault inject был раньше).
+**Реализация:** `web/src/i18n/` (словарь + cookie `kp_lang`), `Accept-Language`, API `{ error, code }`. См. `docs/i18n.txt`.
+**DoD:** полный сценарий JIT+replay на EN без «голых» русских строк в UI. Остальные админ-экраны — RU, не в DoD.
+
+### T-16. Кворум согласующих (2 из 3, 3 из 5)
+**Статус: есть** (sequential manager→security **и** quorum N-of-M, миграция `074`).
+**Реализация:** `policy/quorum.go`, `requests.go`, карточка актива, заявки. Снимок N/M/группы на заявке. Один голос на актора; deny любым из пула; binding на N-м голосе.
+**DoD:** демо 2 из 3: два разных согласующих → binding; третий не нужен; повтор того же — 409.
+
+
+### T-17. Синхронизация паролей nix / AD / LDAP / Oracle / MSSQL / MySQL
+**Статус: есть (срез)** — миграция `082`, `docs/password-sync.txt`.
+**Реализация:** `password_sets` + members; rotate set / peer sync при rotate учётки; order directory_first|last; коннекторы SSH/PG/MySQL/MSSQL/LDAP. Oracle — нет.
+**DoD:** смена в KeepPAM меняет local unix + AD (+ DB/MSSQL) в одном наборе.
+
+### T-18. Ротация и JIT в многоузловом HA
+**Статус: есть** — advisory lock на schedule; `secret_rotation_pending` двухфазный remote→vault (`083`).
+**DoD:** kill во время rotate — pending + reconcile не оставляют пароль halfway.
+
+### T-19. Восстановление после split-brain
+**Статус: есть (срез)** — `ReconcilePendingRotations`, `docs/ha.txt`.
+**DoD:** после сбоя mid-rotate vault и цель сходятся (commit new / drop / force rotate + critical audit).
+
+### T-20. Динамические группы по имени/тегу/платформе/адресу
+**Статус: есть** — WHAT-селектор на ACL (`086`): tags/name/hostname/type/cidr, `docs/dynamic-groups.txt`.
+**DoD:** новый актив `prod-db-01` с тегом `prod` (+ опц. name glob) покрывается group ACL без ручного bind.
+
+### T-21. Авторотация по правилам
+**Статус: есть** (rotation policies).
+**План:** UI/доки — явно «правила: TTL, после checkout, после сессии». Регресс.
+
+### T-22. Временной диапазон доступа
+**Статус: есть** (JIT TTL, ABAC time window).
+**План:** в acceptance — cron window «только пн–пт 09–18».
+
+### T-23. «Четыре глаза» — супервайзер сессии
+**Статус: есть** (миграция `075`, право `sessions.supervise`).
+**Реализация:** флаг актива `require_supervisor` + опциональная группа; сессия `pending` до `supervisor_approved_at`; connect SSH/RDP/SQL/k8s/HTTPS блокируется; SSH-баннер wait; dual-control; break-glass skip; timeout 15 мин; kill супервайзером.
+**DoD:** RDP/SSH не стартует без Authorize; после Approve — сессия идёт; deny/timeout закрывает; свою сессию супервизить нельзя.
+
+### T-24. Break-glass
+**Статус: есть.**
+**План:** регресс notify (уже `docs/jit-notify.txt` / SMTP).
+
+### T-25. AD-группа на время сессии + rotate после disconnect
+**Статус: есть** (миграция `081`, пакет `adjit`, `docs/ad-group-jit.txt`).
+**Реализация:** `ad_privileged_group_dn` на активе; `ad_user_dn` на учётке; join на MarkActive; leave на EndHook до MaybeRotateAfterSession; LDAP rotate при group/DN.
+**DoD:** user не в группе до сессии, в группе во время, не в группе после; пароль сменён при rotate_after_session; leave fail → critical audit.
+
+### T-26. Прозрачный шлюз
+**Статус: есть** (SSH :2222, HTML5 RDP).
+**План:** не менять модель; native RDP — T-29.
+
+### T-27. Контроль буфера / принтеров / дисков RDP
+**Статус: есть** — `rdp_clipboard|drive|printer` в Policy (`085`), guac handshake, `docs/native-rdp.txt`. Default off.
+**DoD:** два профиля: DLP-strict (всё off) и full (clipboard on). Запись clipboard в capture — нет (T-31).
+
+### T-28. Сессия без раскрытия пароля
+**Статус: есть.**
+
+### T-29. Любой клиент (PuTTY, Windows RDP, Royal TSX)
+**Статус: есть (срез)** — SSH ✓; RDP native через freerdp-proxy + `.rdp` (`rdp_native`, `KEEPPAM_RDP_*`), `docs/native-rdp.txt`.
+**DoD SSH:** PuTTY/SecureCRT/Royal TSX — уже. DoD RDP: mstsc → KeepPAM → target без пароля в клиенте (при proxy bin). Citrix — T-33.
+
+### T-30. Шлюз: auth на gateway, затем целевая УЗ
+**Статус: есть** (SSH menu / portal).
+
+### T-31. Запись файлов SFTP/SCP/clipboard с восстановлением
+**Статус: есть (SCP/SFTP)** — политика `file_transfer=deny|audit|capture`, миграция `078`, `docs/file-transfer.txt`. RDP clipboard — не в этом срезе (T-27).
+
+### T-32. Мониторинг: I/O + метаданные (процессы, окна, файлы)
+**Статус: есть (файлы + окна OCR)** — `file_transfer` в replay/transcript; forensic `filename`; заголовок окна = первая строка `screen_text`. Процессы Windows без агента — нет.
+**DoD:** forensic фильтр по имени файла; window title — best-effort OCR.
+
+### T-33. Протоколы
+| Протокол        | Сейчас        | Фаза | Подход |
+|-----------------|---------------|------|--------|
+| SSH + L/R fwd   | есть (+ network PAM) | — | регресс |
+| RDP over TLS    | HTML5 guac    | P4 | native — T-29 |
+| RemoteApp       | guac + `.rdp` | — | T-34 ✓ `rdp_remote_app*` |
+| VNC / SSL       | есть          | — | |
+| X11 over SSH    | частично (SSH) | P2 | не отдельный decoder |
+| HTTP/HTTPS      | есть          | — | |
+| SFTP/SCP        | capture/audit/deny | — | T-31 ✓ (clipboard RDP — нет) |
+| Microsoft SQL   | TDS wire `:11433` | — | T-33 ✓ login inject + SQL batch log; TLS client→PAM нет |
+| Telnet          | wire `:2323` + web | — | T-33 ✓ IAC + cast + vault inject |
+| TN3270          | wire `:2324`      | — | T-33 ✓ negotiate + login screen + bridge |
+| Citrix ICA/CGP/STA | SOCKS `:1081` + `.ica` | — | T-33 MVP ✓; HDX/STA — SOW |
+
+**MSSQL:** worker `protocol=mssql`, pre-login без TLS до PAM, LOGIN7 с session UUID + wire token, vault password на цель, SQL batch в `session_events`. `docs/mssql-wire.txt`. RPC/SSPI — нет.
+
+### T-34. Приложения RDS / Citrix
+**RDS RemoteApp:** есть — поля актива `rdp_remote_app|dir|args` → guac + native `.rdp` (`docs/remoteapp.txt`).
+**Citrix:** MVP SOCKS+`.ica` (`docs/citrix-socks.txt`); полный ICA/STA/запись — SOW.
+
+### T-35. GSSAPI / Kerberos в SSH
+**Статус: есть (срез)** — миграция `084`, пакет `sshkrb`, `docs/ssh-kerberos.txt`.
+**Реализация:** `ssh_auth_mode=gssapi` или `auth_method=gssapi`; password→TGT или keytab; `gssapi-with-mic` на `host/<fqdn>`; поле `krb_spn`.
+**DoD:** сессия через KeepPAM на цель с SPN `host/asset` без password auth на sshd (GSSAPI).
+
+### T-36. Live view + kill, свой проигрыватель
+**Сейчас:** SSH live-watch + kill; RDP — статус; replay свой (не HTML5 video file).
+**План (P1–P2):** live RDP view (уже частично guac share? проверить); брендировать player как KeepPAM Player. Take-control запрещён (T-47) — не добавлять.
+**DoD:** watch SSH + kill; replay только read-only.
+
+### T-37. Forensic search (время, IP, протокол, полнотекст, метаданные, имя файла)
+**Статус: есть** — `GET .../sessions/events` (`q`, `filename`, `protocol`, `client_ip`, `type`, `hours`); timeline `filename`. Архив SMB не монтируется для поиска (индекс в PG).
+
+### T-38. Скорость воспроизведения
+**Статус: есть** (`SessionReplayPage` speed).
+
+### T-39. Список команд без агента
+**Статус: есть** (SSH command index / JEA). HTTP — частично. Добить hypertext commands в T-43.
+
+### T-40. Запись из потока, не видео
+**Статус: есть.** MP4 — только export (T-41).
+
+### T-41. Export в видео
+**Статус: есть** (MP4 из guac). SSH — asciinema → опционально ffmpeg (P2, если требуют «как видео»).
+
+### T-42. Kill + policy deny + массовая загрузка black/white lists
+**Статус: есть** — kill/deny были; import txt/csv/json в pack (`POST …/jea/packs/{id}/import`), `docs/jea-import.txt`.
+**DoD:** 500 команд из файла → pack → deny на сессии.
+
+### T-43. Состав записи: трафик, кодировки CP1251/KOI8-R/UTF-8, метаданные, подканалы
+**Статус: есть (срез)** — `assets.terminal_charset` (`087`), decode при записи cast + индекс, `docs/terminal-charset.txt`.
+**DoD:** сессия KOI8-R ищется по русскому слову в UI.
+
+### T-44. Восстановление переданных файлов
+**= T-31** + WORM undelete policy (object lock / soft-delete).
+
+### T-45. Хранение с защитой от НСД
+**Статус: есть** (S3 Object Lock / vault; RBAC).
+**План:** распространить на file capture и SMB-копии (шифрование at rest).
+
+### T-46. Архивация SMB/CIFS v2–4 и NFS
+**Статус: есть** (NFS-каталог + SMB2/3, checksum, replay с шары).
+**Реализация:** `docs/archive-smb-nfs.txt`, миграция `077`, worker в API.
+**DoD:** job копирует recording; SHA-256 OK; replay без локального файла.
+
+### T-47. RBAC админов на replay; без перехвата управления
+**Статус: есть** (permissions на sessions). Take-control не делать.
+**План:** явный permission `sessions.stdin.read` vs metadata-only; проверка в API replay.
+
+### T-48. Admin auth: AD, RADIUS, x509
+**Статус: есть** (RADIUS PAP консоль+SSH; AD/LDAP/SAML были; x509 = mTLS + map CN/SAN→user).
+**Реализация RADIUS:** `docs/radius-auth.txt`, миграция `076`, Config mode `radius`.
+**Реализация x509 login:** `docs/x509-auth.txt`, миграция `093`, `POST /auth/login/cert`, поле пользователя `x509_identity`.
+**DoD RADIUS:** login по Access-Accept тестового сервера; Filter-Id → роль.
+**DoD x509:** client cert с CN/email → сессия (или MFA); несмапленный cert → отказ; аудит via=`x509`.
+**Остаток:** EAP/RadSec (вне mid-market).
+
+### T-49. UEBA: нетипичное поведение, индекс риска
+**Статус: есть** — baseline 30д + keystroke post-session (`docs/ueba.txt`).
+
+### T-50. Факторы UEBA: время, серверы, активности, динамика клавиш, мышь
+**Статус: есть** — IKI клавиш + velocity мыши из guac; `ueba_keystroke_fast` / `ueba_mouse_fast`, `docs/ueba.txt`.
+**DoD:** аномально быстрый ввод/мышь поднимает risk; notify — T-51.
+
+### T-51. Уведомление при нетипичном поведении
+**Статус: есть** — `OnUEBAAnomaly` → inbox/SMTP/webhook `ueba.anomaly`.
+**DoD:** письмо/webhook при `ueba_keystroke_fast` на сессии.
+
+---
+
+## 6. Лицензия и поддержка (T-52 … T-54)
+
+### T-52. Безлимит пользователей, ≥100 ИС, 3+2 HA
+**Статус: есть (срез)** — `license.json` / default max_assets=100, soft warn + hard block create, UI banner, `docs/license.txt`. HA flag informational (кластер — T-07).
+**DoD:** при переполнении лимита создание актива запрещено; banner в UI.
+
+### T-53. Лицензия включает кластер
+**= контракт + T-07 в поставке.**
+
+### T-54. Поддержка 12 месяцев
+**Не код.** Runbook, SLA, `docs/prod-infra.txt`. В план поставки: канал тикетов, offline update (T-14).
+
+---
+
+## 7. Порядок работ (критический путь)
+
+```
+P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14]  ✓
+  │
+  ├─ P1.1  JIT quorum N-of-M                             [T-16]   ✓
+  ├─ P1.2  Session supervisor                            [T-23]   ✓
+  ├─ P1.3  i18n EN/RU                                    [T-15]   ✓
+  └─ P1.4  JEA list import                               [T-42]  ✓
+  │
+  ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓
+  ├─ P2.2  OCR rus+eng                                   [T-10]  ✓
+  ├─ P2.3  Charset CP1251/KOI8                           [T-43]  ✓
+  └─ P2.4  Dynamic groups auto-match                     [T-20]  ✓
+  │
+  ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
+  ├─ P3.2  SMB/NFS archive                               [T-46]  ✓
+  └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ PAP + cert→user
+  │
+  ├─ P4.1  MSSQL TDS                                     [T-33]  ✓ wire `:11433`
+  ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09✓, T-17✓, T-25✓]
+  └─ P4.3  RDP policy; native RDP; RemoteApp             [T-27✓, T-29✓, T-34✓]
+  │
+  └─ P5    OVA pipeline✓; 3+2✓; Kerberos✓; UEBA✓; Telnet✓; TN3270✓; Citrix SOCKS✓; HDX/STA SOW
+```
+
+Параллелить можно: P1.3 (i18n) с P1.1; P2.2 с P2.1; P3.3 с P3.2.
+
+**Очередь кода (mid-market):** закрыта. SOW-модули — `docs/sow-backlog.txt` (только по «SOW: id»).
+
+---
+
+## 8. Первый срез кода (P1.1) — детали
+
+Цель: закрыть формулировку ТЗ «кворум 2 из 3 и 3 из 5» без ломки текущего sequential JIT.
+
+| Шаг | Работа | Файлы |
+|-----|--------|-------|
+| 1 | Миграция quorum-полей, UNIQUE(request_id, actor_id) | `migrations/074_jit_quorum.sql` |
+| 2 | Нормализация mode; sequential без изменений | `policy/stages.go`, `policy/quorum.go` |
+| 3 | Approve/Deny tally + binding на N | `policy/requests.go` |
+| 4 | API asset update: quorum_n/m, group | `assets/service.go`, `http/assets.go` |
+| 5 | UI актива и заявок | `AssetEditPage.tsx`, `AccessRequestsPage.tsx`, `api.ts` |
+| 6 | Audit `access.request.quorum_vote` / `.approved` | `audit` payload |
+| 7 | Тесты 2/3, self-approve deny, duplicate vote | `policy/quorum_test.go` |
+| 8 | `docs/jit-workflow.txt` + строка acceptance | docs |
+
+Оценка: 2–3 недели. После merge — P1.2 supervisor.
+
+---
+
+## 9. Риски и сознательные исключения
+
+| Риск | Решение |
+|------|---------|
+| Citrix HDX / STA — годы у Fudo | SOCKS MVP в базе; HDX — SOW / OEM |
+| TN3270 полный DBCS | MVP wire ✓; DBCS — SOW |
+| Native RDP vs DLP | два профиля политики, default deny clipboard; freerdp-proxy на площадке |
+| «Без чужого ПО» vs guacd | bundled runtime + NOTICE, не форк с нуля |
+| Метаданные процессов Windows без агента | не обещать; OCR/RAIL best-effort |
+| Split-brain паролей | fencing PG + force-rotate (`083`) |
+| 3+2 / multi-site | 3+2 compose/Helm ✓; geo async — SOW |
+
+Не делать в базовом плане: полное live OCR, NAC, eIDAS, shell AST, Citrix HDX, Oracle sync (см. `docs/kp.txt` уровень C).
+
+---
+
+## 10. Связанные документы
+
+- `docs/main22.txt` — исходное ТЗ
+- `docs/kp.txt` — что обещаем в КП (A/B/C)
+- `docs/kp-roadmap.txt` — фазы КП-0…3 (коммерческая нарезка этого плана)
+- `docs/kp-acceptance.txt` — приёмка пилота (уровень A); расширять по мере закрытия T-xx
+- `docs/jit-workflow.txt` — sequential JIT и кворум N-of-M
+- `docs/session-supervisor.txt` — четыре глаза до старта сессии
+- `docs/demo-45min.txt` — продажи: JIT SSH → RDP/SQL → forensic → PDF
+- `docs/archive-smb-nfs.txt` — архив recordings на NFS/SMB, checksum, replay
+- `docs/radius-auth.txt` — вход консоли/SSH-шлюза по RADIUS PAP
+- `docs/install.txt` — `keeppam-install.sh`, USB без git/registry
+- `docs/offline-update.txt` — USB/ISO `docker load`, upgrade/rollback
+- `docs/ha.txt` — HA 2+2 compose/Helm, drain, /livez /readyz
+- `docs/telnet.txt` — Telnet wire `:2323` + web terminal (T-33)
+- `docs/tn3270.txt` — TN3270 wire `:2324` + login screen (T-33)
+- `docs/citrix-socks.txt` — Citrix SOCKS `:1081` + `.ica` MVP (T-33/T-34)
+- `docs/remoteapp.txt` — RDS RemoteApp via guac / mstsc (T-34)
+- `docs/arch.txt` — архитектура для приложения к контракту

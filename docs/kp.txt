@@ -1,0 +1,130 @@
+# KeepPAM: содержание коммерческого предложения (КП)
+
+Документ фиксирует **что мы обещаем заказчику** в КП и как это соотносится с `docs/main22.txt` (типовое ТЗ на PAM класса Fudo) и текущим кодом (`docs/kp-roadmap.txt`, `docs/main22-plan.txt`).
+
+КП строится в три уровня — не обещать всё из main22 одной строкой.
+
+## Позиционирование
+
+**KeepPAM** — on-prem PAM-платформа: шлюз привилегированного доступа, vault, JIT, запись и forensic-поиск, без выдачи постоянных паролей операторам.
+
+| Не мы (без SOW) | Мы |
+|-----------------|-----|
+| Полный аналог CyberArk/Fudo «буква в букву» | Пилот / mid-market: jump + vault + JIT + forensic |
+| Citrix HDX terminate + STA + StoreFront + запись HDX | Citrix SOCKS + `.ica` MVP; HTML5 RDP/VNC; RemoteApp |
+| Multi-site async geo-HA; Oracle thick sync; EAP/RadSec | HA 2+2 / 3+2; RADIUS PAP; password sync SSH/AD/PG/MySQL/MSSQL |
+| UEBA-ML / NAC / eIDAS qualified | UEBA heuristics + notify; PAdES до B-LTA |
+
+Дистрибутив: Compose / Helm; Virtual Appliance — **pipeline** OVA/VHDX (`docs/appliance-ova.txt`), сборка на KVM host.
+
+## Уровни обещаний в КП
+
+### Уровень A — «Включено в поставку» (код есть сейчас)
+
+Формулировки для КП без «после доработки»:
+
+- Веб-портал **EN+RU** (сценарий JIT+replay и админ-консоль).
+- Доступ к целям **без раскрытия пароля** (inject из vault).
+- MFA: TOTP, WebAuthn; step-up на операцию.
+- IdP: локальные учётки, LDAP/AD, OIDC, SAML (несколько IdP), SCIM inbound; **RADIUS PAP** (консоль + SSH); **x509 client cert → user** (`docs/x509-auth.txt`).
+- RBAC + ABAC (теги, CIDR, GeoIP, ticket, reason, device); **dynamic WHAT ACL**.
+- JIT: sequential (руководитель → ИБ) **или кворум N из M** (2 из 3, 3 из 5).
+- «Четыре глаза»: супервайзер до старта сессии.
+- Break-glass с аудитом critical и TTL.
+- SSH-шлюз `:2222` (PuTTY, OpenSSH, SecureCRT; опция **GSSAPI/Kerberos**).
+- RDP/VNC в браузере (Guacamole); **RDS RemoteApp** (`rdp_remote_app`); экспорт MP4.
+- Запись из **потока** (asciicast / `.guac`); replay со скоростью; kill; live-watch SSH.
+- Vault: checkout, dual-control, ротация; **password sync** SSH / AD/LDAP / PG / MySQL / MSSQL (не Oracle).
+- **AD privileged group JIT** (add на сессию + rotate после disconnect).
+- JEA + import black/white lists; DLP PII (SQL/HTTP/SSH/OCR/keystroke).
+- Forensic search; Audit HMAC-chain; SIEM ECS; compliance PDF + PAdES до B-LTA.
+- HA **2+2** и **3+2** (compose/Helm); drain; archive SMB/NFS; offline update.
+- OCR RDP rus+eng (выборочные кадры); charset CP1251/KOI8-R/UTF-8 на терминале.
+- Wire: PostgreSQL / MySQL / **MSSQL** / kubectl; **Telnet** `:2323`; **TN3270** `:2324`.
+- Citrix: **SOCKS + `.ica`** (`:1081`) — транспортный MVP, не HDX.
+- UEBA: baseline + **keystroke/mouse** anomaly + notify.
+- License soft/hard cap активов (`license.json`, default ≥100 ИС).
+- Account discovery (SSH passwd + AD LDAP); без агентов на целях.
+- Native RDP (mstsc `.rdp`) — при `rdp_native` + `freerdp-proxy` на площадке (бинарь не в бандле).
+
+### Уровень B — «В контракте с оговоркой / дозакрытие»
+
+Уже в коде как **срез** — в КП указать ограничения DoD:
+
+- Virtual Appliance: pipeline Packer→OVA/VHDX; готовый образ собирается у Исполнителя/на стенде KVM.
+- «Без ПО других производителей»: единый дистрибутив + NOTICE + brand `keeppam-*` (`docs/runtime-brand.txt`); guacd/Tesseract/OpenSearch — **bundled runtime**.
+- MSSQL: TDS wire без client→PAM TLS / SSPI / RPC.
+- Discovery: нет WinRM / локальный Windows SAM.
+- RDP clipboard/drive/printer — только политикой (default off / DLP-strict).
+
+### Уровень C — «Только SOW / OEM / партнёр»
+
+Не включать в базовую цену без отдельного модуля:
+
+- Citrix **HDX** terminate, CGP full, **STA**, StoreFront broker, запись экрана ICA.
+- Multi-site **async** geo-репликация.
+- Oracle password / thick-client sync.
+- RADIUS **EAP / RadSec**.
+- RDP clipboard **file capture** (как SCP); метаданные **процессов Windows** без агента.
+- Полный NLP/DLP-классификатор; NAC-клиент; eIDAS / ФСТЭК qualified.
+- UEBA-ML / peer-group / live mid-session scoring.
+- Лицензия «неограниченно пользователей / 12 мес поддержки» — **коммерческие условия**.
+
+## Матрица main22 → КП (краткая)
+
+| Блок main22 | Уровень | Комментарий |
+|-------------|---------|-------------|
+| Virtual Appliance, VMware/Hyper-V | A/B | Pipeline ✓; готовый .ova — сборка на KVM |
+| Без ПО других производителей | A/B* | NOTICE + brand `keeppam-*` + `--pull never`; disclose runtime |
+| Без агентов | A | ✓ |
+| Трафик сессии, не граббинг | A | ✓; OCR — кадры, не full-video |
+| Scale / HA 2+2 / 3+2 | A | multi-site async — C |
+| AD/LDAP/SAML/OIDC/SCIM | A | ✓ |
+| Discovery привилегированных УЗ | A | SSH+AD; WinRM — C |
+| OCR rus+eng | A | не live каждого кадра |
+| MFA | A | ✓ |
+| Аудит / SIEM / PDF | A | ✓ |
+| Offline update | A | ✓ |
+| Портал EN+RU | A | ✓ |
+| Кворум 2/3, 3/5 | A | ✓ |
+| Sync паролей | A | без Oracle (C) |
+| HA ротации / split-brain | A | ✓ срез |
+| Dynamic groups / WHAT ACL | A | ✓ |
+| Авторотация / окно времени | A | ✓ |
+| Четыре глаза / break-glass | A | ✓ |
+| AD group on session | A | ✓ |
+| Clipboard/printers/drives RDP | A* | default off; политика |
+| Native mstsc / RemoteApp | A | freerdp-proxy на площадке; RemoteApp ✓ |
+| SCP/SFTP capture | A | clipboard RDP file — C |
+| Протоколы Telnet/TN3270/MSSQL | A | MVP |
+| Citrix | A/C | SOCKS+`.ica` A; HDX/STA C |
+| Kerberos SSH | A | срез |
+| Live view + kill / forensic / replay | A | live RDP view — best-effort |
+| Charset CP1251/KOI8 | A | ✓ |
+| SMB/NFS archive / WORM | A | ✓ |
+| RADIUS / x509 admin | A/C | PAP + cert→user A; EAP/RadSec C |
+| UEBA + notify | A | heuristics; ML — C |
+| Лицензия ≥100 ИС | A | soft/hard cap; 12 мес — контракт |
+
+## Типовые формулировки для текста КП
+
+**Scope пилота:**
+«Развёртывание KeepPAM: control plane + session worker (2+2 или 3+2), AD/LDAP, до N активов SSH/RDP/(опц. SQL/Telnet/TN3270/Citrix SOCKS), JIT, запись, forensic, SIEM. Acceptance — `docs/kp-acceptance.txt`.»
+
+**Ограничения (обязательно в КП):**
+«Графические сессии — HTML5 (RDP/VNC) и опционально native mstsc при freerdp-proxy. Citrix — SOCKS/`.ica` MVP без HDX-записи. Guacamole/OpenSearch/Tesseract — bundled runtime (NOTICE). Multi-site async, Oracle sync, Citrix STA/HDX, NAC, eIDAS — отдельные SOW.»
+
+**Соответствие main22:**
+«Уровень A — закрыт кодом; уровень B — срезы с оговорками DoD в приложении; уровень C — SOW/OEM.»
+
+## Связанные документы
+
+- `docs/kp-roadmap.txt` — фазы КП-0…3 (фактический статус)
+- `docs/main22-plan.txt` — инженерный план T-xx
+- `docs/kp-acceptance.txt` — чек-лист приёмки
+- `docs/sow-backlog.txt` — модули уровня C (только с «SOW: id»)
+- `docs/demo-45min.txt` — демо 45 мин
+- `docs/appliance-ova.txt`, `docs/ha.txt`, `docs/native-rdp.txt`, `docs/remoteapp.txt`
+- `docs/telnet.txt`, `docs/tn3270.txt`, `docs/citrix-socks.txt`, `docs/mssql-wire.txt`
+- `docs/ueba.txt`, `docs/license.txt`, `docs/arch.txt`, `docs/prod-infra.txt`
+- `docs/main22.txt` — исходное ТЗ

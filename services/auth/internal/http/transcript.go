@@ -39,8 +39,10 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	output, _ := s.sessionsvc.ListOutputTranscript(r.Context(), id)
 	keys, _ := s.sessionsvc.ListKeystrokeTranscript(r.Context(), id)
 	screen, _ := s.sessionsvc.ListScreenTextTranscript(r.Context(), id)
+	files, _ := s.sessionsvc.ListFileTranscript(r.Context(), id)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"indexed": indexed, "protocol": row.Protocol, "lines": lines, "output": output, "keystrokes": keys, "screen_text": screen,
+		"files": files, "window_titles": sessionsvc.WindowTitlesFromScreen(screen),
 	})
 }
 
@@ -101,7 +103,11 @@ func (s *Server) handleIndexTranscript(w http.ResponseWriter, r *http.Request) {
 	output, _ := s.sessionsvc.ListOutputTranscript(r.Context(), id)
 	keys, _ := s.sessionsvc.ListKeystrokeTranscript(r.Context(), id)
 	screen, _ := s.sessionsvc.ListScreenTextTranscript(r.Context(), id)
-	resp := map[string]any{"result": out, "lines": lines, "output": output, "keystrokes": keys, "screen_text": screen}
+	files, _ := s.sessionsvc.ListFileTranscript(r.Context(), id)
+	resp := map[string]any{
+		"result": out, "lines": lines, "output": output, "keystrokes": keys, "screen_text": screen,
+		"files": files, "window_titles": sessionsvc.WindowTitlesFromScreen(screen),
+	}
 	if ocrOut != nil {
 		resp["ocr"] = ocrOut
 	}

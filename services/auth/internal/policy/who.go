@@ -91,3 +91,16 @@ func (s *Service) userGroupNames(ctx context.Context, userID uuid.UUID) ([]strin
 func (s *Service) EffectiveGroupNames(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	return s.userGroupNames(ctx, userID)
 }
+
+// UserInGroup is true if the user is in groupID or a descendant (child implies parent).
+func (s *Service) UserInGroup(ctx context.Context, userID, groupID uuid.UUID) (bool, error) {
+	if groupID == uuid.Nil {
+		return true, nil
+	}
+	ids, err := s.userGroupIDs(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	_, ok := ids[groupID]
+	return ok, nil
+}

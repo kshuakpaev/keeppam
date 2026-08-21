@@ -1,4 +1,6 @@
-.PHONY: up down logs tidy api-run smoke web-build api-build sbom geoip-mmdb
+.PHONY: up down logs tidy api-run smoke acceptance-smoke web-build api-build sbom geoip-mmdb pack install demo-seed
+
+web-build:
 
 web-build:
 	cd web && npm install && npm run build
@@ -16,10 +18,10 @@ geoip-mmdb:
 
 # Сборка на хосте — без pull golang/node из Docker Hub (офлайн / IPv6).
 up: api-build web-build
-	docker compose -f deploy/docker-compose.yml build web
+	docker compose -f deploy/docker-compose.yml build web demo-ssh
 	docker compose -f deploy/docker-compose.yml --profile build build iso-browser
-	docker compose -f deploy/docker-compose.yml up -d
-	docker compose -f deploy/docker-compose.yml restart api session-worker
+	docker compose -f deploy/docker-compose.yml --profile obs up -d
+	docker compose -f deploy/docker-compose.yml --profile obs restart api session-worker
 
 logs:
 	docker compose -f deploy/docker-compose.yml logs -f api session-worker web
@@ -36,3 +38,15 @@ api-run:
 
 smoke:
 	./scripts/smoke.sh
+
+acceptance-smoke:
+	./scripts/kp-acceptance-smoke.sh
+
+pack:
+	./scripts/keeppam-pack.sh
+
+install:
+	./scripts/keeppam-install.sh
+
+demo-seed:
+	./scripts/demo-seed.sh

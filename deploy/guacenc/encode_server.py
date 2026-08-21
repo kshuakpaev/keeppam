@@ -11,8 +11,9 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8099"))
-MAX_OCR_FRAMES = 20
-OCR_LANG = os.environ.get("OCR_LANG", "eng")
+MAX_OCR_FRAMES = int(os.environ.get("MAX_OCR_FRAMES", "120"))
+OCR_LANG = os.environ.get("OCR_LANG", "rus+eng")
+OCR_INTERVAL = int(os.environ.get("OCR_INTERVAL_SEC", "15"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,8 +110,14 @@ class Handler(BaseHTTPRequestHandler):
                 max_frames = 1
             if max_frames > MAX_OCR_FRAMES:
                 max_frames = MAX_OCR_FRAMES
+            interval = int(data.get("interval_sec") or OCR_INTERVAL)
+            if interval < 5:
+                interval = 5
+            if interval > 120:
+                interval = 120
+            lang = str(data.get("lang") or OCR_LANG).strip() or OCR_LANG
             video = ensure_video(path)
-            frames = ocr_video(video, max_frames)
+            frames = ocr_video(video, max_frames, interval, lang)
             self._json(200, {"status": "ready", "frames": frames})
         except subprocess.CalledProcessError as e:
             err = (e.stderr or e.stdout or str(e))[-2000:]
@@ -168,9 +175,13 @@ def clean_ocr(text: str) -> str:
     return text.strip()
 
 
-def ocr_video(path: str, max_frames: int) -> list[dict]:
+def ocr_video(path: str, max_frames: int, interval: int = 15, lang: str = "") -> list[dict]:
+    if not lang:
+        lang = OCR_LANG
+    if interval < 5:
+        interval = 5
     dur = probe_duration(path)
-    n = min(max_frames, max(1, int(dur // 30) + 1))
+    n = min(max_frames, max(1, int(dur // interval) + 1))
     frames: list[dict] = []
     last = ""
     with tempfile.TemporaryDirectory(prefix="keeppam-ocr-") as tmp:
@@ -201,7 +212,7 @@ def ocr_video(path: str, max_frames: int) -> list[dict]:
             if not os.path.isfile(png) or os.path.getsize(png) == 0:
                 continue
             ocr = subprocess.run(
-                ["tesseract", png, "stdout", "-l", OCR_LANG, "--psm", "6"],
+                ["tesseract", png, "stdout", "-l", lang, "--psm", "6"],
                 capture_output=True,
                 text=True,
             )

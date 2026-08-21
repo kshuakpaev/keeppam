@@ -1,0 +1,43 @@
+# Native RDP + redirection policy (КП-2.6 / T-27 / T-29)
+
+Два профиля: **DLP-strict** (default) и **full** (clipboard/drive/printer по политике). Native mstsc — опция.
+
+## T-27 — буфер / диски / принтеры (HTML5 Guacamole)
+
+В Access Policy (JEA → Policy):
+
+| Флаг | Default | Guacamole |
+|------|---------|-----------|
+| `rdp_clipboard` | off | `disable-copy` / `disable-paste` |
+| `rdp_drive` | off | `enable-drive` + `recordings/rdp-drive/{session}` |
+| `rdp_printer` | off | `enable-printing` |
+
+Snapshot замораживается при create session. Включение = явное исключение из DLP (`docs/dlp.txt`).
+
+Миграция `085_rdp_policy.sql`.
+
+## T-29 — native mstsc path
+
+1. Policy: `rdp_native=true`.
+2. Env:
+   - `KEEPPAM_RDP_PUBLIC_HOST` — hostname в `.rdp` (пусто/`off` = broker выкл.).
+   - `KEEPPAM_RDP_PROXY_BIN` — путь к `freerdp-proxy` (без бинарника: только `.rdp`/token).
+   - `KEEPPAM_RDP_PROXY_CERT_FILE` / `_KEY_FILE` — опционально (иначе TLS API).
+3. Create session → `rdp_token`, `rdp_file`, `rdp_addr`; UI скачивает `.rdp`.
+4. Broker поднимает **per-session freerdp-proxy** с inject vault-учётки на цель; клиент без пароля цели (NLA к proxy отключён в `.rdp`).
+5. Download: `GET /api/v1/admin/sessions/{id}/rdp.rdp`.
+
+Каналы cliprdr/rdpdr режутся в ini proxy по тем же флагам политики.
+
+## Ограничения
+
+- Полная `.guac`-запись — HTML5-путь; native — audit/session + freerdp-proxy (без guacenc MP4).
+- freerdp-proxy module API / RD Gateway SSO — вне среза.
+- Citrix — КП-3 SOCKS MVP (`docs/citrix-socks.txt`); HDX — SOW.
+- RDS RemoteApp — `docs/remoteapp.txt` (поля актива → guac / `.rdp`).
+
+## DoD
+
+- DLP-strict: clipboard/drive/printer off в HTML5.
+- Full: флаги on → redirect в guac.
+- mstsc → KeepPAM (freerdp-proxy) → target без пароля в клиенте при `rdp_native` + proxy bin.

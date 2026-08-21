@@ -1,0 +1,43 @@
+# KeepPAM: супервайзер сессии («четыре глаза»)
+
+На карточке актива — флаг **Четыре глаза**. Снимок пишется в сессию при создании (смена настройки актива не ломает уже открытое ожидание).
+
+Миграция: `075_session_supervisor.sql`. Право: `sessions.supervise` (admin + роль `security`).
+
+## Модель
+
+```
+Оператор Connect
+  → session pending, require_supervisor
+  → очередь супервайзера (inbox + Запросы)
+  → Authorize
+  → Dial / Guac / SQL / k8s
+```
+
+Deny или таймаут 15 мин → `failed` / «supervisor timeout». Break-glass пропускает ожидание (audit `supervisor_skipped`).
+
+Супервайзер ≠ оператор: свою сессию одобрить нельзя. Если задана группа — только её члены (включая потомков, как ACL). Если группа пустая — любой с `sessions.supervise`.
+
+## Enforcement
+
+Блокировка **до** DialSSH / guac / SQL wire / k8s API:
+
+- `sessionsvc.MarkActive` → `ErrWaitingSupervisor`
+- HTTP WS / Guac / SQL / HTTPS / k8s exec / kubeconfig
+- SSH `:2222` — баннер `Waiting for supervisor…`, wait в канале
+- SQL/k8s wire не выдаются, пока сессия ждёт
+
+После Approve оператор открывает вкладку портала (SSH/RDP/SQL/k8s). Kill чужой сессии — `sessions.supervise` (как `users.write` / `audit.read`).
+
+## API
+
+- `POST /api/v1/admin/sessions/{id}/supervisor/approve|deny` (`sessions.supervise`)
+- `GET /api/v1/admin/sessions?waiting_supervisor=1`
+- create session: `waiting_supervisor`, `require_supervisor`
+- summary: `pending_supervise`
+
+Audit: `session.supervisor.approved` / `session.supervisor.denied`. Inbox: `session.supervisor` супервайзерам, решение — оператору.
+
+## UI
+
+Карточка актива: чекбокс + группа супервайзеров. Оператор после Connect видит ожидание и poll `getSession`. Запросы — очередь «Сессии ждут супервайзера». Сессии — бейдж, кнопки Разрешить/Отклонить.

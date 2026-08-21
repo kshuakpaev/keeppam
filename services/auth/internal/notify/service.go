@@ -14,6 +14,7 @@ import (
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/store"
 )
 
@@ -105,6 +106,36 @@ func (s *Service) UsersWithPermission(ctx context.Context, perm string) ([]uuid.
 	return ids, rows.Err()
 }
 
+func (s *Service) UsersInGroupTree(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error) {
+	if groupID == uuid.Nil {
+		return nil, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE tree AS (
+			SELECT id FROM groups WHERE id=$1
+			UNION ALL
+			SELECT g.id FROM groups g
+			JOIN tree t ON g.parent_id = t.id
+		)
+		SELECT DISTINCT m.user_id
+		FROM user_group_members m
+		JOIN tree t ON m.group_id = t.id
+		JOIN users u ON u.id = m.user_id AND u.status = 'active'`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Notification, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -159,14 +190,25 @@ func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 }
 
 func (s *Service) OnJITCreated(ctx context.Context, req policy.AccessRequest) {
-	perm := policy.StagePermission(req.Stage)
-	ids, err := s.UsersWithPermission(ctx, perm)
+	var ids []uuid.UUID
+	var err error
+	title := "Новый JIT-запрос"
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		title = fmt.Sprintf("Новый JIT-запрос (кворум %d из %d)", req.QuorumN, req.QuorumM)
+		if req.ApproverGroupID != nil {
+			ids, err = s.UsersInGroupTree(ctx, *req.ApproverGroupID)
+		} else {
+			ids, err = s.UsersWithPermission(ctx, "access.approve")
+		}
+	} else {
+		perm := policy.StagePermission(req.Stage)
+		ids, err = s.UsersWithPermission(ctx, perm)
+		if len(req.ApprovalStages) > 1 {
+			title = "Новый JIT-запрос (этап " + req.Stage + ")"
+		}
+	}
 	if err != nil {
 		return
-	}
-	title := "Новый JIT-запрос"
-	if len(req.ApprovalStages) > 1 {
-		title = "Новый JIT-запрос (этап " + req.Stage + ")"
 	}
 	body := fmt.Sprintf("%s запросил доступ к %s на %d мин",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
@@ -181,8 +223,20 @@ func (s *Service) OnJITStage(ctx context.Context, req policy.AccessRequest) {
 	if req.Status != "pending" {
 		return
 	}
-	perm := policy.StagePermission(req.Stage)
-	ids, err := s.UsersWithPermission(ctx, perm)
+	var ids []uuid.UUID
+	var err error
+	title := "JIT: этап " + req.Stage
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		title = fmt.Sprintf("JIT: кворум %d/%d", req.QuorumVotes, req.QuorumN)
+		if req.ApproverGroupID != nil {
+			ids, err = s.UsersInGroupTree(ctx, *req.ApproverGroupID)
+		} else {
+			ids, err = s.UsersWithPermission(ctx, "access.approve")
+		}
+	} else {
+		perm := policy.StagePermission(req.Stage)
+		ids, err = s.UsersWithPermission(ctx, perm)
+	}
 	if err != nil {
 		return
 	}
@@ -194,10 +248,14 @@ func (s *Service) OnJITStage(ctx context.Context, req policy.AccessRequest) {
 	for _, x := range exclude {
 		to = FilterRecipients(to, x)
 	}
-	title := "JIT: этап " + req.Stage
 	body := fmt.Sprintf("%s → %s, нужен %s",
 		nonEmpty(req.RequesterUsername, req.RequesterID.String()),
 		nonEmpty(req.AssetName, req.AssetID.String()), req.Stage)
+	if policy.IsQuorumMode(req.ApprovalMode) {
+		body = fmt.Sprintf("%s → %s, кворум %d из %d",
+			nonEmpty(req.RequesterUsername, req.RequesterID.String()),
+			nonEmpty(req.AssetName, req.AssetID.String()), req.QuorumN, req.QuorumM)
+	}
 	s.insert(ctx, to, "jit.stage", title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload("jit.stage", req))
 	s.fireMail(ctx, to, title, body)
@@ -214,6 +272,42 @@ func (s *Service) OnJITDecided(ctx context.Context, req policy.AccessRequest) {
 	s.insert(ctx, []uuid.UUID{req.RequesterID}, kind, title, body, "access_request", req.ID.String())
 	s.fireWebhook(ctx, JITPayload(kind, req))
 	s.fireMail(ctx, []uuid.UUID{req.RequesterID}, title, body)
+}
+
+func (s *Service) OnSupervisorWait(ctx context.Context, sess sessionsvc.Session) {
+	if s == nil {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "sessions.supervise")
+	if err != nil {
+		return
+	}
+	if sess.SupervisorGroupID != nil {
+		if gids, gerr := s.UsersInGroupTree(ctx, *sess.SupervisorGroupID); gerr == nil && len(gids) > 0 {
+			ids = gids
+		}
+	}
+	to := FilterRecipients(ids, sess.UserID)
+	title := "Сессия ждёт супервайзера"
+	body := fmt.Sprintf("%s → %s (%s)", nonEmpty(sess.Username, sess.UserID.String()),
+		nonEmpty(sess.AssetName, sess.AssetID.String()), sess.Protocol)
+	s.insert(ctx, to, "session.supervisor", title, body, "session", sess.ID.String())
+	s.fireMail(ctx, to, title, body)
+}
+
+func (s *Service) OnSupervisorDecided(ctx context.Context, sess sessionsvc.Session, approved bool) {
+	if s == nil {
+		return
+	}
+	kind := "session.supervisor.approved"
+	title := "Сессия разрешена супервайзером"
+	if !approved {
+		kind = "session.supervisor.denied"
+		title = "Сессия отклонена супервайзером"
+	}
+	body := fmt.Sprintf("%s: %s", nonEmpty(sess.AssetName, sess.AssetID.String()), sess.Protocol)
+	s.insert(ctx, []uuid.UUID{sess.UserID}, kind, title, body, "session", sess.ID.String())
+	s.fireMail(ctx, []uuid.UUID{sess.UserID}, title, body)
 }
 
 func (s *Service) OnOpApproval(ctx context.Context, rec opapprove.Approval) {
@@ -287,6 +381,41 @@ func (s *Service) OnCheckoutCreated(ctx context.Context, req assets.CheckoutRequ
 	s.fireMail(ctx, to, title, body)
 }
 
+func (s *Service) OnUEBAAnomaly(ctx context.Context, sess sessionsvc.Session, payload map[string]any) {
+	if s == nil || payload == nil {
+		return
+	}
+	ids, err := s.UsersWithPermission(ctx, "audit.read")
+	if err != nil {
+		return
+	}
+	factor, _ := payload["factor"].(string)
+	if factor == "" {
+		factor = "ueba.anomaly"
+	}
+	who := nonEmpty(sess.Username, sess.UserID.String())
+	what := nonEmpty(sess.AssetName, sess.AssetID.String())
+	title := "UEBA: аномальный ввод (клавиши)"
+	body := fmt.Sprintf("%s @ %s — %s", who, what, factor)
+	if v, ok := payload["median_iki_ms"]; ok {
+		body = fmt.Sprintf("%s @ %s — median IKI %vms (z=%v)", who, what, v, payload["z"])
+	}
+	to := FilterRecipients(ids, sess.UserID)
+	s.insert(ctx, to, "ueba.anomaly", title, body, "session", sess.ID.String())
+	hook := map[string]any{
+		"source": "keeppam", "event": "ueba.anomaly",
+		"session_id": sess.ID.String(), "user_id": sess.UserID.String(),
+		"username": sess.Username, "asset_id": sess.AssetID.String(),
+		"asset_name": sess.AssetName, "protocol": sess.Protocol,
+		"ts": time.Now().UTC().Format(time.RFC3339),
+	}
+	for k, v := range payload {
+		hook[k] = v
+	}
+	s.fireWebhook(ctx, hook)
+	s.fireMail(ctx, to, title, body)
+}
+
 func (s *Service) OnCheckoutDecided(ctx context.Context, req assets.CheckoutRequest) {
 	kind := "checkout.approved"
 	title := "Checkout одобрен"
@@ -319,7 +448,11 @@ func JITPayload(event string, req policy.AccessRequest) map[string]any {
 		"ticket_id":          req.TicketID,
 		"status":             req.Status,
 		"stage":              req.Stage,
+		"approval_mode":      req.ApprovalMode,
 		"approval_stages":    req.ApprovalStages,
+		"quorum_n":           req.QuorumN,
+		"quorum_m":           req.QuorumM,
+		"quorum_votes":       req.QuorumVotes,
 		"approver_id":        approver,
 		"ts":                 time.Now().UTC().Format(time.RFC3339),
 	}

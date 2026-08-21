@@ -119,7 +119,7 @@ func StartSessionSpan(ctx context.Context, protocol, sessionID, asset string) (c
 
 func HTTPTracing(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !TracingEnabled() || r.URL.Path == "/metrics" || r.URL.Path == "/healthz" {
+		if !TracingEnabled() || r.URL.Path == "/metrics" || r.URL.Path == "/healthz" || r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}

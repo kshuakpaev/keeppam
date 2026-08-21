@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useI18n } from "../i18n";
 
 type Props = {
   name: string;
@@ -8,6 +9,7 @@ type Props = {
 
 export function ProfileMenu({ name, onLogout }: Props) {
   const nav = useNavigate();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -39,10 +41,10 @@ export function ProfileMenu({ name, onLogout }: Props) {
       {open && (
         <div className="profile-dropdown" role="menu">
           <button type="button" role="menuitem" onClick={() => go("/profile")}>
-            Профиль
+            {t("nav.profile")}
           </button>
           <button type="button" role="menuitem" onClick={() => go("/config")}>
-            Конфигурация
+            {t("nav.config")}
           </button>
           <button
             type="button"
@@ -53,7 +55,7 @@ export function ProfileMenu({ name, onLogout }: Props) {
               onLogout();
             }}
           >
-            Выход
+            {t("nav.logout")}
           </button>
         </div>
       )}

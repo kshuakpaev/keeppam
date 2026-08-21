@@ -50,12 +50,15 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if row.Protocol != "postgres" && row.Protocol != "mysql" {
+	if row.Protocol != "postgres" && row.Protocol != "mysql" && row.Protocol != "mssql" {
 		writeErr(w, http.StatusBadRequest, "not a db session")
 		return
 	}
 	if row.Status != "pending" && row.Status != "active" {
 		writeErr(w, http.StatusConflict, "session not connectable")
+		return
+	}
+	if s.rejectIfWaitingSupervisor(w, row) {
 		return
 	}
 	creds, err := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
@@ -66,7 +69,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 	dbName := dbproxy.ResolveDatabase(row.Protocol, row.DatabaseName, creds.Asset.DatabaseName)
 	creds.Asset.DatabaseName = dbName
 	var ephRole string
-	if s.dbEph != nil {
+	if s.dbEph != nil && dbproxy.UsesEphemeralDBRole(row.Protocol) {
 		ephCreds, info, eerr := s.dbEph.Ensure(r.Context(), id, creds, row.DBPrivilege)
 		if eerr != nil {
 			writeErr(w, http.StatusBadRequest, "ephemeral role: "+eerr.Error())

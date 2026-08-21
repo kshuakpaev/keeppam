@@ -28,21 +28,21 @@ import (
 )
 
 type Gateway struct {
-	addr     string
-	public   string
-	cert     tls.Certificate
-	rdb      *redis.Client
-	assets   *assets.Service
-	sessions *sessionsvc.Service
-	audit    *audit.Service
-	live     *sessionsvc.LiveHub
+	addr        string
+	public      string
+	cert        tls.Certificate
+	rdb         *redis.Client
+	assets      *assets.Service
+	sessions    *sessionsvc.Service
+	audit       *audit.Service
+	live        *sessionsvc.LiveHub
 	policy      *policy.Service
 	ops         *opapprove.Service
 	hasOpStepUp func(context.Context, uuid.UUID, uuid.UUID) bool
 	onNeedMFA   func(context.Context, sessionsvc.Session, policy.AccessResult) error
 	rolesOf     func(context.Context, uuid.UUID) []string
-	groupsOf func(context.Context, uuid.UUID) []string
-	trusted  []string
+	groupsOf    func(context.Context, uuid.UUID) []string
+	trusted     []string
 
 	mu        sync.Mutex
 	upstreams map[uuid.UUID]*sessionUpstream
@@ -163,6 +163,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	row, err := g.sessions.Get(r.Context(), sid)
 	if err != nil || (row.Status != "pending" && row.Status != "active") {
 		writeK8sStatus(w, http.StatusUnauthorized, "Unauthorized", "session not active")
+		return
+	}
+	if row.IsWaitingSupervisor() {
+		writeK8sStatus(w, http.StatusForbidden, "Forbidden", "waiting for supervisor")
 		return
 	}
 	if row.Protocol != "kubectl" {

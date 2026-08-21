@@ -1,0 +1,48 @@
+# KeepPAM: вход по клиентскому сертификату (T-48 / x509)
+
+mTLS к API уже был (`KEEPPAM_TLS_*` + `KEEPPAM_TLS_CLIENT_CA_FILE` / SPIFFE).
+Этот срез добавляет **map сертификата → пользователь KeepPAM** и кнопку входа.
+
+## Условия
+
+1. TLS на API включён, client CA задан → `MTLSMode` = `optional` или `required`.
+2. Браузер/клиент предъявляет client cert на TLS-handshake к API (не к фронту через чужой TLS-терминатор без проброса cert).
+3. Пользователь существует в БД.
+
+## Сопоставление
+
+Из peer cert берутся (lower, unique): Subject CN → email SAN → DNS SAN.
+
+Порядок поиска:
+
+1. `users.x509_identity` (явный map в карточке пользователя);
+2. иначе `username` = identity;
+3. иначе `email` = identity.
+
+Несколько разных пользователей → отказ. MFA локальный остаётся (как у пароля).
+
+## API / UI
+
+| Что | Где |
+|-----|-----|
+| `POST /api/v1/auth/login/cert` | тело `{}`; нужен peer cert |
+| `GET /api/v1/auth/methods` | `cert_login`, `cert_presented` |
+| Users → edit | поле **x509 identity** |
+| Login | кнопка «Войти по сертификату» если `cert_login` |
+
+Аудит: `user.login.*` с `via=x509` / reason `x509_unmapped` / `x509_no_identity`.
+
+## Env (напоминание)
+
+```text
+KEEPPAM_TLS_CERT_FILE=…
+KEEPPAM_TLS_KEY_FILE=…
+KEEPPAM_TLS_CLIENT_CA_FILE=…   # или SPIFFE bundle
+KEEPPAM_TLS_REQUIRE_CLIENT_CERT=false   # optional: кнопка + пароль; true — только с cert
+```
+
+Миграция: `093_x509_login.sql`.
+
+## Вне scope
+
+EAP/RADIUS-TLS, проброс cert через недоверенный reverse-proxy header, auto-provision по CN.

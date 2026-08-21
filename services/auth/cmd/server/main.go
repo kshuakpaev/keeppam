@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/keeppam/auth/internal/adjit"
 	"github.com/keeppam/auth/internal/analytics"
 	"github.com/keeppam/auth/internal/appaccess"
 	"github.com/keeppam/auth/internal/assets"
@@ -28,19 +29,24 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
+	"github.com/keeppam/auth/internal/health"
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/pades"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/recstore"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -50,10 +56,17 @@ import (
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/telnetgw"
+	"github.com/keeppam/auth/internal/tn3270gw"
+	"github.com/keeppam/auth/internal/citrixgw"
 	"github.com/keeppam/auth/internal/users"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "readyz" {
+		os.Exit(probeReadyz())
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg, err := config.Load()
@@ -149,8 +162,21 @@ func main() {
 	mem = crypto.LastMemStatus()
 	slog.Info("memory", "data_key_mlock", mem.DataKeyMlock, "coredump", mem.CoreDump)
 
+	life := health.New()
+	life.SetCheck(func(ctx context.Context) error {
+		if err := db.Pool.Ping(ctx); err != nil {
+			return fmt.Errorf("postgres: %w", err)
+		}
+		if err := sessions.Redis().Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("redis: %w", err)
+		}
+		return nil
+	})
+
 	auditSvc := audit.New(db)
 	auditSvc.SetMAC(env)
+	archSvc := recarch.New(db, auditSvc, env, recStore)
+	recStore = recarch.Wrap(recStore, archSvc)
 	settingsSvc := settings.New(db, auditSvc, env)
 	siemSvc := siem.New(db, auditSvc, env)
 	itsmSvc := itsm.New(db, auditSvc, env, sessions.Redis())
@@ -160,6 +186,19 @@ func main() {
 	usersSvc := users.New(db, auditSvc)
 	scimSvc := scim.New(db, usersSvc, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
+	licFile, licErr := license.Load(cfg.LicenseFile)
+	if licErr != nil {
+		slog.Warn("license load", "err", licErr)
+		licFile = license.DefaultFile()
+	}
+	assetsSvc.SetAssetQuota(func(ctx context.Context) error {
+		n, err := assetsSvc.CountActive(ctx)
+		if err != nil {
+			return err
+		}
+		return licFile.AllowCreate(n, time.Now())
+	})
+	slog.Info("license", "max_assets", licFile.MaxAssets, "ha", licFile.HA, "source", licFile.Source)
 	sshCASvc := sshca.New(db, env, auditSvc)
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
@@ -180,8 +219,13 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
+	castIdx.SetUEBAHook(func(ctx context.Context, row sessionsvc.Session, payload map[string]any) {
+		notifySvc.OnUEBAAnomaly(ctx, row, payload)
+	})
 	live := sessionsvc.NewLiveHub(sessions.Redis())
+	var rdpBroker *rdpgw.Broker
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
@@ -207,6 +251,21 @@ func main() {
 		notifySvc.OnOpApproval(ctx, rec)
 	}
 	var k8sGw *k8sproxy.Gateway
+	resolveDir := func(ctx context.Context) (adjit.DirectoryConfig, error) {
+		cfg, _, ldapEnc, err := settingsSvc.Get(ctx)
+		if err != nil {
+			return adjit.DirectoryConfig{}, err
+		}
+		pass, err := settingsSvc.DecryptSecret(ldapEnc)
+		if err != nil {
+			return adjit.DirectoryConfig{}, err
+		}
+		return adjit.DirectoryFromAuthSettings(cfg, pass), nil
+	}
+	discoverySvc.SetDirectory(resolveDir)
+	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, resolveDir)
+	assetsSvc.SetLDAPPasswordChanger(adJit)
+	sessSvc.SetStartHook(adJit.OnSessionStart)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
@@ -223,6 +282,10 @@ func main() {
 			if k8sGw != nil {
 				k8sGw.DropSession(id)
 			}
+		}
+		adJit.OnSessionEnd(ctx, id)
+		if rdpBroker != nil {
+			rdpBroker.Stop(id)
 		}
 		if row, err := sessSvc.Get(ctx, id); err == nil {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
@@ -369,7 +432,21 @@ func main() {
 				}()
 			}
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc)
+		var rdpBrokerInit *rdpgw.Broker
+		if cfg.RDPPublicHost != "" && cfg.RDPPublicHost != "off" {
+			cert, key := cfg.RDPProxyCertFile, cfg.RDPProxyKeyFile
+			if cert == "" {
+				cert = cfg.TLSCertFile
+			}
+			if key == "" {
+				key = cfg.TLSKeyFile
+			}
+			rdpBrokerInit = rdpgw.NewBroker(cfg.RDPPublicHost, cfg.RDPProxyBin, cert, key,
+				filepath.Join(cfg.RecordingsDir, "rdp-proxy"), sessions.Redis(), assetsSvc, sessSvc)
+			rdpBroker = rdpBrokerInit
+			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
+		}
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -400,6 +477,7 @@ func main() {
 		go siemSvc.Run(runCtx)
 		go discoverySvc.Run(runCtx)
 		go complianceSvc.Run(runCtx)
+		go archSvc.Run(runCtx)
 		if cfg.PostgresWireAddr != "" && cfg.PostgresWireAddr != "off" {
 			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
 			go func() {
@@ -416,6 +494,14 @@ func main() {
 				}
 			}()
 		}
+		if cfg.MSSQLWireAddr != "" && cfg.MSSQLWireAddr != "off" {
+			msWire := dbproxy.NewWireGateway(cfg.MSSQLWireAddr, "mssql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			go func() {
+				if err := msWire.ListenAndServe(runCtx); err != nil {
+					slog.Error("mssql wire", "err", err)
+				}
+			}()
+		}
 		go func() {
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()
@@ -424,11 +510,15 @@ func main() {
 				case <-runCtx.Done():
 					return
 				case <-t.C:
-					n, err := sessSvc.CloseStale(runCtx, 2*time.Minute)
-					if err != nil {
+					if n, err := sessSvc.CloseStale(runCtx, 2*time.Minute); err != nil {
 						slog.Warn("session reaper", "err", err)
 					} else if n > 0 {
 						slog.Info("session reaper closed stale", "count", n)
+					}
+					if n, err := sessSvc.ExpireWaitingSupervisor(runCtx, 15*time.Minute); err != nil {
+						slog.Warn("supervisor wait reaper", "err", err)
+					} else if n > 0 {
+						slog.Info("supervisor wait timed out", "count", n)
 					}
 					expired, err := policySvc.ExpirePending(runCtx, cfg.AccessRequestTTL)
 					if err != nil {
@@ -451,19 +541,73 @@ func main() {
 					} else if n > 0 {
 						slog.Info("scheduled rotation done", "count", n)
 					}
+					if n, err := assetsSvc.ReconcilePendingRotations(runCtx); err != nil {
+						slog.Warn("rotation reconcile", "err", err)
+					} else if n > 0 {
+						slog.Info("rotation reconcile done", "count", n)
+					}
 				}
 			}
 		}()
 	}
 
+	var sshGw *sshgw.Gateway
 	if runSSH {
-		gw := sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc)
+		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
-			if err := gw.ListenAndServe(); err != nil {
+			if err := sshGw.ListenAndServe(); err != nil {
 				slog.Error("ssh gateway", "err", err)
 				os.Exit(1)
 			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.TelnetAddr != "" && cfg.TelnetAddr != "off" {
+		tnGw := telnetgw.New(cfg.TelnetAddr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("telnet worker starting", "addr", cfg.TelnetAddr, "mode", cfg.Mode)
+			if err := tnGw.ListenAndServe(runCtx); err != nil {
+				slog.Error("telnet gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.TN3270Addr != "" && cfg.TN3270Addr != "off" {
+		t3Gw := tn3270gw.New(cfg.TN3270Addr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("tn3270 worker starting", "addr", cfg.TN3270Addr, "mode", cfg.Mode)
+			if err := t3Gw.ListenAndServe(runCtx); err != nil {
+				slog.Error("tn3270 gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.CitrixSocksAddr != "" && cfg.CitrixSocksAddr != "off" {
+		cxGw := citrixgw.New(cfg.CitrixSocksAddr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		go func() {
+			slog.Info("citrix socks starting", "addr", cfg.CitrixSocksAddr, "mode", cfg.Mode)
+			if err := cxGw.ListenAndServe(runCtx); err != nil {
+				slog.Error("citrix socks", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if runSSH && !runHTTP {
+		hs := &http.Server{Addr: cfg.HTTPAddr, Handler: life.Handler()}
+		go func() {
+			slog.Info("ssh health listening", "addr", cfg.HTTPAddr)
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("ssh health", "err", err)
+			}
+		}()
+		defer func() {
+			c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = hs.Shutdown(c)
 		}()
 	}
 
@@ -475,11 +619,16 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	slog.Info("shutdown", "drain", cfg.DrainTimeout.String())
+	life.SetDraining(true)
 	runCancel()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), cfg.DrainTimeout)
+	defer drainCancel()
+	if sshGw != nil {
+		sshGw.Drain(drainCtx)
+	}
 	if srv != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		_ = srv.Shutdown(drainCtx)
 	}
 }
 
@@ -492,4 +641,31 @@ func loadSPIFFEID(cfg config.Config) string {
 		return ""
 	}
 	return id.IDs[0]
+}
+
+func probeReadyz() int {
+	addr := os.Getenv("KEEPPAM_HTTP_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }

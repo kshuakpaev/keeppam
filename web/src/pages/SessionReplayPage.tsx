@@ -2,7 +2,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
-import { api, type PamSession, type TranscriptLine } from "../api";
+import { api, type PamSession, type TranscriptLine, type SessionFile } from "../api";
+import { useI18n } from "../i18n";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
 import "xterm/css/xterm.css";
@@ -23,6 +24,7 @@ function formatMs(ms: number): string {
 }
 
 export function SessionReplayPage() {
+  const { t, te } = useI18n();
   const { id } = useParams<{ id: string }>();
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
@@ -39,8 +41,12 @@ export function SessionReplayPage() {
   const [outputLines, setOutputLines] = useState<TranscriptLine[]>([]);
   const [keystrokes, setKeystrokes] = useState<TranscriptLine[]>([]);
   const [screenText, setScreenText] = useState<TranscriptLine[]>([]);
+  const [files, setFiles] = useState<SessionFile[]>([]);
+  const [transferFiles, setTransferFiles] = useState<TranscriptLine[]>([]);
+  const [windowTitles, setWindowTitles] = useState<TranscriptLine[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [sshSpeed, setSshSpeed] = useState(1);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -52,7 +58,8 @@ export function SessionReplayPage() {
   const sshRef = useRef<{
     term: Terminal;
     events: CastEv[];
-    replay: (speed: number, onDone?: () => void) => () => void;
+    replay: (speed: number, fromSec?: number, onDone?: () => void) => () => void;
+    stop?: () => void;
   } | null>(null);
 
   useEffect(() => {
@@ -69,6 +76,12 @@ export function SessionReplayPage() {
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
         setIsolated(!!sess.isolated);
+        try {
+          const fl = await api.listSessionFiles(id);
+          if (!cancelled) setFiles(fl.files || []);
+        } catch {
+          if (!cancelled) setFiles([]);
+        }
         if (sess.protocol === "ssh" || sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           try {
             const t = await api.getSessionTranscript(id);
@@ -77,6 +90,8 @@ export function SessionReplayPage() {
               setOutputLines(t.output || []);
               setKeystrokes(t.keystrokes || []);
               setScreenText(t.screen_text || []);
+              setTransferFiles(t.files || []);
+              setWindowTitles(t.window_titles || []);
             }
           } catch {
             /* replay still works */
@@ -84,7 +99,7 @@ export function SessionReplayPage() {
         }
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
-        if (!res.ok) throw new Error("запись недоступна");
+        if (!res.ok) throw new Error(t("replay.unavailable"));
 
         if (sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           const blob = await res.blob();
@@ -107,7 +122,7 @@ export function SessionReplayPage() {
           };
 
           recording.onerror = (msg: string) => {
-            setError(msg || "ошибка разбора записи");
+            setError(msg || t("replay.parseError"));
           };
           recording.onprogress = (dur: number) => {
             setDuration(dur);
@@ -155,7 +170,7 @@ export function SessionReplayPage() {
         fitAddon.fit();
 
         const lines = text.trim().split("\n");
-        if (lines.length === 0) throw new Error("пустая запись");
+        if (lines.length === 0) throw new Error(t("replay.empty"));
         const header = JSON.parse(lines[0]) as CastHeader;
         term.resize(header.width || 80, header.height || 24);
         fitAddon.fit();
@@ -171,14 +186,18 @@ export function SessionReplayPage() {
         }
         if (events.length) setDuration(events[events.length - 1][0] * 1000);
 
-        const replay = (speed: number, onDone?: () => void) => {
+        const replay = (speed: number, fromSec = 0, onDone?: () => void) => {
           let i = 0;
           let stopped = false;
           term.reset();
-          const start = performance.now();
+          while (i < events.length && events[i][0] < fromSec) {
+            term.write(events[i][2]);
+            i++;
+          }
+          const t0 = performance.now();
           const tick = () => {
             if (cancelled || stopped) return;
-            const elapsed = ((performance.now() - start) / 1000) * speed;
+            const elapsed = fromSec + ((performance.now() - t0) / 1000) * speed;
             setPosition(elapsed * 1000);
             while (i < events.length && events[i][0] <= elapsed) {
               term.write(events[i][2]);
@@ -200,9 +219,10 @@ export function SessionReplayPage() {
 
         sshRef.current = { term, events, replay };
         setReady(true);
-        replay(1);
+        const stop = replay(1, 0);
+        sshRef.current.stop = stop;
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Ошибка replay");
+        if (!cancelled) setError(te(err, "replay.error"));
       }
     })();
 
@@ -227,12 +247,6 @@ export function SessionReplayPage() {
     else rec.play();
   }
 
-  function onSeek(value: number) {
-    const rec = recordingRef.current;
-    if (!rec) return;
-    rec.seek(value, () => setPosition(rec.getPosition()));
-  }
-
   async function exportWebM() {
     if (!id || !hostRef.current || !ready) return;
     setExporting(true);
@@ -241,7 +255,7 @@ export function SessionReplayPage() {
       const filename = `session-${id}.webm`;
       if (protocol === "rdp" || protocol === "vnc") {
         const rec = recordingRef.current;
-        if (!rec) throw new Error("запись не загружена");
+        if (!rec) throw new Error(t("replay.notLoaded"));
         await recordElementToWebM(hostRef.current, {
           filename,
           fps: 15,
@@ -261,7 +275,7 @@ export function SessionReplayPage() {
                     return;
                   }
                   if (Date.now() - start > Math.max(dur, 1000) + 15000) {
-                    reject(new Error("таймаут экспорта"));
+                    reject(new Error(t("replay.exportTimeout")));
                     return;
                   }
                   window.setTimeout(watch, 100);
@@ -272,18 +286,18 @@ export function SessionReplayPage() {
         });
       } else {
         const ssh = sshRef.current;
-        if (!ssh) throw new Error("запись не загружена");
+        if (!ssh) throw new Error(t("replay.notLoaded"));
         await recordElementToWebM(hostRef.current, {
           filename,
           fps: 15,
           run: () =>
             new Promise<void>((resolve) => {
-              ssh.replay(8, () => resolve());
+              ssh.replay(8, 0, () => resolve());
             }),
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка экспорта");
+      setError(te(err, "replay.exportError"));
     } finally {
       setExporting(false);
     }
@@ -300,7 +314,7 @@ export function SessionReplayPage() {
       a.download = `session-${id}.mp4`;
       a.click();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка MP4");
+      setError(te(err, "replay.mp4Error"));
     } finally {
       setExportingMp4(false);
     }
@@ -316,8 +330,10 @@ export function SessionReplayPage() {
       setOutputLines(res.output || []);
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
+      setTransferFiles(res.files || []);
+      setWindowTitles(res.window_titles || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка индекса");
+      setError(te(err, "replay.indexError"));
     } finally {
       setIndexBusy(false);
     }
@@ -331,8 +347,9 @@ export function SessionReplayPage() {
       const res = await api.indexSessionTranscript(id, { force: true, ocr: true });
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
+      setWindowTitles(res.window_titles || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка OCR");
+      setError(te(err, "replay.ocrError"));
     } finally {
       setOcrBusy(false);
     }
@@ -340,27 +357,81 @@ export function SessionReplayPage() {
 
   const isGuac = protocol === "rdp" || protocol === "vnc" || isolated;
 
+  function seekToMs(ms: number) {
+    const rec = recordingRef.current;
+    if (rec) {
+      rec.seek(ms, () => setPosition(rec.getPosition()));
+      return;
+    }
+    const ssh = sshRef.current;
+    if (!ssh) return;
+    ssh.stop?.();
+    const stop = ssh.replay(sshSpeed, Math.max(0, ms / 1000));
+    ssh.stop = stop;
+  }
+
+  function playSshAt(speed: number) {
+    const ssh = sshRef.current;
+    if (!ssh) return;
+    setSshSpeed(speed);
+    ssh.stop?.();
+    const from = position / 1000;
+    const stop = ssh.replay(speed, from);
+    ssh.stop = stop;
+  }
+
+  const fileRows: TranscriptLine[] =
+    transferFiles.length > 0
+      ? transferFiles
+      : files.map((f) => ({
+          ts: f.created_at,
+          type: "file_transfer",
+          command: `${f.direction} ${f.protocol} ${f.filename}`,
+          filename: f.filename,
+          file_id: f.id,
+          captured: f.captured,
+          path: f.remote_path,
+          direction: f.direction,
+          protocol: f.protocol,
+        }));
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", minHeight: 0 }}>
       <div className="toolbar" style={{ flexShrink: 0 }}>
         <div>
           <p className="muted" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/sessions">Сессии</Link> / replay
+            <Link to="/sessions">{t("nav.sessions")}</Link> / replay
           </p>
-          <h1 style={{ margin: 0 }}>Воспроизведение</h1>
+          <h1 style={{ margin: 0 }}>{t("replay.title")}</h1>
           <p className="muted">
             {meta || "…"}
             {protocol ? ` · ${protocol}` : ""}
-            {playing ? " · играет" : ""}
-            {exporting ? " · кодирование…" : ""}
-            {exportingMp4 ? " · MP4…" : ""}
+            {playing ? ` · ${t("replay.playing")}` : ""}
+            {exporting ? ` · ${t("replay.encoding")}` : ""}
+            {exportingMp4 ? ` · ${t("replay.mp4Busy")}` : ""}
           </p>
         </div>
         <div className="row">
           {isGuac && (
             <button className="btn secondary" type="button" onClick={togglePlay} disabled={exporting || exportingMp4}>
-              {playing ? "Пауза" : "Играть"}
+              {playing ? t("replay.pause") : t("replay.play")}
             </button>
+          )}
+          {protocol === "ssh" && ready && (
+            <span className="row" style={{ gap: 4, alignItems: "center" }}>
+              <span className="muted">{t("replay.speed")}</span>
+              {[1, 2, 4].map((s) => (
+                <button
+                  key={s}
+                  className={sshSpeed === s ? "btn" : "btn secondary"}
+                  type="button"
+                  disabled={exporting}
+                  onClick={() => playSshAt(s)}
+                >
+                  {s}×
+                </button>
+              ))}
+            </span>
           )}
           <button
             className="btn secondary"
@@ -368,7 +439,7 @@ export function SessionReplayPage() {
             disabled={!ready || exporting || exportingMp4}
             onClick={() => void exportWebM()}
           >
-            {exporting ? "Кодирование…" : "Экспорт WebM"}
+            {exporting ? t("replay.encoding") : t("replay.exportWebm")}
           </button>
           {isGuac && (
             <button
@@ -377,31 +448,31 @@ export function SessionReplayPage() {
               disabled={!ready || exporting || exportingMp4}
               onClick={() => void exportMP4()}
             >
-              {exportingMp4 ? "MP4…" : "Экспорт MP4"}
+              {exportingMp4 ? t("replay.mp4Busy") : t("replay.exportMp4")}
             </button>
           )}
           {isGuac && (
             <button className="btn secondary" type="button" disabled={ocrBusy || indexBusy} onClick={() => void ocrScreen()}>
-              {ocrBusy ? "OCR…" : "OCR экрана"}
+              {ocrBusy ? "OCR…" : t("replay.ocr")}
             </button>
           )}
           {id && (protocol === "ssh" || isGuac) && (
             <button className="btn secondary" type="button" disabled={indexBusy || ocrBusy} onClick={() => void indexTranscript()}>
-              {indexBusy ? "Индекс…" : "Индексировать запись"}
+              {indexBusy ? "…" : t("replay.index")}
             </button>
           )}
           {id && (
             <a className="btn secondary" href={api.getRecordingUrl(id)}>
-              Скачать
+              {t("sess.download")}
             </a>
           )}
           <Link className="btn secondary" to="/sessions">
-            Назад
+            {t("common.back")}
           </Link>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {isGuac && (
+      {(isGuac || protocol === "ssh") && (
         <div className="row" style={{ padding: "0.5rem 1rem", gap: "0.75rem", alignItems: "center" }}>
           <span className="mono muted">{formatMs(position)}</span>
           <input
@@ -409,7 +480,7 @@ export function SessionReplayPage() {
             min={0}
             max={Math.max(duration, 1)}
             value={Math.min(position, duration)}
-            onChange={(e) => onSeek(Number(e.target.value))}
+            onChange={(e) => seekToMs(Number(e.target.value))}
             style={{ flex: 1 }}
             disabled={exporting}
           />
@@ -434,11 +505,11 @@ export function SessionReplayPage() {
       />
       {protocol === "ssh" && (
         <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
-          <h2 style={{ marginTop: 0 }}>Команды</h2>
+          <h2 style={{ marginTop: 0 }}>{t("replay.commands")}</h2>
           <p className="muted">
             {transcript.length === 0
-              ? "Пусто. Для сессий без JEA нажмите «Индексировать запись»."
-              : `${transcript.length} строк`}
+              ? t("replay.emptyCommands")
+              : t("replay.nLines", { n: transcript.length })}
           </p>
           <ul className="plain-list">
             {transcript.map((ln, i) => (
@@ -450,9 +521,9 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
-          <h2>Вывод</h2>
+          <h2>{t("replay.output")}</h2>
           <p className="muted">
-            {outputLines.length === 0 ? "Нет проиндексированного stdout." : `${outputLines.length} строк`}
+            {outputLines.length === 0 ? t("replay.emptyOutput") : t("replay.nLines", { n: outputLines.length })}
           </p>
           <ul className="plain-list">
             {outputLines.map((ln, i) => (
@@ -463,15 +534,42 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
+          <h2>{t("replay.files")}</h2>
+          <p className="muted">
+            {fileRows.length === 0 ? t("replay.emptyFiles") : t("replay.nFiles", { n: fileRows.length })}
+          </p>
+          <ul className="plain-list">
+            {fileRows.map((f, i) => (
+              <li key={f.file_id || `${f.ts}-${i}`}>
+                <button
+                  type="button"
+                  className="mono"
+                  style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                  title={f.path || f.filename}
+                  onClick={() => seekToMs((f.offset || 0) * 1000)}
+                >
+                  {f.offset != null ? `[${Math.floor(f.offset)}s] ` : ""}
+                  {f.command || f.filename}
+                </button>
+                {f.captured && f.file_id ? (
+                  <a className="btn secondary" href={api.getSessionFileUrl(id!, f.file_id)}>
+                    {t("sess.download")}
+                  </a>
+                ) : (
+                  <span className="muted">audit</span>
+                )}
+              </li>
+            ))}
+          </ul>
         </aside>
       )}
       {isGuac && (
         <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
-          <h2 style={{ marginTop: 0 }}>Клавиши</h2>
+          <h2 style={{ marginTop: 0 }}>{t("replay.keys")}</h2>
           <p className="muted">
             {keystrokes.length === 0
-              ? "Нет проиндексированных нажатий. Нажмите «Индексировать запись» (не OCR)."
-              : `${keystrokes.length} строк`}
+              ? t("replay.emptyKeys")
+              : t("replay.nLines", { n: keystrokes.length })}
           </p>
           <ul className="plain-list">
             {keystrokes.map((ln, i) => (
@@ -482,11 +580,11 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
-          <h2>Экран (OCR)</h2>
+          <h2>{t("replay.screen")}</h2>
           <p className="muted">
             {screenText.length === 0
-              ? "Нет OCR. Кнопка «OCR экрана» — до 20 кадров через guacenc/Tesseract (не полное видео)."
-              : `${screenText.length} фрагментов`}
+              ? t("replay.emptyOcr")
+              : t("replay.nFrags", { n: screenText.length })}
           </p>
           <ul className="plain-list">
             {screenText.map((ln, i) => (
@@ -498,6 +596,46 @@ export function SessionReplayPage() {
               </li>
             ))}
           </ul>
+          <h2>{t("replay.titles")}</h2>
+          <p className="muted">
+            {windowTitles.length === 0 ? t("replay.emptyTitles") : t("replay.nFrags", { n: windowTitles.length })}
+          </p>
+          <ul className="plain-list">
+            {windowTitles.map((ln, i) => (
+              <li key={`w-${ln.ts}-${i}`}>
+                <button
+                  type="button"
+                  className="mono"
+                  style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                  onClick={() => seekToMs((ln.offset || 0) * 1000)}
+                >
+                  {ln.offset != null ? `[${ln.offset}s] ` : ""}
+                  {ln.command}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {fileRows.length > 0 && (
+            <>
+              <h2>{t("replay.files")}</h2>
+              <p className="muted">{t("replay.nFiles", { n: fileRows.length })}</p>
+              <ul className="plain-list">
+                {fileRows.map((f, i) => (
+                  <li key={f.file_id || `gf-${f.ts}-${i}`}>
+                    <button
+                      type="button"
+                      className="mono"
+                      style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                      onClick={() => seekToMs((f.offset || 0) * 1000)}
+                    >
+                      {f.offset != null ? `[${Math.floor(f.offset)}s] ` : ""}
+                      {f.command || f.filename}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </aside>
       )}
       </div>

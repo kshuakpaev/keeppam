@@ -31,7 +31,7 @@ type Props = {
 };
 
 export function SqlSession({ id, title, visible, onClose }: Props) {
-  const [sql, setSql] = useState("SELECT * FROM tickets LIMIT 10");
+  const [sql, setSql] = useState("SELECT 1");
   const [status, setStatus] = useState("connecting…");
   const [error, setError] = useState("");
   const [result, setResult] = useState<ResultMsg | null>(null);
@@ -49,11 +49,13 @@ export function SqlSession({ id, title, visible, onClose }: Props) {
       .then((s) => {
         setWire({
           user: s.id,
-          addr: s.protocol === "mysql" ? ":13306" : ":15432",
+          addr: s.protocol === "mysql" ? ":13306" : s.protocol === "mssql" ? ":11433" : ":15432",
           db: s.database_name || "",
         });
         if (s.database_name) setDatabase(s.database_name);
         if (s.db_privilege) setEph((e) => ({ ...e, privilege: s.db_privilege }));
+        if (s.protocol === "mssql") setSql("SELECT TOP 10 name FROM sys.tables");
+        else setSql("SELECT * FROM tickets LIMIT 10");
       })
       .catch(() => undefined);
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,15 +28,20 @@ import (
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
+	"github.com/keeppam/auth/internal/health"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/recarch"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -79,11 +85,21 @@ type Server struct {
 	scim       *scim.Service
 	castidx    *castindex.Service
 	firewall   *firewall.Service
+	archive    *recarch.Service
+	files      *filexfer.Service
+	health     *health.State
+	rdp        *rdpgw.Broker
+	license    license.File
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc}
-	if sessSvc != nil {
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
+	lic, err := license.Load(cfg.LicenseFile)
+	if err != nil {
+		lic = license.DefaultFile()
+		lic.Source = "error:" + err.Error()
+	}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic}
+	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
 	r := chi.NewRouter()
@@ -94,9 +110,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 	r.Use(s.metricsMW)
 	r.Use(s.cors)
 
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	r.Get("/healthz", s.handleLivez)
+	r.Get("/livez", s.handleLivez)
+	r.Get("/readyz", s.handleReadyz)
 	r.Get("/metrics", s.handleMetrics)
 
 	// Isolated Chromium → API reverse-proxy (HTTP/object ACL). No cookie; token in path.
@@ -131,6 +147,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
+				r.Post("/login/cert", s.handleLoginCert)
 				r.Post("/mfa/verify", s.handleMFAVerify)
 				r.Post("/mfa/webauthn/begin", s.handleWebAuthnLoginBegin)
 				r.Post("/mfa/webauthn/finish", s.handleWebAuthnLoginFinish)
@@ -202,6 +219,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Post("/firewall/push", s.handleFirewallPush)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/export", s.handleExportFirewallRules)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)
+				r.With(s.requirePerm("settings.write")).Get("/settings/archive", s.handleGetArchiveSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/archive", s.handlePutArchiveSettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/archive/sync", s.handleArchiveSync)
 				r.With(s.requireAnyPerm("settings.write", "compliance.read")).Get("/settings/sbom", s.handleSBOM)
 
 				r.With(s.requirePerm("discovery.read")).Get("/discovery/jobs", s.handleListDiscoveryJobs)
@@ -257,6 +277,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("assets.read")).Get("/assets", s.handleListAssets)
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)
+				r.With(s.requirePerm("assets.read")).Get("/license", s.handleGetLicense)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
@@ -270,6 +291,12 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/accounts/{accountId}/force-checkin", s.handleForceCheckinAccount)
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/accounts/{accountId}/reveal", s.handleRevealAccount)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}/accounts/{accountId}", s.handleDeleteAccount)
+				r.With(s.requirePerm("assets.read")).Get("/password-sets", s.handleListPasswordSets)
+				r.With(s.requirePerm("assets.write")).Post("/password-sets", s.handleCreatePasswordSet)
+				r.With(s.requirePerm("assets.read")).Get("/password-sets/{id}", s.handleGetPasswordSet)
+				r.With(s.requirePerm("assets.write")).Patch("/password-sets/{id}", s.handleUpdatePasswordSet)
+				r.With(s.requirePerm("assets.write")).Delete("/password-sets/{id}", s.handleDeletePasswordSet)
+				r.With(s.requirePerm("assets.write")).Post("/password-sets/{id}/rotate", s.handleRotatePasswordSet)
 				r.With(s.requirePerm("assets.write")).Get("/secret-checkouts", s.handleListCheckoutRequests)
 				r.With(s.requirePerm("assets.write")).Post("/secret-checkouts/{id}/approve", s.handleApproveCheckoutRequest)
 				r.With(s.requirePerm("assets.write")).Post("/secret-checkouts/{id}/deny", s.handleDenyCheckoutRequest)
@@ -286,6 +313,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs/{id}", s.handleGetCommandPack)
 				r.With(s.requirePerm("jea.write")).Post("/jea/packs", s.handleCreateCommandPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/packs/{id}", s.handleUpdateCommandPack)
+				r.With(s.requirePerm("jea.write")).Post("/jea/packs/{id}/import", s.handleImportCommandPack)
 				r.With(s.requirePerm("jea.write")).Delete("/jea/packs/{id}", s.handleDeleteCommandPack)
 				r.With(s.requirePerm("jea.read")).Get("/jea/sql-packs", s.handleListSQLPacks)
 				r.With(s.requirePerm("jea.read")).Get("/jea/sql-packs/{id}", s.handleGetSQLPack)
@@ -328,10 +356,13 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions", s.handleCreateSession)
 				r.Post("/sessions/{id}/end", s.handleEndSession)
+				r.With(s.requirePerm("sessions.supervise")).Post("/sessions/{id}/supervisor/approve", s.handleApproveSupervisor)
+				r.With(s.requirePerm("sessions.supervise")).Post("/sessions/{id}/supervisor/deny", s.handleDenySupervisor)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/op-stepup", s.handleGetOpStepUp)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions", s.handleListSessions)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/events", s.handleSearchSessionEvents)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/timeline", s.handleSessionTimeline)
+				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/rdp.rdp", s.handleDownloadRDP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}", s.handleGetSession)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/kubeconfig", s.handleGetKubeconfig)
 				r.With(s.requirePerm("sessions.connect")).Get("/sessions/{id}/k8s/catalog", s.handleK8sCatalog)
@@ -345,6 +376,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/portforward", s.handleK8sPortForwardHTTP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
+				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files", s.handleListSessionFiles)
+				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files/{fileId}", s.handleGetSessionFile)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/transcript", s.handleGetTranscript)
 				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/transcript", s.handleIndexTranscript)
 			})
@@ -352,6 +385,22 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 	})
 
 	return r
+}
+
+func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
+	if s.health != nil {
+		s.health.ServeLive(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if s.health != nil {
+		s.health.ServeReady(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 type ctxKey int
@@ -511,6 +560,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.auth.Login(r.Context(), body.Username, body.Password, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if res.SessionToken != "" {
+		if err := s.completeLogin(w, r, res.SessionToken); err != nil {
+			writeErr(w, http.StatusInternalServerError, "session error")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleLoginCert(w http.ResponseWriter, r *http.Request) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		writeErr(w, http.StatusUnauthorized, "client certificate required")
+		return
+	}
+	res, err := s.auth.LoginCert(r.Context(), r.TLS.PeerCertificates[0], s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
@@ -878,11 +946,29 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"assets": list})
 }
 
+func (s *Server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
+	n, err := s.assets.CountActive(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.license.Evaluate(n, time.Now()))
+}
+
 func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	var in assets.CreateAssetInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	n, err := s.assets.CountActive(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.license.AllowCreate(n, time.Now()); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
 	a, err := s.assets.Create(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())
@@ -1184,5 +1270,31 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]string{"error": msg, "code": errSlug(msg)})
+}
+
+func errSlug(msg string) string {
+	s := strings.ToLower(strings.TrimSpace(msg))
+	var b strings.Builder
+	prevUS := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			prevUS = false
+			continue
+		}
+		if !prevUS && b.Len() > 0 {
+			b.WriteByte('_')
+			prevUS = true
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	if out == "" {
+		return "error"
+	}
+	return out
 }

@@ -10,6 +10,7 @@ export type User = {
   last_login_at?: string;
   created_at: string;
   updated_at: string;
+  x509_identity?: string;
   roles?: string[];
   groups?: string[];
   group_ids?: string[];
@@ -115,6 +116,7 @@ export type AssetAccount = {
   k8s_impersonate?: boolean;
   k8s_impersonate_prefix?: string;
   k8s_bind_user?: boolean;
+  ad_user_dn?: string;
 };
 
 export type SecretCheckoutRequest = {
@@ -147,6 +149,20 @@ export type Asset = {
   status: string;
   tags: string[];
   approval_stages?: string[];
+  approval_mode?: string;
+  quorum_n?: number;
+  quorum_m?: number;
+  approver_group_id?: string;
+  approver_group_name?: string;
+  require_supervisor?: boolean;
+  supervisor_group_id?: string;
+  supervisor_group_name?: string;
+  ad_privileged_group_dn?: string;
+  krb_spn?: string;
+  terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -157,11 +173,36 @@ export type Asset = {
   accounts?: AssetAccount[];
 };
 
+export type PasswordSetMember = {
+  account_id: string;
+  asset_id: string;
+  asset_name: string;
+  protocol: string;
+  username: string;
+  auth_method: string;
+  directory: boolean;
+  sort_order: number;
+};
+
+export type PasswordSet = {
+  id: string;
+  name: string;
+  description: string;
+  sync_order: "directory_first" | "directory_last";
+  created_at: string;
+  updated_at: string;
+  members?: PasswordSetMember[];
+};
+
 export type AccessBinding = {
   id: string;
   asset_id?: string;
   asset_match_tags?: string[];
   asset_match_mode?: string;
+  asset_match_name?: string;
+  asset_match_hostname?: string;
+  asset_match_types?: string[];
+  asset_match_cidrs?: string[];
   inherited?: boolean;
   user_id?: string;
   role_id?: string;
@@ -182,6 +223,7 @@ export type AccessBinding = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -251,6 +293,12 @@ export type AccessRequest = {
   risk_score?: number;
   risk_factors?: string[];
   approval_stages?: string[];
+  approval_mode?: string;
+  quorum_n?: number;
+  quorum_m?: number;
+  quorum_votes?: number;
+  approver_group_id?: string;
+  approver_group_name?: string;
   stage?: string;
   approvals?: { stage: string; actor_id: string; username: string; created_at: string }[];
 };
@@ -280,6 +328,14 @@ export type AuthSettings = {
   ldap_auto_provision: boolean;
   ldap_skip_mfa: boolean;
   ldap_default_role: string;
+  radius_host: string;
+  radius_nas_id: string;
+  radius_timeout_sec: number;
+  radius_secret?: string;
+  has_radius_secret: boolean;
+  radius_auto_provision: boolean;
+  radius_skip_mfa: boolean;
+  radius_default_role: string;
   saml_idp_metadata_url: string;
   saml_idp_entity_id: string;
   saml_idp_sso_url: string;
@@ -330,9 +386,15 @@ export type SAMLIdP = {
 };
 
 export type SSHSettings = {
-  ssh_auth_mode: "vault_secret" | "ssh_cert" | string;
+  ssh_auth_mode: "vault_secret" | "ssh_cert" | "gssapi" | string;
   ssh_ca_public: string;
   ssh_cert_ttl_hours: number;
+  krb5_realm?: string;
+  krb5_config?: string;
+  krb5_principal?: string;
+  krb5_spn_template?: string;
+  has_krb5_keytab?: boolean;
+  krb5_keytab?: string;
   has_ssh_ca: boolean;
   rotate_ca?: boolean;
   updated_at?: string;
@@ -685,8 +747,12 @@ function csrfToken(): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type") && init.body) {
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
+  }
+  if (!headers.has("Accept-Language")) {
+    const lang = (document.cookie.match(/(?:^|; )kp_lang=([^;]*)/) || [])[1];
+    headers.set("Accept-Language", decodeURIComponent(lang || "ru").startsWith("en") ? "en" : "ru");
   }
   const method = (init.method || "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
@@ -764,6 +830,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  loginCert: () =>
+    request<{
+      status: string;
+      challenge_token?: string;
+      user?: User;
+    }>("/api/v1/auth/login/cert", { method: "POST", body: "{}" }),
   verifyMfa: (challenge_token: string, code: string) =>
     request<{ status: string; user?: User }>("/api/v1/auth/mfa/verify", {
       method: "POST",
@@ -832,6 +904,9 @@ export const api = {
       oidc_ready: boolean;
       ldap_ready: boolean;
       saml_ready: boolean;
+      radius_ready?: boolean;
+      cert_login?: boolean;
+      cert_presented?: boolean;
       saml_idps?: { slug: string; name: string }[];
     }>("/api/v1/auth/methods"),
   listSAMLIdPs: () => request<{ idps: SAMLIdP[] }>("/api/v1/admin/settings/saml/idps"),
@@ -842,6 +917,16 @@ export const api = {
   deleteSAMLIdP: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/settings/saml/idps/${id}`, { method: "DELETE" }),
   getAuthSettings: () => request<AuthSettings>("/api/v1/admin/settings/auth"),
+  getArchiveSettings: () => request<ArchiveSettings>("/api/v1/admin/settings/archive"),
+  putArchiveSettings: (body: Partial<ArchiveSettings>) =>
+    request<ArchiveSettings>("/api/v1/admin/settings/archive", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  runArchiveSync: () =>
+    request<{ copied: number; skipped: number; failed: number }>("/api/v1/admin/settings/archive/sync", {
+      method: "POST",
+    }),
   putAuthSettings: (body: Partial<AuthSettings>) =>
     request<AuthSettings>("/api/v1/admin/settings/auth", {
       method: "PUT",
@@ -945,7 +1030,14 @@ export const api = {
       body: JSON.stringify(body),
     }),
   listDiscoveryJobs: () => request<{ jobs: DiscoveryJob[] }>("/api/v1/admin/discovery/jobs"),
-  createDiscoveryJob: (body: { kind?: string; cidr?: string; ports?: string; asset_ids?: string[] }) =>
+  createDiscoveryJob: (body: {
+    kind?: string;
+    cidr?: string;
+    ports?: string;
+    asset_ids?: string[];
+    target_asset_id?: string;
+    group_dns?: string[];
+  }) =>
     request<DiscoveryJob>("/api/v1/admin/discovery/jobs", {
       method: "POST",
       body: JSON.stringify(body),
@@ -1000,6 +1092,7 @@ export const api = {
       roles?: string[];
       tags?: string[];
       group_ids?: string[];
+      x509_identity?: string;
     },
   ) =>
     request<User>(`/api/v1/admin/users/${id}`, {
@@ -1058,6 +1151,21 @@ export const api = {
     request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
   listAssets: () => request<{ assets: Asset[] }>("/api/v1/admin/assets"),
+  getLicense: () =>
+    request<{
+      issued: string;
+      customer?: string;
+      max_assets: number;
+      asset_count: number;
+      soft_warn_at: number;
+      ha: boolean;
+      expires?: string;
+      expired: boolean;
+      soft_warn: boolean;
+      hard_blocked: boolean;
+      source: string;
+      message?: string;
+    }>("/api/v1/admin/license"),
   getAsset: (id: string) => request<Asset>(`/api/v1/admin/assets/${id}`),
   createAsset: (body: {
     name: string;
@@ -1070,7 +1178,19 @@ export const api = {
     description?: string;
     tags?: string[];
     approval_stages?: string[];
+    approval_mode?: string;
+    quorum_n?: number;
+    quorum_m?: number;
+    approver_group_id?: string | null;
+    require_supervisor?: boolean;
+    supervisor_group_id?: string | null;
     pam_only?: boolean;
+    ad_privileged_group_dn?: string;
+  krb_spn?: string;
+  terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1090,7 +1210,19 @@ export const api = {
       status?: string;
       tags?: string[];
       approval_stages?: string[];
+      approval_mode?: string;
+      quorum_n?: number;
+      quorum_m?: number;
+      approver_group_id?: string | null;
+      require_supervisor?: boolean;
+      supervisor_group_id?: string | null;
       pam_only?: boolean;
+      ad_privileged_group_dn?: string;
+  krb_spn?: string;
+  terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1115,6 +1247,7 @@ export const api = {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts`, {
@@ -1141,6 +1274,7 @@ export const api = {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) =>
     request<AssetAccount>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}`, {
@@ -1163,6 +1297,48 @@ export const api = {
         body: JSON.stringify(body ?? {}),
       },
     ),
+  listPasswordSets: () => request<{ sets: PasswordSet[] }>("/api/v1/admin/password-sets"),
+  getPasswordSet: (id: string) => request<PasswordSet>(`/api/v1/admin/password-sets/${id}`),
+  createPasswordSet: (body: {
+    name: string;
+    description?: string;
+    sync_order?: string;
+    account_ids?: string[];
+  }) =>
+    request<PasswordSet>("/api/v1/admin/password-sets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updatePasswordSet: (
+    id: string,
+    body: {
+      name?: string;
+      description?: string;
+      sync_order?: string;
+      account_ids?: string[];
+    },
+  ) =>
+    request<PasswordSet>(`/api/v1/admin/password-sets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deletePasswordSet: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/password-sets/${id}`, { method: "DELETE" }),
+  rotatePasswordSet: (id: string, body?: { apply_remote?: boolean; new_secret?: string }) =>
+    request<{
+      set_id: string;
+      results: {
+        account_id: string;
+        asset_id: string;
+        username: string;
+        ok: boolean;
+        remote_applied: boolean;
+        error?: string;
+      }[];
+    }>(`/api/v1/admin/password-sets/${id}/rotate`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
   checkoutAccount: (
     assetId: string,
     accountId: string,
@@ -1224,8 +1400,12 @@ export const api = {
       user_id?: string;
       role_id?: string;
       group_id?: string;
-      asset_match_tags: string[];
+      asset_match_tags?: string[];
       asset_match_mode?: string;
+      asset_match_name?: string;
+      asset_match_hostname?: string;
+      asset_match_types?: string[];
+      asset_match_cidrs?: string[];
       duration_minutes?: number;
       access_policy_id?: string;
       max_risk?: number;
@@ -1255,7 +1435,8 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
-      command_policy_pack_id?: string | null;
+  file_transfer?: string;
+  command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
       app_object_pack_id?: string | null;
@@ -1286,7 +1467,8 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
-      command_policy_pack_id?: string | null;
+  file_transfer?: string;
+  command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
       http_policy_pack_id?: string | null;
       app_object_pack_id?: string | null;
@@ -1295,6 +1477,10 @@ export const api = {
       risk_action?: string;
       asset_match_tags?: string[];
       asset_match_mode?: string;
+      asset_match_name?: string;
+      asset_match_hostname?: string;
+      asset_match_types?: string[];
+      asset_match_cidrs?: string[];
     },
   ) =>
     request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl/${bindingId}`, {
@@ -1327,6 +1513,7 @@ export const api = {
     request<{
       pending_approve: number;
       pending_ops: number;
+      pending_supervise?: number;
       my_pending: number;
       my_recent_decisions: AccessRequest[];
     }>("/api/v1/admin/access-requests/summary"),
@@ -1354,6 +1541,7 @@ export const api = {
       method: "POST",
     }),
   getRecordingMp4Url: (id: string) => `/api/v1/admin/sessions/${id}/recording.mp4`,
+  downloadRdpUrl: (id: string) => `/api/v1/admin/sessions/${id}/rdp.rdp`,
   createSession: (
     asset_id: string,
     account_id: string,
@@ -1376,6 +1564,7 @@ export const api = {
     status?: string;
     protocol?: string;
     q?: string;
+    waiting_supervisor?: boolean;
     limit?: number;
     offset?: number;
   }) => {
@@ -1383,6 +1572,7 @@ export const api = {
     if (params?.status) qs.set("status", params.status);
     if (params?.protocol) qs.set("protocol", params.protocol);
     if (params?.q) qs.set("q", params.q);
+    if (params?.waiting_supervisor) qs.set("waiting_supervisor", "1");
     if (params?.limit != null) qs.set("limit", String(params.limit));
     if (params?.offset != null) qs.set("offset", String(params.offset));
     const q = qs.toString();
@@ -1391,9 +1581,16 @@ export const api = {
     );
   },
   getSession: (id: string) => request<PamSession>(`/api/v1/admin/sessions/${id}`),
+  approveSupervisor: (id: string) =>
+    request<PamSession>(`/api/v1/admin/sessions/${id}/supervisor/approve`, { method: "POST" }),
+  denySupervisor: (id: string) =>
+    request<PamSession>(`/api/v1/admin/sessions/${id}/supervisor/deny`, { method: "POST" }),
   searchSessionEvents: (params?: {
     q?: string;
     type?: string;
+    filename?: string;
+    protocol?: string;
+    client_ip?: string;
     hours?: number;
     limit?: number;
     offset?: number;
@@ -1401,6 +1598,9 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.type) qs.set("type", params.type);
+    if (params?.filename) qs.set("filename", params.filename);
+    if (params?.protocol) qs.set("protocol", params.protocol);
+    if (params?.client_ip) qs.set("client_ip", params.client_ip);
     if (params?.hours != null) qs.set("hours", String(params.hours));
     if (params?.limit != null) qs.set("limit", String(params.limit));
     if (params?.offset != null) qs.set("offset", String(params.offset));
@@ -1417,6 +1617,8 @@ export const api = {
       output?: TranscriptLine[];
       keystrokes?: TranscriptLine[];
       screen_text?: TranscriptLine[];
+      files?: TranscriptLine[];
+      window_titles?: TranscriptLine[];
     }>(`/api/v1/admin/sessions/${id}/transcript`),
   indexSessionTranscript: (id: string, opts?: { force?: boolean; ocr?: boolean }) =>
     request<{
@@ -1438,6 +1640,8 @@ export const api = {
       output?: TranscriptLine[];
       keystrokes?: TranscriptLine[];
       screen_text?: TranscriptLine[];
+      files?: TranscriptLine[];
+      window_titles?: TranscriptLine[];
     }>(
       `/api/v1/admin/sessions/${id}/transcript`,
       { method: "POST", body: JSON.stringify({ force: !!opts?.force, ocr: !!opts?.ocr }) },
@@ -1446,6 +1650,7 @@ export const api = {
     user_id?: string;
     username?: string;
     q?: string;
+    filename?: string;
     source?: string;
     hours?: number;
     from?: string;
@@ -1457,6 +1662,7 @@ export const api = {
     if (params.user_id) qs.set("user_id", params.user_id);
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
+    if (params.filename) qs.set("filename", params.filename);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
@@ -1470,6 +1676,7 @@ export const api = {
     user_id?: string;
     username?: string;
     q?: string;
+    filename?: string;
     source?: string;
     from?: string;
     to?: string;
@@ -1480,6 +1687,7 @@ export const api = {
     if (params.user_id) qs.set("user_id", params.user_id);
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
+    if (params.filename) qs.set("filename", params.filename);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
@@ -1560,6 +1768,10 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
+  listSessionFiles: (id: string) =>
+    request<{ files: SessionFile[] }>(`/api/v1/admin/sessions/${id}/files`),
+  getSessionFileUrl: (sessionId: string, fileId: string) =>
+    `/api/v1/admin/sessions/${sessionId}/files/${fileId}`,
   getAppIntegration: (assetId: string) =>
     request<AppIntegration>(`/api/v1/admin/assets/${assetId}/app`),
   putAppIntegration: (assetId: string, body: Partial<AppIntegration> & { oidc_client_secret?: string; clear_oidc_client_secret?: boolean }) =>
@@ -1709,6 +1921,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  importCommandPack: (id: string, file: File, merge = false) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (merge) fd.append("merge", "true");
+    return request<{
+      pack: CommandPolicyPack;
+      added: number;
+      total: number;
+      merged: boolean;
+    }>(`/api/v1/admin/jea/packs/${id}/import?merge=${merge ? "true" : "false"}`, {
+      method: "POST",
+      body: fd,
+    });
+  },
   deleteCommandPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/packs/${id}`, { method: "DELETE" }),
   previewCommand: (body: { command: string; pack_id?: string }) =>
@@ -1947,6 +2173,14 @@ export type AccessPolicy = {
   allowed_namespaces: string[];
   allowed_egress: string[];
   pii_action: string;
+  file_transfer: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
+  rdp_clipboard?: boolean;
+  rdp_drive?: boolean;
+  rdp_printer?: boolean;
+  rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -1977,6 +2211,14 @@ export type AccessPolicyInput = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
+  rdp_clipboard?: boolean;
+  rdp_drive?: boolean;
+  rdp_printer?: boolean;
+  rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
@@ -1992,6 +2234,12 @@ export type TranscriptLine = {
   command: string;
   source?: string;
   offset?: number;
+  filename?: string;
+  file_id?: string;
+  path?: string;
+  direction?: string;
+  protocol?: string;
+  captured?: boolean;
 };
 
 export type SessionEventHit = {
@@ -2028,12 +2276,24 @@ export type PamSession = {
   account_username?: string;
   asset_address?: string;
   has_recording: boolean;
+  archived?: boolean;
+  archive_backend?: string;
   isolated?: boolean;
   database_name?: string;
   wire_token?: string;
   wire_addr?: string;
   wire_user?: string;
   wire_hint?: string;
+  citrix_ica?: string;
+  citrix_filename?: string;
+  rdp_token?: string;
+  rdp_addr?: string;
+  rdp_port?: number;
+  rdp_user?: string;
+  rdp_hint?: string;
+  rdp_file?: string;
+  rdp_proxy?: boolean;
+  rdp_filename?: string;
   kubeconfig?: string;
   k8s_addr?: string;
   k8s_token?: string;
@@ -2046,6 +2306,31 @@ export type PamSession = {
   access_policy_id?: string;
   client_country?: string;
   policy_snapshot?: PolicySnapshot;
+  require_supervisor?: boolean;
+  waiting_supervisor?: boolean;
+  supervisor_group_id?: string;
+  supervisor_group_name?: string;
+  supervisor_id?: string;
+  supervisor_username?: string;
+  supervisor_approved_at?: string;
+};
+
+export type ArchiveSettings = {
+  enabled: boolean;
+  backend: string;
+  age_days: number;
+  interval_minutes: number;
+  delete_local: boolean;
+  nfs_path: string;
+  smb_host: string;
+  smb_share: string;
+  smb_user: string;
+  smb_domain: string;
+  smb_password?: string;
+  has_smb_password: boolean;
+  last_run_at?: string;
+  last_error?: string;
+  last_copied: number;
 };
 
 export type PolicySnapshot = {
@@ -2066,11 +2351,28 @@ export type PolicySnapshot = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  file_transfer?: string;
+  ocr_lang?: string;
+  ocr_interval_sec?: number;
+  ocr_max_frames?: number;
   tag_acl?: boolean;
   match_tags?: string[];
   match_mode?: string;
   break_glass?: boolean;
   admin_bypass?: boolean;
+};
+
+export type SessionFile = {
+  id: string;
+  session_id: string;
+  filename: string;
+  remote_path: string;
+  protocol: string;
+  direction: string;
+  size_bytes: number;
+  sha256: string;
+  captured: boolean;
+  created_at: string;
 };
 
 export type TimelineEvent = {

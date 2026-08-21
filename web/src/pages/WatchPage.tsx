@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
 import { api, hasPerm, type PamSession } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 import "xterm/css/xterm.css";
 
 type SqlPayload = {
@@ -43,7 +44,7 @@ function isDesktop(s: PamSession | null): boolean {
 }
 
 function isSQL(s: PamSession | null): boolean {
-  return s?.protocol === "postgres" || s?.protocol === "mysql";
+  return s?.protocol === "postgres" || s?.protocol === "mysql" || s?.protocol === "mssql";
 }
 
 function canKillSession(userId: string | undefined, perms: string[] | undefined, sess: PamSession): boolean {
@@ -55,10 +56,11 @@ function canKillSession(userId: string | undefined, perms: string[] | undefined,
 export function WatchPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const [sess, setSess] = useState<PamSession | null>(null);
-  const [status, setStatus] = useState("подключение…");
+  const [status, setStatus] = useState("term.connecting");
   const [error, setError] = useState("");
   const [log, setLog] = useState<LogLine[]>([]);
   const [ended, setEnded] = useState(false);
@@ -77,7 +79,7 @@ export function WatchPage() {
         if (!cancelled) setSess(s);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "сессия недоступна");
+        if (!cancelled) setError(te(err, "watch.unavailable"));
       });
     return () => {
       cancelled = true;
@@ -114,7 +116,7 @@ export function WatchPage() {
     const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/sessions/${id}/watch`);
     ws.binaryType = "arraybuffer";
 
-    ws.onopen = () => setStatus("наблюдение…");
+    ws.onopen = () => setStatus("watch.watching");
     ws.onmessage = (ev) => {
       if (typeof ev.data !== "string") {
         const bytes = new Uint8Array(ev.data as ArrayBuffer);
@@ -133,10 +135,10 @@ export function WatchPage() {
           ts?: string;
         };
         if (msg.type === "ready") {
-          setStatus("live · только просмотр");
+          setStatus("watch.liveView");
         } else if (msg.type === "ended") {
           setEnded(true);
-          setStatus("сессия завершена");
+          setStatus("term.ended");
         } else if (msg.type === "sql") {
           pushLog(formatSql(msg.payload || {}));
         } else if (msg.type === "event") {
@@ -169,10 +171,10 @@ export function WatchPage() {
     };
     ws.onerror = () => {
       setError("WebSocket error");
-      setStatus("ошибка");
+      setStatus("term.error");
     };
     ws.onclose = () => {
-      setStatus((s) => (s === "ошибка" ? s : "соединение закрыто"));
+      setStatus((s) => (s === "term.error" ? s : "watch.closed"));
     };
 
     const onResize = () => fit?.fit();
@@ -193,16 +195,16 @@ export function WatchPage() {
     try {
       await api.endSession(id);
       setEnded(true);
-      setStatus("сессия завершена");
+      setStatus("term.ended");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "не удалось завершить");
+      setError(te(err, "sess.endError"));
     } finally {
       setKilling(false);
     }
   }
 
   if (!hasPerm(user, "sessions.read")) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   const desktop = isDesktop(sess);
@@ -215,22 +217,22 @@ export function WatchPage() {
     <div className="terminal-page">
       <div className="toolbar">
         <div>
-          <h1>Наблюдение</h1>
+          <h1>{t("watch.title")}</h1>
           <p className="muted">
             {sess ? `${sess.asset_name} · ${sess.account_username} · ${sess.username}` : "…"}
             {sess?.protocol ? ` · ${sess.protocol}` : ""}
-            {` · ${status}`}
+            {` · ${t(status)}`}
             {id ? <span className="mono"> · {id.slice(0, 8)}</span> : null}
           </p>
         </div>
         <div className="row">
           {killOk && !ended && (
             <button className="btn danger" type="button" disabled={killing} onClick={() => void onKill()}>
-              {killing ? "Завершение…" : "Завершить сессию"}
+              {killing ? t("watch.killing") : t("watch.kill")}
             </button>
           )}
           <Link className="btn secondary" to="/sessions">
-            Назад
+            {t("common.back")}
           </Link>
         </div>
       </div>
@@ -238,12 +240,10 @@ export function WatchPage() {
       {(desktop || https) && (
         <div className="card" style={{ padding: "1rem", marginBottom: "0.75rem" }}>
           <p>
-            {desktop
-              ? "Live-видео RDP/VNC/isolated browser в этом режиме не транслируется. Можно следить за статусом и принудительно завершить сессию."
-              : "HTTPS-сессия приложения: поток экрана не зеркалируется. Доступны статус и kill."}
+            {desktop ? t("watch.noDesktop") : t("watch.noHttps")}
           </p>
           <p className="muted">
-            {ended ? "Сессия уже завершена." : "Сессия активна. Закрытие этой страницы не прерывает работу оператора."}
+            {ended ? t("watch.alreadyEnded") : t("watch.operatorContinues")}
           </p>
         </div>
       )}
@@ -251,9 +251,9 @@ export function WatchPage() {
       {(sql || log.length > 0) && (
         <div className="card watch-log">
           <div className="muted" style={{ marginBottom: "0.5rem" }}>
-            {sql ? "SQL-журнал (live)" : "События сессии"}
+            {sql ? t("watch.sqlLog") : t("watch.events")}
           </div>
-          {log.length === 0 && <p className="muted">Ожидание запросов…</p>}
+          {log.length === 0 && <p className="muted">{t("watch.waitingQueries")}</p>}
           {log.map((l, i) => (
             <div key={i} className={`watch-log-line ${l.kind}`}>
               <span className="mono muted">{l.ts}</span> {l.text}

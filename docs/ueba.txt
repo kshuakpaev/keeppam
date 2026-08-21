@@ -1,34 +1,50 @@
-# KeepPAM: UEBA (узкий срез)
+# KeepPAM: UEBA
 
-Не ML и не полнотекст записей. PAM смотрит **куда ходил пользователь** по таблице `sessions` и поднимает риск, если цель не из обычного набора.
+Не ML. PAM смотрит **куда ходил пользователь** и **как быстро печатал / двигал мышь** (RDP/VNC guac) и поднимает риск / шлёт notify.
 
-## Зазор
+## Активы (connect)
 
-`anom_multi` ловит всплеск «≥4 активов за 24ч», но не отличает «обычно 3 сервера, сегодня новый / сразу 12».
-
-## Правила
-
-Окно baseline — **30 дней**. В набор входят сессии `pending` / `active` / `ended` (не `failed`).
+Окно baseline — **30 дней**. Сессии `pending` / `active` / `ended`.
 
 | Условие | Фактор | Баллы |
 |---------|--------|-------|
 | ≥3 разных актива в baseline и текущий актив **не** в этом наборе | `ueba_new_asset` | 25 |
 | за 24ч уникальных активов ≥6 и ≥2× размера 30-дневного набора | `ueba_spread` | 20 |
 
-Холодный старт (0–2 актива за 30 дней) — факторы не ставятся. Повтор на уже виденный хост — тоже нет.
+Холодный старт (0–2 актива) — факторы не ставятся. Срабатывание в connect-score (`docs/abac-breakglass.txt`).
 
-Срабатывание идёт в тот же **connect-score**, что off_hours / failed_logins (`docs/abac-breakglass.txt`). Если на ACL `max_risk=0` (выкл.) — отказ не будет, но фактор пишется в `access.risk.evaluated` (`ueba_baseline`, `ueba_new_asset`, `ueba_spread`) и в `sessions.risk_factors`.
+## Клавиши (post-session, T-50)
 
-Текущий актив считается в окне 24ч уже на Evaluate, до INSERT сессии.
+После индекса `.guac` (`recording-include-keys`): inter-key interval (IKI) между press, 15–3000 ms.
+
+| | |
+|--|--|
+| Минимум клавиш | 20 |
+| Baseline | median IKI прошлых сессий user за 30д (`ueba` / `keystroke_stats`) |
+| Аномалия | z-score ≤ −2 vs baseline (≥3 прошлых) **или** cold-start median ≤ 55 ms |
+| Фактор | `ueba_keystroke_fast` (+30 к `sessions.risk_score`) |
+
+## Мышь (post-session, T-50)
+
+Те же `.guac`: opcode `mouse` + `sync` → скорость движения (px/ms) между сэмплами с Δ≥8px, dt 5–2000 ms.
+
+| | |
+|--|--|
+| Минимум | 40 moves / 20 velocity samples |
+| Baseline | median velocity прошлых сессий (`ueba` / `mouse_stats`) |
+| Аномалия | z-score ≥ +2 vs baseline **или** cold-start median ≥ 1.2 px/ms |
+| Фактор | `ueba_mouse_fast` (+25) |
+
+События: `ueba` (stats + anomaly), `risk` (anomaly). Notify — T-51 (`OnUEBAAnomaly`).
+
+## Notify (T-51)
+
+`notify.OnUEBAAnomaly` → inbox + SMTP + webhook `ueba.anomaly` (получатели `audit.read`).
 
 ## Аналитика
 
-`GET /api/v1/admin/analytics/overview` → `ueba[]`: actor, размер baseline **до** окна, сколько уникальных за окно, сколько **новых** (имена до 6).
-
-Аномалии: `ueba_new_asset` (medium), `ueba_spread` (high). Цепочка «brute-force → нетипичный актив», если тот же actor имел ≥5 `user.login.failure`.
-
-Карточка **Аналитика → UEBA**.
+`GET .../analytics/overview` → anomaly `ueba_keystroke_fast` / `ueba_mouse_fast`. Карточка **Аналитика**.
 
 ## Вне scope
 
-ML / peer-group, аномалия команд и полнотекст asciicast/RDP, отдельный UEBA-движок, DLP в потоке.
+ML / peer-group, live mid-session scoring, полный классификатор поведения.

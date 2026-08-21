@@ -1,0 +1,32 @@
+# KeepPAM: лицензия активов (T-52)
+
+Не криптоподпись — entitlement-файл для soft/hard cap по числу **активных** активов.
+
+## Файл
+
+`KEEPPAM_LICENSE_FILE` → JSON (пример `deploy/license.json.example`).
+
+```json
+{
+  "issued": "2026-01-01",
+  "customer": "Acme",
+  "max_assets": 100,
+  "soft_warn_pct": 90,
+  "ha": true,
+  "expires": ""
+}
+```
+
+Нет файла / пустой path → default `max_assets=100`, `ha=true`.
+
+| Условие | Поведение |
+|---------|-----------|
+| count ≥ soft_warn_at | UI banner |
+| count ≥ max_assets | create asset / discovery import → 403 |
+| expires (YYYY-MM-DD) прошедшая | hard block |
+
+Пользователи безлимитны (не считаются). HA 3+2 — флаг `ha` в статусе (кластер уже T-07).
+
+## API
+
+`GET /api/v1/admin/license` (`assets.read`) → `asset_count`, `soft_warn`, `hard_blocked`, `message`.

@@ -30,6 +30,7 @@ type User struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	CreatedBy          *uuid.UUID `json:"created_by,omitempty"`
+	X509Identity       string     `json:"x509_identity,omitempty"`
 	Roles              []string   `json:"roles,omitempty"`
 	Groups             []string   `json:"groups,omitempty"`
 	GroupIDs           []string   `json:"group_ids,omitempty"`
@@ -79,18 +80,22 @@ func (db *DB) Close() {
 
 func scanUser(row pgx.Row) (User, error) {
 	var u User
+	var x509ID *string
 	err := row.Scan(
 		&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.PasswordHash,
 		&u.MFASecretEnc, &u.MFAEnabled, &u.Status, &u.AuthSource,
 		&u.MustChangePassword, &u.FailedLoginCount, &u.LockedUntil,
-		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CreatedBy,
+		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CreatedBy, &x509ID,
 	)
+	if x509ID != nil {
+		u.X509Identity = *x509ID
+	}
 	return u, err
 }
 
 const userCols = `id, username, email, display_name, password_hash, mfa_secret_enc,
 	mfa_enabled, status, auth_source, must_change_password, failed_login_count,
-	locked_until, last_login_at, created_at, updated_at, created_by`
+	locked_until, last_login_at, created_at, updated_at, created_by, x509_identity`
 
 func (db *DB) CountUsers(ctx context.Context) (int, error) {
 	var n int
@@ -118,6 +123,20 @@ func (db *DB) GetUserByUsername(ctx context.Context, username string) (User, err
 
 func (db *DB) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	u, err := scanUser(db.Pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE lower(email)=lower($1)`, email))
+	if err != nil {
+		return u, err
+	}
+	return db.attachRoles(ctx, u)
+}
+
+func (db *DB) GetUserByX509Identity(ctx context.Context, identity string) (User, error) {
+	identity = strings.ToLower(strings.TrimSpace(identity))
+	if identity == "" {
+		return User{}, pgx.ErrNoRows
+	}
+	u, err := scanUser(db.Pool.QueryRow(ctx, `
+		SELECT `+userCols+` FROM users
+		WHERE x509_identity IS NOT NULL AND lower(btrim(x509_identity))=lower($1)`, identity))
 	if err != nil {
 		return u, err
 	}
@@ -341,11 +360,12 @@ func (db *DB) UpdateUser(ctx context.Context, u User, roleNames *[]string) (User
 	_, err = tx.Exec(ctx, `
 		UPDATE users SET email=$2, display_name=$3, password_hash=$4, mfa_secret_enc=$5,
 			mfa_enabled=$6, status=$7, must_change_password=$8, failed_login_count=$9,
-			locked_until=$10, last_login_at=$11, updated_at=$12
+			locked_until=$10, last_login_at=$11, updated_at=$12,
+			x509_identity=NULLIF(btrim($13), '')
 		WHERE id=$1`,
 		u.ID, u.Email, u.DisplayName, u.PasswordHash, u.MFASecretEnc,
 		u.MFAEnabled, u.Status, u.MustChangePassword, u.FailedLoginCount,
-		u.LockedUntil, u.LastLoginAt, u.UpdatedAt,
+		u.LockedUntil, u.LastLoginAt, u.UpdatedAt, u.X509Identity,
 	)
 	if err != nil {
 		return User{}, err

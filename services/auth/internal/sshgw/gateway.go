@@ -26,6 +26,7 @@ import (
 	"github.com/keeppam/auth/internal/auth"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/device"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/obs"
@@ -36,6 +37,7 @@ import (
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 type Gateway struct {
@@ -50,7 +52,13 @@ type Gateway struct {
 	itsm        *itsm.Service
 	ops         *opapprove.Service
 	firewall    *firewall.Service
+	files       *filexfer.Service
 	conns       sync.Map // *ssh.ServerConn → *sshConnState
+
+	lnMu     sync.Mutex
+	ln       net.Listener
+	draining atomic.Bool
+	connWG   sync.WaitGroup
 
 	targetsMu sync.RWMutex
 	targets   []firewall.Target
@@ -78,12 +86,13 @@ func New(
 	itsmSvc *itsm.Service,
 	opsSvc *opapprove.Service,
 	firewallSvc *firewall.Service,
+	filesSvc *filexfer.Service,
 ) *Gateway {
 	return &Gateway{
 		addr: addr, hostKeyPath: hostKeyPath,
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
 		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc, ops: opsSvc,
-		firewall: firewallSvc,
+		firewall: firewallSvc, files: filesSvc,
 	}
 }
 
@@ -97,16 +106,25 @@ func (g *Gateway) ListenAndServe() error {
 		ServerVersion: "SSH-2.0-KeepPAM",
 		PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 			ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-			u, err := g.auth.AuthenticatePassword(context.Background(), conn.User(), string(password), ip)
+			login, hint := splitSSHLogin(conn.User())
+			u, err := g.auth.AuthenticatePassword(context.Background(), login, string(password), ip)
 			crypto.Wipe(password)
 			if err != nil {
 				return nil, fmt.Errorf("access denied")
 			}
-			return sshPerms(u)
+			p, err := sshPerms(u)
+			if err != nil {
+				return nil, err
+			}
+			if hint != "" {
+				p.Extensions["target_hint"] = hint
+			}
+			return p, nil
 		},
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-			u, err := g.auth.AuthenticatePublicKey(context.Background(), conn.User(), key, ip)
+			login, hint := splitSSHLogin(conn.User())
+			u, err := g.auth.AuthenticatePublicKey(context.Background(), login, key, ip)
 			if err != nil {
 				return nil, fmt.Errorf("access denied")
 			}
@@ -116,6 +134,9 @@ func (g *Gateway) ListenAndServe() error {
 			}
 			p.Extensions["auth_method"] = "publickey"
 			p.Extensions["devices"] = strings.Join(device.FromSSHKey(key), ",")
+			if hint != "" {
+				p.Extensions["target_hint"] = hint
+			}
 			return p, nil
 		},
 	}
@@ -125,15 +146,51 @@ func (g *Gateway) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
+	g.lnMu.Lock()
+	if g.draining.Load() {
+		g.lnMu.Unlock()
+		_ = ln.Close()
+		return nil
+	}
+	g.ln = ln
+	g.lnMu.Unlock()
 	slog.Info("ssh gateway listening", "addr", g.addr)
 
 	for {
 		tcp, err := ln.Accept()
 		if err != nil {
+			if g.draining.Load() {
+				g.connWG.Wait()
+				return nil
+			}
 			slog.Error("ssh accept", "err", err)
 			continue
 		}
-		go g.handleConn(tcp, cfg)
+		g.connWG.Add(1)
+		go func() {
+			defer g.connWG.Done()
+			g.handleConn(tcp, cfg)
+		}()
+	}
+}
+
+// Drain stops accepting new SSH connections and waits for existing ones (or ctx).
+func (g *Gateway) Drain(ctx context.Context) {
+	g.draining.Store(true)
+	g.lnMu.Lock()
+	ln := g.ln
+	g.lnMu.Unlock()
+	if ln != nil {
+		_ = ln.Close()
+	}
+	done := make(chan struct{})
+	go func() {
+		g.connWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }
 
@@ -375,8 +432,9 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	ctx := policy.WithDevices(context.Background(), device.Normalize(splitCSV(ext["devices"])))
 
 	type sessStart struct {
-		pty     ptyInfo
-		execCmd string
+		pty       ptyInfo
+		execCmd   string
+		subsystem string
 	}
 	startCh := make(chan sessStart, 1)
 	resizeCh := make(chan ptyInfo, 8)
@@ -401,14 +459,21 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 			case "exec":
 				cmd, _ := parseExec(req.Payload)
 				if kind, ok := policy.FileTransferCommand(cmd); ok {
-					_ = req.Reply(false, nil)
-					g.auditSSHDLP(sc, "ssh file transfer denied by DLP", kind+": "+cmd)
-					continue
+					if _, _, scpOK := policy.ParseSCPExec(cmd); !scpOK {
+						_ = req.Reply(false, nil)
+						g.auditSSHDLP(sc, "ssh file transfer denied by DLP", kind+": "+cmd)
+						continue
+					}
 				}
 				_ = req.Reply(true, nil)
 				startOnce.Do(func() { startCh <- sessStart{pty: pty, execCmd: cmd} })
 			case "subsystem":
 				name, _ := parseExec(req.Payload)
+				if strings.EqualFold(strings.TrimSpace(name), "sftp") {
+					_ = req.Reply(true, nil)
+					startOnce.Do(func() { startCh <- sessStart{pty: pty, subsystem: "sftp"} })
+					continue
+				}
 				if reason, deny := policy.SSHSubsystemDLP(name); deny {
 					_ = req.Reply(false, nil)
 					g.auditSSHDLP(sc, reason, "subsystem:"+name)
@@ -453,7 +518,8 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		return
 	}
 
-	if ext["mfa"] == "true" {
+	fx, isFX := parseFileXferStart(start.execCmd, start.subsystem)
+	if ext["mfa"] == "true" && !isFX {
 		_, _ = io.WriteString(ch, "TOTP: ")
 		code, err := readLine(ch)
 		if err != nil {
@@ -463,6 +529,8 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 			_, _ = io.WriteString(ch, "invalid MFA code\r\n")
 			return
 		}
+	} else if ext["mfa"] == "true" {
+		_ = g.audit.Record(ctx, &userID, "user.login.success", "user", userID.String(), ip, "ssh", map[string]any{"mfa": true, "via": "ssh", "file_transfer": true, "session_totp": "skipped"})
 	} else {
 		_ = g.audit.Record(ctx, &userID, "user.login.success", "user", userID.String(), ip, "ssh", map[string]any{"mfa": false, "via": "ssh"})
 	}
@@ -480,8 +548,16 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 
 	var chosen *targetRef
 	var ticketID string
-	cmd := strings.TrimSpace(start.execCmd)
-	if cmd != "" {
+	var remotePath string
+	if isFX {
+		cmd := strings.TrimSpace(fx.dest)
+		cmd, ticketID = splitTicket(cmd)
+		chosen, remotePath, err = resolveTransferDest(targets, cmd, ext["target_hint"])
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "%v\n", err)
+			return
+		}
+	} else if cmd := strings.TrimSpace(start.execCmd); cmd != "" {
 		cmd, ticketID = splitTicket(cmd)
 		chosen, err = resolveTarget(targets, cmd)
 		if err != nil {
@@ -560,6 +636,12 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		}
 	}
 
+	if isFX && policy.FileTransferDenied(evPolicy.FileTransfer) {
+		_, _ = io.WriteString(ch, "file transfer denied by DLP\r\n")
+		g.auditSSHDLP(sc, "ssh file transfer denied by DLP", fx.raw)
+		return
+	}
+
 	cols, rows := 120, 40
 	if start.pty.Width > 0 {
 		cols = int(start.pty.Width)
@@ -582,6 +664,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		labels = sessionsvc.MergeLabels(labels, at)
 	}
 	frozen := g.policy.Freeze(ctx, evPolicy, usedBreakGlass, bypassConnect)
+	frozen.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
 	snap := &frozen
 	pamSess, err := g.sessions.Create(ctx, userID, sessionsvc.CreateInput{
 		AssetID: chosen.AssetID, AccountID: chosen.AccountID, Protocol: "ssh", ClientIP: ip, TicketID: ticketID,
@@ -592,6 +675,14 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	if err != nil {
 		_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
 		return
+	}
+	if pamSess.IsWaitingSupervisor() {
+		_, _ = fmt.Fprintf(ch, "Waiting for supervisor authorization (four eyes). Session %s\r\n", pamSess.ID.String()[:8])
+		if err := g.sessions.WaitSupervisor(ctx, pamSess.ID, 0); err != nil {
+			_, _ = fmt.Fprintf(ch, "supervisor: %v\r\n", err)
+			return
+		}
+		pamSess, _ = g.sessions.Get(ctx, pamSess.ID)
 	}
 	if v, ok := g.conns.Load(sc); ok {
 		st := v.(*sshConnState)
@@ -609,12 +700,42 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		}()
 	}
 
+	if isFX {
+		client, err := g.assets.DialSSH(ctx, creds)
+		creds.WipeSecret()
+		if err != nil {
+			_ = g.sessions.MarkEnded(ctx, pamSess.ID, err.Error())
+			_ = g.audit.Record(ctx, &userID, "session.failed", "session", pamSess.ID.String(), ip, "ssh", map[string]any{"error": err.Error()})
+			_, _ = fmt.Fprintf(ch, "connect failed: %v\n", err)
+			return
+		}
+		_ = g.sessions.MarkActive(ctx, pamSess.ID)
+		_ = g.audit.Record(ctx, &userID, "session.started", "session", pamSess.ID.String(), ip, "ssh", map[string]any{
+			"asset": chosen.AssetName, "account": chosen.AccountName, "via": "sshgw", "file_transfer": true,
+		})
+		capture := policy.FileTransferStoresBytes(frozen.EffectiveFileTransfer())
+		var xerr error
+		if fx.sftp {
+			xerr = g.runSFTP(ctx, ch, client, pamSess.ID, capture)
+		} else {
+			xerr = g.runSCP(ctx, ch, client, pamSess.ID, remotePath, fx.sink, capture)
+		}
+		_ = client.Close()
+		msg := ""
+		if xerr != nil {
+			msg = xerr.Error()
+		}
+		_ = g.sessions.MarkEnded(ctx, pamSess.ID, msg)
+		return
+	}
+
 	rec, err := sshproxy.NewRecorder(pamSess.RecordingPath, cols, rows, chosen.Label)
 	if err != nil {
 		_ = g.sessions.MarkEnded(ctx, pamSess.ID, err.Error())
 		_, _ = fmt.Fprintf(ch, "recorder: %v\n", err)
 		return
 	}
+	rec.SetCharset(frozen.TerminalCharset)
 
 	client, err := g.assets.DialSSH(ctx, creds)
 	creds.WipeSecret()

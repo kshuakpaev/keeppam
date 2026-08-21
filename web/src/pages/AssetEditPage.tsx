@@ -2,12 +2,28 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, hasPerm, type AccessBinding, type AccessPolicy, type AppIntegration, type AppLease, type AppObjectPack, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type PamGroup, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
-import { kindForProtocol, useSessionTabs } from "../sessionTabs";
+import { useI18n } from "../i18n";
+import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
-const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
+
+async function waitForSupervisor(sessionId: string, denied: string, timeout: string) {
+  const deadline = Date.now() + SUPERVISOR_WAIT_MS;
+  while (Date.now() < deadline) {
+    const row = await api.getSession(sessionId);
+    if (!row.waiting_supervisor) {
+      if (row.status === "ended" || row.status === "failed") {
+        throw new Error(row.error_message || denied);
+      }
+      return row;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error(timeout);
+}
 
 const emptyAclForm = {
   kind: "role" as "role" | "user" | "group",
@@ -27,6 +43,7 @@ const emptyAclForm = {
   allowed_namespaces: "",
   allowed_egress: "",
   pii_action: "",
+  file_transfer: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -39,6 +56,7 @@ const emptyAclForm = {
 export function AssetEditPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const { t, te, formatDate } = useI18n();
   const nav = useNavigate();
   const { openTab } = useSessionTabs();
   const [asset, setAsset] = useState<Asset | null>(null);
@@ -73,7 +91,18 @@ export function AssetEditPage() {
     status: "active",
     tags: "",
     approval_mode: "one",
+    quorum_n: 2,
+    quorum_m: 3,
+    approver_group_id: "",
+    require_supervisor: false,
+    supervisor_group_id: "",
     pam_only: true,
+    ad_privileged_group_dn: "",
+    krb_spn: "",
+    terminal_charset: "utf-8",
+    rdp_remote_app: "",
+    rdp_remote_app_dir: "",
+    rdp_remote_app_args: "",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -87,6 +116,7 @@ export function AssetEditPage() {
     k8s_impersonate: false,
     k8s_impersonate_prefix: "keeppam:",
     k8s_bind_user: false,
+    ad_user_dn: "",
   });
   const [aclForm, setAclForm] = useState({ ...emptyAclForm });
   const [aclEditId, setAclEditId] = useState<string | null>(null);
@@ -134,12 +164,24 @@ export function AssetEditPage() {
         description: a.description || "",
         status: a.status,
         tags: (a.tags || []).join(", "),
-        approval_mode: (a.approval_stages || []).includes("security") ? "two" : "one",
+        approval_mode:
+          a.approval_mode === "quorum" ? "quorum" : (a.approval_stages || []).includes("security") ? "two" : "one",
+        quorum_n: a.quorum_n || 2,
+        quorum_m: a.quorum_m || 3,
+        approver_group_id: a.approver_group_id || "",
+        require_supervisor: !!a.require_supervisor,
+        supervisor_group_id: a.supervisor_group_id || "",
         pam_only: a.pam_only !== false,
+        ad_privileged_group_dn: a.ad_privileged_group_dn || "",
+        krb_spn: a.krb_spn || "",
+        terminal_charset: a.terminal_charset || "utf-8",
+        rdp_remote_app: a.rdp_remote_app || "",
+        rdp_remote_app_dir: a.rdp_remote_app_dir || "",
+        rdp_remote_app_args: a.rdp_remote_app_args || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
-      if (canACL || canUsers) {
+      if (canACL || canUsers || canWrite) {
         const r = await api.listRoles();
         setRoles(r.roles || []);
         try {
@@ -194,7 +236,7 @@ export function AssetEditPage() {
         setAppLoaded(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "assets.loadError"));
       setAsset(null);
     } finally {
       setLoading(false);
@@ -210,7 +252,7 @@ export function AssetEditPage() {
     setError("");
     setConnecting(acc.id);
     try {
-      const sess = await api.createSession(id, acc.id, {
+      let sess = await api.createSession(id, acc.id, {
         ticket_id: connectTicket.trim() || undefined,
         reason: connectReason.trim() || undefined,
         db_privilege:
@@ -218,14 +260,72 @@ export function AssetEditPage() {
         step_up_token: stepUpToken,
       });
       setStepUp(null);
+      if (sess.waiting_supervisor) {
+        setMsg(t("assets.waitSupervisor"));
+        sess = await waitForSupervisor(sess.id, t("assets.supervisorDenied"), t("assets.supervisorTimeout"));
+        setMsg("");
+      }
       const title = `${asset.name} · ${acc.username}`;
       const kind = kindForProtocol(asset.protocol, appForm.recording_mode === "isolated");
-      if (asset.protocol === "postgres" || asset.protocol === "mysql") {
+      if (isSQLProtocol(asset.protocol)) {
         if (sess.wire_token) {
+          const fallback =
+            asset.protocol === "mysql" ? ":13306" : asset.protocol === "mssql" ? ":11433" : ":15432";
+          const dbn = sess.database_name || asset.database_name || (asset.protocol === "mssql" ? "master" : "postgres");
           setMsg(
-            `Wire: host=PAM port=${sess.wire_addr || (asset.protocol === "mysql" ? ":13306" : ":15432")} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${sess.database_name || asset.database_name || "postgres"}`,
+            `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`,
           );
         }
+      }
+      if (asset.protocol === "telnet" && sess.wire_token) {
+        setMsg(
+          `Telnet wire: telnet PAM ${sess.wire_addr || ":2323"} — login=${sess.wire_user || sess.id} password=${sess.wire_token}`,
+        );
+      }
+      if (asset.protocol === "tn3270" && sess.wire_token) {
+        sessionStorage.setItem(
+          `kp_wire_${sess.id}`,
+          JSON.stringify({
+            token: sess.wire_token,
+            addr: sess.wire_addr || ":2324",
+            user: sess.wire_user || sess.id,
+          }),
+        );
+        setMsg(
+          `TN3270: x3270 PAM ${sess.wire_addr || ":2324"} — UUID=${sess.wire_user || sess.id} token=${sess.wire_token}`,
+        );
+      }
+      if (asset.protocol === "citrix" && (sess.citrix_ica || sess.wire_token)) {
+        sessionStorage.setItem(
+          `kp_wire_${sess.id}`,
+          JSON.stringify({
+            token: sess.wire_token,
+            addr: sess.wire_addr || ":1081",
+            user: sess.wire_user || sess.id,
+            ica: sess.citrix_ica,
+            filename: sess.citrix_filename,
+          }),
+        );
+        if (sess.citrix_ica) {
+          const blob = new Blob([sess.citrix_ica], { type: "application/x-ica" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = sess.citrix_filename || `keeppam-${sess.id.slice(0, 8)}.ica`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+        setMsg(sess.wire_hint || `Citrix SOCKS ${sess.wire_addr || ":1081"}`);
+      }
+      if (asset.protocol === "rdp" && sess.rdp_file) {
+        const blob = new Blob([sess.rdp_file], { type: "application/x-rdp" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = sess.rdp_filename || `keeppam-${sess.id.slice(0, 8)}.rdp`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setMsg(sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`);
       }
       openTab({
         id: sess.id,
@@ -238,7 +338,7 @@ export function AssetEditPage() {
         setStepUp({ err, retry: (tok) => onConnect(acc, tok) });
         return;
       }
-      setError(err instanceof Error ? err.message : "Не удалось начать сессию");
+      setError(te(err, "assets.connectError"));
     } finally {
       setConnecting(null);
     }
@@ -269,7 +369,7 @@ export function AssetEditPage() {
         setStepUp({ err, retry: (tok) => onAppAccess(acc, tok) });
         return;
       }
-      setError(err instanceof Error ? err.message : "Ошибка доступа к приложению");
+      setError(te(err, "common.error"));
     } finally {
       setConnecting(null);
     }
@@ -295,7 +395,7 @@ export function AssetEditPage() {
         setStepUp({ err, retry: (tok) => onK8sAccess(acc, tok) });
         return;
       }
-      setError(err instanceof Error ? err.message : "Ошибка K8s access");
+      setError(te(err, "common.error"));
     } finally {
       setConnecting(null);
     }
@@ -319,7 +419,7 @@ export function AssetEditPage() {
       setMsg("Lease помечен как consumed");
       setK8sLease(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка consume");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -345,36 +445,48 @@ export function AssetEditPage() {
           .map((t) => t.trim())
           .filter(Boolean),
         approval_stages: form.approval_mode === "two" ? ["manager", "security"] : ["manager"],
+        approval_mode: form.approval_mode === "quorum" ? "quorum" : "sequential",
+        quorum_n: form.approval_mode === "quorum" ? Number(form.quorum_n) || 2 : 1,
+        quorum_m: form.approval_mode === "quorum" ? Number(form.quorum_m) || 3 : 1,
+        approver_group_id: form.approval_mode === "quorum" && form.approver_group_id ? form.approver_group_id : null,
+        require_supervisor: form.require_supervisor,
+        supervisor_group_id: form.require_supervisor && form.supervisor_group_id ? form.supervisor_group_id : null,
         pam_only: form.pam_only,
+        ad_privileged_group_dn: form.ad_privileged_group_dn.trim(),
+        krb_spn: form.krb_spn.trim(),
+        terminal_charset: form.terminal_charset || "utf-8",
+        rdp_remote_app: form.rdp_remote_app || "",
+        rdp_remote_app_dir: form.rdp_remote_app_dir || "",
+        rdp_remote_app_args: form.rdp_remote_app_args || "",
       });
       setAsset(updated);
-      setMsg("Сохранено");
+      setMsg(t("assets.saved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "assets.saveError"));
     }
   }
 
   async function onDelete() {
     if (!id || !canWrite) return;
-    if (!confirm("Удалить актив и все учётные записи?")) return;
+    if (!confirm(t("assets.deleteConfirm"))) return;
     try {
       await api.deleteAsset(id);
       nav("/assets");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "assets.deleteError"));
     }
   }
 
   async function onClearHostKey() {
     if (!id || !canWrite) return;
-    if (!confirm("Сбросить запомненный SSH host key? Следующее подключение запомнит ключ заново.")) return;
+    if (!confirm(t("assets.hostKeyResetConfirm"))) return;
     setError("");
     try {
       const a = await api.clearAssetHostKey(id);
       setAsset(a);
-      setMsg("Host key сброшен");
+      setMsg(t("assets.hostKeyResetOk"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сброса host key");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -395,6 +507,7 @@ export function AssetEditPage() {
         k8s_impersonate: accForm.k8s_impersonate,
         k8s_impersonate_prefix: accForm.k8s_impersonate_prefix,
         k8s_bind_user: accForm.k8s_bind_user,
+        ad_user_dn: accForm.ad_user_dn.trim() || undefined,
       });
       setAccForm({
         username: "",
@@ -408,23 +521,24 @@ export function AssetEditPage() {
         k8s_impersonate: false,
         k8s_impersonate_prefix: "keeppam:",
         k8s_bind_user: false,
+        ad_user_dn: "",
       });
-      setMsg("Учётная запись добавлена");
+      setMsg(t("assets.accountAdded"));
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка создания учётки");
+      setError(te(err, "common.error"));
     }
   }
 
   async function onDeleteAccount(acc: AssetAccount) {
     if (!id || !canWrite) return;
-    if (!confirm(`Удалить учётную запись ${acc.username}?`)) return;
+    if (!confirm(t("assets.deleteAccountConfirm", { name: acc.username }))) return;
     try {
       await api.deleteAccount(id, acc.id);
-      setMsg("Учётная запись удалена");
+      setMsg(t("assets.accountDeleted"));
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "assets.deleteError"));
     }
   }
 
@@ -435,7 +549,7 @@ export function AssetEditPage() {
       await api.updateAccount(id, acc.id, { status });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -477,7 +591,7 @@ export function AssetEditPage() {
       );
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка ротации");
+      setError(te(err, "common.error"));
     } finally {
       setRotating(null);
     }
@@ -500,7 +614,7 @@ export function AssetEditPage() {
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка checkout");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -521,7 +635,7 @@ export function AssetEditPage() {
       setMsg(`Check-in ${acc.username}: ${res.status}`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка check-in");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -533,7 +647,7 @@ export function AssetEditPage() {
       setMsg("Checkout снят");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка force-checkin");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -548,7 +662,7 @@ export function AssetEditPage() {
       );
       setMsg("Секрет показан (событие записано в аудит)");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка reveal");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -566,6 +680,7 @@ export function AssetEditPage() {
       k8s_impersonate?: boolean;
       k8s_impersonate_prefix?: string;
       k8s_bind_user?: boolean;
+      ad_user_dn?: string;
     },
   ) {
     if (!id || !canWrite) return;
@@ -573,7 +688,7 @@ export function AssetEditPage() {
       await api.updateAccount(id, acc.id, patch);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка политики");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -629,6 +744,7 @@ export function AssetEditPage() {
         allowed_namespaces: (raw.allowed_namespaces || []).join(", "),
         allowed_egress: (raw.allowed_egress || []).join(", "),
         pii_action: raw.pii_action || "",
+        file_transfer: raw.file_transfer || "",
         command_policy_pack_id: raw.command_policy_pack_id || "",
         sql_policy_pack_id: raw.sql_policy_pack_id || "",
         http_policy_pack_id: raw.http_policy_pack_id || "",
@@ -639,7 +755,7 @@ export function AssetEditPage() {
       });
       setMsg("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки ACL");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -666,6 +782,7 @@ export function AssetEditPage() {
         allowed_namespaces?: string[];
         allowed_egress?: string[];
         pii_action?: string;
+        file_transfer?: string;
         command_policy_pack_id?: string | null;
         sql_policy_pack_id?: string | null;
         http_policy_pack_id?: string | null;
@@ -680,13 +797,13 @@ export function AssetEditPage() {
       };
       if (!aclEditId) {
         if (aclForm.kind === "role") {
-          if (!aclForm.role_id) throw new Error("выберите роль");
+          if (!aclForm.role_id) throw new Error(t("assets.selectRole"));
           body.role_id = aclForm.role_id;
         } else if (aclForm.kind === "group") {
-          if (!aclForm.group_id) throw new Error("выберите группу");
+          if (!aclForm.group_id) throw new Error(t("assets.selectGroup"));
           body.group_id = aclForm.group_id;
         } else {
-          if (!aclForm.user_id) throw new Error("выберите пользователя");
+          if (!aclForm.user_id) throw new Error(t("assets.selectUser"));
           body.user_id = aclForm.user_id;
         }
       }
@@ -706,6 +823,7 @@ export function AssetEditPage() {
         body.allowed_namespaces = namespaces;
         body.allowed_egress = egress;
         body.pii_action = aclForm.pii_action || "";
+        body.file_transfer = aclForm.file_transfer || "";
         body.command_policy_pack_id = aclForm.command_policy_pack_id || null;
         body.sql_policy_pack_id = aclForm.sql_policy_pack_id || null;
         body.http_policy_pack_id = aclForm.http_policy_pack_id || null;
@@ -716,7 +834,7 @@ export function AssetEditPage() {
         if (aclPermanent) body.permanent = true;
         else if (aclForm.duration_minutes) body.duration_minutes = Number(aclForm.duration_minutes);
         await api.updateACL(id, aclEditId, body);
-        setMsg("Доступ обновлён");
+        setMsg(t("assets.aclUpdated"));
       } else {
         if (aclForm.time_start) body.time_start = aclForm.time_start;
         if (aclForm.time_end) body.time_end = aclForm.time_end;
@@ -728,6 +846,7 @@ export function AssetEditPage() {
         if (namespaces.length) body.allowed_namespaces = namespaces;
         if (egress.length) body.allowed_egress = egress;
         if (aclForm.pii_action) body.pii_action = aclForm.pii_action;
+        if (aclForm.file_transfer) body.file_transfer = aclForm.file_transfer;
         if (aclForm.command_policy_pack_id) body.command_policy_pack_id = aclForm.command_policy_pack_id;
         if (aclForm.sql_policy_pack_id) body.sql_policy_pack_id = aclForm.sql_policy_pack_id;
         if (aclForm.http_policy_pack_id) body.http_policy_pack_id = aclForm.http_policy_pack_id;
@@ -739,12 +858,12 @@ export function AssetEditPage() {
           body.risk_action = aclForm.risk_action;
         }
         await api.createACL(id, body);
-        setMsg("Доступ выдан");
+        setMsg(t("assets.aclGranted"));
       }
       resetAclForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка ACL");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -758,31 +877,29 @@ export function AssetEditPage() {
         duration_minutes: Number(jitForm.duration_minutes) || 60,
         ticket_id: jitForm.ticket_id.trim() || undefined,
       });
-      setMsg("Запрос отправлен — ждите согласования");
+      setMsg(t("assets.requestSent"));
       setJitForm({ reason: "", duration_minutes: 60, ticket_id: "" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка запроса");
+      setError(te(err, "assets.requestError"));
     }
   }
 
   async function onBreakGlass(e: FormEvent) {
     e.preventDefault();
     if (!id || !canBreakGlass) return;
-    if (!confirm("Break-glass откроет экстренный доступ с громким аудитом. Продолжить?")) return;
+    if (!confirm(t("assets.breakGlassConfirm"))) return;
     setError("");
     try {
       const ev = await api.openBreakGlass(id, {
         reason: bgForm.reason,
         duration_minutes: Number(bgForm.duration_minutes) || 30,
       });
-      setMsg(
-        `Break-glass открыт до ${new Date(ev.expires_at).toLocaleString()} — можно подключаться. Укажите ту же причину в поле Reason.`,
-      );
+      setMsg(t("assets.breakGlassOpened", { at: formatDate(ev.expires_at) }));
       setBgForm({ reason: "", duration_minutes: 30 });
       setConnectReason(ev.reason);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка break-glass");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -790,11 +907,11 @@ export function AssetEditPage() {
     if (!id || !canACL) return;
     try {
       await api.deleteACL(id, b.id);
-      setMsg("Доступ отозван");
+      setMsg(t("assets.aclRevoked"));
       if (aclEditId === b.id) resetAclForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err, "common.error"));
     }
   }
 
@@ -806,16 +923,16 @@ export function AssetEditPage() {
   }
 
   function formatDays(mask: number): string {
-    if (mask === 127) return "все дни";
-    return DAY_LABELS.filter((_, i) => mask & (1 << i)).join(", ") || "—";
+    if (mask === 127) return t("cal.allDays");
+    return [0, 1, 2, 3, 4, 5, 6].filter((i) => mask & (1 << i)).map((i) => t(`cal.${i}`)).join(", ") || "—";
   }
 
-  if (loading) return <p className="muted">Загрузка…</p>;
+  if (loading) return <p className="muted">{t("common.loading")}</p>;
   if (!asset) {
     return (
       <div>
-        <p className="error">{error || "Актив не найден"}</p>
-        <Link to="/assets">← К списку</Link>
+        <p className="error">{error || t("assets.notFound")}</p>
+        <Link to="/assets">{t("assets.toList")}</Link>
       </div>
     );
   }
@@ -825,15 +942,15 @@ export function AssetEditPage() {
       <div className="toolbar">
         <div>
           <p className="muted" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/assets">Активы</Link> / {asset.name}
+            <Link to="/assets">{t("nav.assets")}</Link> / {asset.name}
           </p>
-          <h1>Редактирование актива</h1>
+          <h1>{t("assets.editTitle")}</h1>
           <p className="muted mono">
-            {asset.id} · протокол <strong>{asset.protocol}</strong> · {asset.address}:{asset.port}
+            {asset.id} · {t("assets.protoLine", { protocol: asset.protocol, addr: asset.address, port: asset.port })}
           </p>
         </div>
         <button className="btn secondary" type="button" onClick={() => nav("/assets")}>
-          Назад
+          {t("common.back")}
         </button>
       </div>
 
@@ -848,27 +965,27 @@ export function AssetEditPage() {
       )}
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-        <h2>Параметры</h2>
-        <label>Имя</label>
+        <h2>{t("assets.params")}</h2>
+        <label>{t("common.name")}</label>
         <input
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
           disabled={!canWrite}
           required
         />
-        <label>Тип</label>
+        <label>{t("common.type")}</label>
         <select
           value={form.asset_type}
           onChange={(e) => setForm({ ...form, asset_type: e.target.value })}
           disabled={!canWrite}
         >
-          {TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          {TYPES.map((typ) => (
+            <option key={typ} value={typ}>
+              {typ}
             </option>
           ))}
         </select>
-        <label>Адрес</label>
+        <label>{t("common.address")}</label>
         <input
           value={form.address}
           onChange={(e) => setForm({ ...form, address: e.target.value })}
@@ -883,7 +1000,7 @@ export function AssetEditPage() {
         />
         <div className="row" style={{ alignItems: "flex-end" }}>
           <div style={{ flex: 1 }}>
-            <label>Протокол</label>
+            <label>{t("common.protocol")}</label>
             <select
               value={form.protocol}
               onChange={(e) => setForm({ ...form, protocol: e.target.value })}
@@ -897,7 +1014,7 @@ export function AssetEditPage() {
             </select>
           </div>
           <div style={{ width: 120 }}>
-            <label>Порт</label>
+            <label>{t("common.port")}</label>
             <input
               type="number"
               value={form.port}
@@ -906,17 +1023,17 @@ export function AssetEditPage() {
             />
           </div>
         </div>
-        {(form.protocol === "postgres" || form.protocol === "mysql") && (
+        {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
           <>
             <label>Database</label>
             <input
               value={form.database_name}
               onChange={(e) => setForm({ ...form, database_name: e.target.value })}
               disabled={!canWrite}
-              placeholder={form.protocol === "postgres" ? "postgres" : "(optional schema)"}
+              placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional schema)"}
             />
             <p className="muted" style={{ marginTop: 0 }}>
-              SQL-консоль и wire (:15432/:13306) подключаются к этой БД; ephemeral GRANT — только на неё.
+              {t("assets.dbHint")}
             </p>
           </>
         )}
@@ -927,14 +1044,14 @@ export function AssetEditPage() {
             onChange={(e) => setForm({ ...form, pam_only: e.target.checked })}
             disabled={!canWrite}
           />
-          Только через PAM (firewall export + блок port-forward на сервисный порт)
+          {t("assets.pamOnly")}
         </label>
         {form.pam_only && (
           <p className="muted" style={{ marginTop: 0 }}>
             Firewall:{" "}
             {asset?.firewall_applied_at
-              ? `правила отмечены ${new Date(asset.firewall_applied_at).toLocaleString()}`
-              : "правила perimeter не отмечены"}
+              ? t("assets.fwMarked", { at: formatDate(asset.firewall_applied_at) })
+              : t("assets.fwUnmarked")}
             {canWrite && asset && (
               <>
                 {" · "}
@@ -946,18 +1063,18 @@ export function AssetEditPage() {
                       .markFirewallApplied(asset.id)
                       .then((a) => {
                         setAsset(a);
-                        setMsg("Firewall: правила отмечены применёнными");
+                        setMsg(t("assets.fwMarkedMsg"));
                       })
-                      .catch((err) => setError(err instanceof Error ? err.message : "Ошибка"))
+                      .catch((err) => setError(te(err, "common.error")))
                   }
                 >
-                  отметить применёнными
+                  {t("assets.fwMark")}
                 </button>
               </>
             )}
           </p>
         )}
-        <label>Статус</label>
+        <label>{t("common.status")}</label>
         <select
           value={form.status}
           onChange={(e) => setForm({ ...form, status: e.target.value })}
@@ -966,7 +1083,7 @@ export function AssetEditPage() {
           <option value="active">active</option>
           <option value="disabled">disabled</option>
         </select>
-        <label>Теги</label>
+        <label>{t("common.tags")}</label>
         <input
           value={form.tags}
           onChange={(e) => setForm({ ...form, tags: e.target.value })}
@@ -974,18 +1091,176 @@ export function AssetEditPage() {
           placeholder="prod/linux, pci"
         />
         <p className="muted" style={{ marginTop: 0 }}>
-          Путь через / : <span className="mono">prod/linux</span> покрывает ACL на <span className="mono">prod</span>.
+          {t("assets.tagPath", { ex: "prod/linux", parent: "prod" })}
         </p>
-        <label>JIT согласование</label>
+        <label>{t("assets.jit")}</label>
         <select
           value={form.approval_mode}
           onChange={(e) => setForm({ ...form, approval_mode: e.target.value })}
           disabled={!canWrite}
         >
-          <option value="one">Только руководитель (access.approve)</option>
-          <option value="two">Руководитель + ИБ (access.approve.security)</option>
+          <option value="one">{t("assets.jit.one")}</option>
+          <option value="two">{t("assets.jit.two")}</option>
+          <option value="quorum">{t("assets.jit.quorum")}</option>
         </select>
-        <label>Описание</label>
+        {form.approval_mode === "quorum" && (
+          <>
+            <label>{t("assets.quorumNM")}</label>
+            <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                style={{ width: "4rem" }}
+                value={form.quorum_n}
+                onChange={(e) => setForm({ ...form, quorum_n: Number(e.target.value) })}
+                disabled={!canWrite}
+              />
+              <span className="muted">{t("assets.quorumOf")}</span>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                style={{ width: "4rem" }}
+                value={form.quorum_m}
+                onChange={(e) => setForm({ ...form, quorum_m: Number(e.target.value) })}
+                disabled={!canWrite}
+              />
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!canWrite}
+                onClick={() => setForm({ ...form, quorum_n: 2, quorum_m: 3 })}
+              >
+                {t("assets.quorum23")}
+              </button>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!canWrite}
+                onClick={() => setForm({ ...form, quorum_n: 3, quorum_m: 5 })}
+              >
+                {t("assets.quorum35")}
+              </button>
+            </div>
+            <label>{t("assets.approverGroup")}</label>
+            <select
+              value={form.approver_group_id}
+              onChange={(e) => setForm({ ...form, approver_group_id: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="">{t("assets.anyApprove")}</option>
+              {pamGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                  {g.member_count != null ? ` (${g.member_count})` : ""}
+                </option>
+              ))}
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              {t("assets.quorumHint")}
+            </p>
+          </>
+        )}
+        <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={form.require_supervisor}
+            onChange={(e) => setForm({ ...form, require_supervisor: e.target.checked })}
+            disabled={!canWrite}
+          />
+          {t("assets.fourEyes")}
+        </label>
+        {form.require_supervisor && (
+          <>
+            <label>{t("assets.supervisorGroup")}</label>
+            <select
+              value={form.supervisor_group_id}
+              onChange={(e) => setForm({ ...form, supervisor_group_id: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="">{t("assets.anySupervise")}</option>
+              {pamGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                  {g.member_count != null ? ` (${g.member_count})` : ""}
+                </option>
+              ))}
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              {t("assets.fourEyesHint")}
+            </p>
+          </>
+        )}
+        <label>{t("assets.adGroupDN")}</label>
+        <input
+          className="mono"
+          value={form.ad_privileged_group_dn}
+          onChange={(e) => setForm({ ...form, ad_privileged_group_dn: e.target.value })}
+          disabled={!canWrite}
+          placeholder="CN=Domain Admins,CN=Users,DC=example,DC=com"
+        />
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("assets.adGroupHint")}
+        </p>
+        <label>Kerberos SPN (опционально)</label>
+        <input
+          className="mono"
+          value={form.krb_spn}
+          onChange={(e) => setForm({ ...form, krb_spn: e.target.value })}
+          disabled={!canWrite}
+          placeholder="host/srv.corp.local"
+        />
+        <p className="muted" style={{ marginTop: 0 }}>
+          Для GSSAPI: host/fqdn или fqdn. Пусто = hostname актива / address.
+        </p>
+        <label>Кодировка терминала (SSH/Telnet)</label>
+        <select
+          value={form.terminal_charset || "utf-8"}
+          onChange={(e) => setForm({ ...form, terminal_charset: e.target.value })}
+          disabled={!canWrite}
+        >
+          <option value="utf-8">UTF-8</option>
+          <option value="cp1251">CP1251 (Windows)</option>
+          <option value="koi8-r">KOI8-R</option>
+          <option value="auto">auto (detect)</option>
+        </select>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Для индекса и поиска: сырой поток конвертируется в UTF-8 (T-43).
+        </p>
+        {form.protocol === "rdp" && (
+          <>
+            <label>RemoteApp (RDS)</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app: e.target.value })}
+              disabled={!canWrite}
+              placeholder="||Notepad или пусто = полный desktop"
+            />
+            <p className="muted" style={{ marginTop: 0 }}>
+              Guacamole <code>remote-app</code> / mstsc <code>remoteapplicationprogram</code>. Alias с{" "}
+              <code>||</code> как в RDS.
+            </p>
+            <label>RemoteApp working dir</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app_dir || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app_dir: e.target.value })}
+              disabled={!canWrite}
+              placeholder="C:\Windows\System32"
+            />
+            <label>RemoteApp args</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app_args || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app_args: e.target.value })}
+              disabled={!canWrite}
+              placeholder="optional"
+            />
+          </>
+        )}
+        <label>{t("common.description")}</label>
         <input
           value={form.description}
           onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -994,12 +1269,12 @@ export function AssetEditPage() {
         <div className="row" style={{ marginTop: "0.5rem" }}>
           {canWrite && (
             <button className="btn" type="submit">
-              Сохранить
+              {t("common.save")}
             </button>
           )}
           {canWrite && (
             <button className="btn danger" type="button" onClick={() => void onDelete()}>
-              Удалить
+              {t("common.delete")}
             </button>
           )}
         </div>
@@ -1032,7 +1307,7 @@ export function AssetEditPage() {
                 setMsg("Интеграция приложения сохранена");
                 setAppForm((f) => ({ ...f, oidc_client_secret: "" }));
               } catch (err) {
-                setError(err instanceof Error ? err.message : "Ошибка сохранения app");
+                setError(te(err, "common.error"));
               }
             })();
           }}
@@ -1106,7 +1381,7 @@ export function AssetEditPage() {
           {asset.host_key_fingerprint ? (
             <>
               <p className="muted" style={{ marginBottom: "0.5rem" }}>
-                Запомнен при первом подключении. Смена ключа без сброса блокирует сессию.
+                {t("assets.hostKeyKnown")}
               </p>
               <p className="mono" style={{ wordBreak: "break-all" }}>
                 {asset.host_key_algo || "ssh"} · {asset.host_key_fingerprint}
@@ -1121,30 +1396,30 @@ export function AssetEditPage() {
                   style={{ marginTop: "0.5rem" }}
                   onClick={() => void onClearHostKey()}
                 >
-                  Сбросить host key
+                  {t("assets.hostKeyReset")}
                 </button>
               )}
             </>
           ) : (
-            <p className="muted">Ещё не запомнен — сохранится при первом SSH-подключении.</p>
+            <p className="muted">{t("assets.hostKeyUnknown")}</p>
           )}
         </div>
       )}
 
       <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>Учётные записи цели</h2>
-        <label>Ticket ID для подключения</label>
+        <h2>{t("assets.accounts")}</h2>
+        <label>{t("assets.connectTicket")}</label>
         <input
           value={connectTicket}
           onChange={(e) => setConnectTicket(e.target.value)}
-          placeholder="INC-12345 (если ACL требует тикет)"
+          placeholder={t("assets.connectTicketPh")}
           style={{ maxWidth: 320, marginBottom: "0.75rem" }}
         />
-        <label>Причина (reason) для подключения</label>
+        <label>{t("assets.connectReason")}</label>
         <input
           value={connectReason}
           onChange={(e) => setConnectReason(e.target.value)}
-          placeholder="если ACL / break-glass требует reason"
+          placeholder={t("assets.connectReasonPh")}
           style={{ maxWidth: 480, marginBottom: "0.75rem" }}
         />
         {(asset.protocol === "postgres" || asset.protocol === "mysql") && (
@@ -1155,26 +1430,25 @@ export function AssetEditPage() {
               onChange={(e) => setDbPrivilege(e.target.value as "readonly" | "readwrite")}
               style={{ maxWidth: 320, marginBottom: "0.75rem" }}
             >
-              <option value="readonly">readonly — SELECT only (временная роль)</option>
-              <option value="readwrite">readwrite — SELECT/INSERT/UPDATE/DELETE</option>
+              <option value="readonly">{t("assets.ephemeralRo")}</option>
+              <option value="readwrite">{t("assets.ephemeralRw")}</option>
             </select>
             <p className="muted" style={{ marginTop: 0 }}>
-              Vault-учётка используется только для CREATE/DROP ROLE; запросы идут под временным пользователем.
+              {t("assets.ephemeralHint")}
             </p>
           </>
         )}
         <p className="muted">
-          Checkout → Reveal показывает пароль только держателю. Сессии через PAM checkout не требуют.
-          Политики: rotate after session, schedule (часы), dual-control checkout.
+          {t("assets.checkoutHint")}
         </p>
         <table>
           <thead>
             <tr>
-              <th>Логин</th>
-              <th>Метод</th>
-              <th>Секрет</th>
-              <th>Checkout / ротация</th>
-              <th>Статус</th>
+              <th>{t("login.username")}</th>
+              <th>{t("common.type")}</th>
+              <th>{t("assets.password")}</th>
+              <th>Checkout / {t("assets.rotate")}</th>
+              <th>{t("common.status")}</th>
               <th />
             </tr>
           </thead>
@@ -1183,24 +1457,24 @@ export function AssetEditPage() {
               <tr key={acc.id}>
                 <td className="mono">{acc.username}</td>
                 <td className="mono">{acc.auth_method}</td>
-                <td>{acc.has_secret ? "задан" : "нет"}</td>
+                <td>{acc.has_secret ? t("assets.secretSet") : t("assets.secretNone")}</td>
                 <td className="muted" style={{ fontSize: "0.85rem" }}>
                   {acc.checked_out ? (
                     <>
                       hold: <span className="mono">{acc.checkout_username || "…"}</span>
                       {acc.checkout_expires_at
-                        ? ` до ${new Date(acc.checkout_expires_at).toLocaleString()}`
+                        ? t("assets.until", { at: formatDate(acc.checkout_expires_at) })
                         : ""}
                       <br />
                     </>
                   ) : (
-                    "свободен · "
+                    t("assets.checkoutFree")
                   )}
                   {acc.last_rotated_at
-                    ? `rot ${new Date(acc.last_rotated_at).toLocaleString()}`
+                    ? `rot ${formatDate(acc.last_rotated_at)}`
                     : "rot —"}
                   {acc.rotate_interval_hours
-                    ? ` · каждые ${acc.rotate_interval_hours}ч`
+                    ? t("assets.everyHours", { n: acc.rotate_interval_hours })
                     : ""}
                   {acc.next_rotate_at
                     ? ` · next ${new Date(acc.next_rotate_at).toLocaleString()}`
@@ -1244,7 +1518,22 @@ export function AssetEditPage() {
                         style={{ padding: "0.15rem 0.4rem", fontSize: "0.8rem" }}
                         onClick={() => {
                           const v = window.prompt(
-                            "Интервал авторотации (часы, 0 = выкл):",
+                            t("assets.adUserDN"),
+                            acc.ad_user_dn || "",
+                          );
+                          if (v === null) return;
+                          void onToggleVaultPolicy(acc, { ad_user_dn: v.trim() });
+                        }}
+                      >
+                        AD DN…
+                      </button>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        style={{ padding: "0.15rem 0.4rem", fontSize: "0.8rem" }}
+                        onClick={() => {
+                          const v = window.prompt(
+                            t("assets.rotateInterval"),
                             String(acc.rotate_interval_hours || 0),
                           );
                           if (v === null) return;
@@ -1375,15 +1664,21 @@ export function AssetEditPage() {
                   <div className="row" style={{ flexWrap: "wrap" }}>
                     {canConnect &&
                       (asset.protocol === "ssh" ||
+                        asset.protocol === "telnet" ||
+                        asset.protocol === "tn3270" ||
+                        asset.protocol === "citrix" ||
                         asset.protocol === "rdp" ||
                         asset.protocol === "vnc" ||
                         asset.protocol === "postgres" ||
                         asset.protocol === "mysql" ||
+                        asset.protocol === "mssql" ||
                         asset.protocol === "https" ||
                         asset.protocol === "kubectl") &&
                       asset.status === "active" &&
                       acc.status === "active" &&
                       (acc.has_secret ||
+                        asset.protocol === "tn3270" ||
+                        asset.protocol === "citrix" ||
                         (asset.protocol === "https" && appForm.recording_mode === "isolated")) && (
                         <>
                           {asset.protocol === "https" ? (
@@ -1393,7 +1688,7 @@ export function AssetEditPage() {
                               disabled={connecting === acc.id}
                               onClick={() => void onAppAccess(acc)}
                             >
-                              {connecting === acc.id ? "…" : "Получить доступ"}
+                              {connecting === acc.id ? "…" : t("assets.connectApp")}
                             </button>
                           ) : asset.protocol === "kubectl" ? (
                             <>
@@ -1403,7 +1698,7 @@ export function AssetEditPage() {
                                 disabled={connecting === acc.id}
                                 onClick={() => void onConnect(acc)}
                               >
-                                {connecting === acc.id ? "…" : "Подключить kubectl"}
+                                {connecting === acc.id ? "…" : t("assets.connectK8s")}
                               </button>
                               <button
                                 className="btn secondary"
@@ -1424,10 +1719,10 @@ export function AssetEditPage() {
                               {connecting === acc.id
                                 ? "…"
                                 : asset.protocol === "ssh"
-                                  ? "Открыть SSH"
-                                  : asset.protocol === "postgres" || asset.protocol === "mysql"
-                                    ? "SQL-консоль"
-                                    : `Открыть ${asset.protocol.toUpperCase()}`}
+                                  ? t("assets.connectSsh")
+                                  : isSQLProtocol(asset.protocol)
+                                    ? t("assets.connectSql")
+                                    : t("assets.connectOpen", { proto: asset.protocol.toUpperCase() })}
                             </button>
                           )}
                           {asset.protocol === "https" &&
@@ -1439,7 +1734,7 @@ export function AssetEditPage() {
                               disabled={connecting === acc.id}
                               onClick={() => void onConnect(acc)}
                             >
-                              {appForm.recording_mode === "isolated" ? "Isolated browser" : "Proxy-сессия"}
+                              {appForm.recording_mode === "isolated" ? "Isolated browser" : t("assets.connectProxy")}
                             </button>
                           )}
                         </>
@@ -1477,7 +1772,7 @@ export function AssetEditPage() {
                               disabled={rotating === acc.id}
                               onClick={() => void onRotateAccount(acc, true)}
                             >
-                              {rotating === acc.id ? "Ротация…" : "Ротировать"}
+                              {rotating === acc.id ? t("assets.rotating") : t("assets.rotate")}
                             </button>
                           )}
                           <button
@@ -1485,7 +1780,7 @@ export function AssetEditPage() {
                             type="button"
                             disabled={rotating === acc.id}
                             onClick={() => void onRotateAccount(acc, false)}
-                            title="Только vault"
+                            title={t("assets.vaultOnly")}
                           >
                             Vault
                           </button>
@@ -1494,10 +1789,10 @@ export function AssetEditPage() {
                     {canWrite && (
                       <>
                         <button className="btn secondary" type="button" onClick={() => void onToggleAccount(acc)}>
-                          {acc.status === "active" ? "Отключить" : "Включить"}
+                          {acc.status === "active" ? t("assets.disable") : t("assets.enable")}
                         </button>
                         <button className="btn danger" type="button" onClick={() => void onDeleteAccount(acc)}>
-                          Удалить
+                          {t("common.delete")}
                         </button>
                       </>
                     )}
@@ -1508,7 +1803,7 @@ export function AssetEditPage() {
             {(asset.accounts || []).length === 0 && (
               <tr>
                 <td colSpan={6} className="muted">
-                  Нет учёток — добавьте ниже (для RDP/VNC нужен пароль; для k8s — kubeconfig/sa_token).
+                  {t("assets.noAccounts")}
                 </td>
               </tr>
             )}
@@ -1518,31 +1813,32 @@ export function AssetEditPage() {
 
       {canWrite && (
         <form className="card" onSubmit={onAddAccount} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-          <h2>Добавить учётную запись</h2>
-          <label>Логин на цели</label>
+          <h2>{t("assets.addAccount")}</h2>
+          <label>{t("assets.loginOnTarget")}</label>
           <input
             value={accForm.username}
             onChange={(e) => setAccForm({ ...accForm, username: e.target.value })}
             required
           />
-          <label>Метод аутентификации</label>
+          <label>{t("assets.authMethod")}</label>
           <select
             value={accForm.auth_method}
             onChange={(e) => setAccForm({ ...accForm, auth_method: e.target.value })}
           >
             <option value="password">password</option>
             <option value="ssh_key">ssh_key</option>
+            <option value="gssapi">gssapi (Kerberos)</option>
             <option value="kubeconfig">kubeconfig</option>
             <option value="sa_token">sa_token</option>
           </select>
           <label>
             {accForm.auth_method === "ssh_key"
-              ? "Приватный ключ"
+              ? t("assets.privateKey")
               : accForm.auth_method === "kubeconfig"
                 ? "Kubeconfig YAML"
                 : accForm.auth_method === "sa_token"
                   ? "ServiceAccount token"
-                  : "Пароль"}
+                  : t("assets.password")}
           </label>
           {accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token" ? (
             <textarea
@@ -1561,11 +1857,21 @@ export function AssetEditPage() {
               autoComplete="off"
             />
           )}
-          <label>Описание</label>
+          <label>{t("common.description")}</label>
           <input
             value={accForm.description}
             onChange={(e) => setAccForm({ ...accForm, description: e.target.value })}
           />
+          <label>{t("assets.adUserDN")}</label>
+          <input
+            className="mono"
+            value={accForm.ad_user_dn}
+            onChange={(e) => setAccForm({ ...accForm, ad_user_dn: e.target.value })}
+            placeholder="CN=svc-admin,OU=Admins,DC=example,DC=com"
+          />
+          <p className="muted" style={{ marginTop: 0 }}>
+            {t("assets.adUserHint")}
+          </p>
           {(accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token") && (
             <>
               <label className="row" style={{ gap: 8, alignItems: "center" }}>
@@ -1656,7 +1962,7 @@ export function AssetEditPage() {
             </>
           )}
           <button className="btn" type="submit">
-            Добавить
+            {t("common.create")}
           </button>
         </form>
       )}
@@ -1672,7 +1978,7 @@ export function AssetEditPage() {
             </span>{" "}
             · до {new Date(k8sLease.expires_at).toLocaleString()}
           </p>
-          <p className="muted">Секрет показывается один раз. Аудит не сохраняет тело.</p>
+          <p className="muted">{t("assets.secretOnce")}</p>
           <textarea
             readOnly
             rows={12}
@@ -1681,7 +1987,7 @@ export function AssetEditPage() {
           />
           <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
             <button className="btn" type="button" onClick={() => downloadK8sSecret(k8sLease)}>
-              Скачать
+              {t("sess.download")}
             </button>
             <button
               className="btn secondary"
@@ -1694,7 +2000,7 @@ export function AssetEditPage() {
               Consume
             </button>
             <button className="btn secondary" type="button" onClick={() => setK8sLease(null)}>
-              Закрыть
+              {t("tabs.close")}
             </button>
           </div>
         </div>
@@ -1702,12 +2008,12 @@ export function AssetEditPage() {
 
       {canRequest && (
         <form className="card" onSubmit={onRequestAccess} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-          <h2>Запросить JIT-доступ</h2>
+          <h2>{t("assets.jitRequest")}</h2>
           <p className="muted">
-            Временный доступ после согласования администратором.{" "}
-            <Link to="/access-requests">Очередь запросов</Link>
+            {t("assets.jitRequestLead")}{" "}
+            <Link to="/access-requests">{t("assets.queueLink")}</Link>
           </p>
-          <label>Длительность (мин)</label>
+          <label>{t("assets.duration")}</label>
           <select
             value={jitForm.duration_minutes}
             onChange={(e) => setJitForm({ ...jitForm, duration_minutes: Number(e.target.value) })}
@@ -1725,26 +2031,25 @@ export function AssetEditPage() {
             onChange={(e) => setJitForm({ ...jitForm, ticket_id: e.target.value })}
             placeholder="INC-12345"
           />
-          <label>Причина</label>
+          <label>{t("req.reason")}</label>
           <input
             value={jitForm.reason}
             onChange={(e) => setJitForm({ ...jitForm, reason: e.target.value })}
-            placeholder="INC-123 / срочный доступ"
+            placeholder={t("assets.reasonPh")}
           />
           <button className="btn" type="submit">
-            Отправить запрос
+            {t("assets.submitJit")}
           </button>
         </form>
       )}
 
       {canBreakGlass && (
         <form className="card" onSubmit={onBreakGlass} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-          <h2>Break-glass</h2>
+          <h2>{t("assets.breakGlassTitle")}</h2>
           <p className="muted">
-            Экстренный доступ без ожидания JIT. Короткий TTL (макс. 60 мин), обязательная причина ≥20 символов,
-            событие <span className="mono">access.breakglass.opened</span> в аудите.
+            {t("assets.breakGlassLead")}
           </p>
-          <label>Длительность (мин)</label>
+          <label>{t("assets.duration")}</label>
           <select
             value={bgForm.duration_minutes}
             onChange={(e) => setBgForm({ ...bgForm, duration_minutes: Number(e.target.value) })}
@@ -1754,41 +2059,41 @@ export function AssetEditPage() {
             <option value={45}>45</option>
             <option value={60}>60</option>
           </select>
-          <label>Причина (обязательно)</label>
+          <label>{t("assets.breakGlassReason")}</label>
           <input
             value={bgForm.reason}
             onChange={(e) => setBgForm({ ...bgForm, reason: e.target.value })}
-            placeholder="P1 инцидент: недоступен prod-db, нужен SELECT для диагностики"
+            placeholder={t("assets.breakGlassReasonPh")}
             required
             minLength={20}
           />
           <button className="btn danger" type="submit">
-            Открыть break-glass
+            {t("assets.breakGlassOpen")}
           </button>
         </form>
       )}
 
       <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>Политика доступа</h2>
+        <h2>{t("assets.aclTitle")}</h2>
         <p className="muted">
-          Deny-by-default + ABAC: tags, ticket, reason, CIDR, geo, device, K8s namespaces. JIT истекает по expires_at. Break-glass — отдельная кнопка выше.
-          Именованная Policy — <Link to="/jea">JEA</Link>. ACL на теги активов (без строки на хост) —{" "}
-          <Link to="/jea">JEA → Теги активов</Link>.
+          {t("assets.aclLead")}{" "}
+          <Link to="/jea">JEA</Link>.{" "}
+          <Link to="/jea">{t("assets.aclTagsLink")}</Link>.
         </p>
         <table>
           <thead>
             <tr>
-              <th>Субъект</th>
+              <th>{t("assets.subject")}</th>
               <th>Policy</th>
-              <th>Окно</th>
-              <th>Дни</th>
+              <th>{t("assets.window")}</th>
+              <th>{t("assets.days")}</th>
               <th>ABAC</th>
               <th>Risk</th>
               <th>SSH JEA</th>
               <th>SQL JEA</th>
               <th>HTTP ACL</th>
               <th>Objects</th>
-              <th>Истекает</th>
+              <th>{t("assets.expires")}</th>
               <th />
             </tr>
           </thead>
@@ -1811,8 +2116,8 @@ export function AssetEditPage() {
                   )}
                   {b.inherited ? (
                     <div className="muted" style={{ fontSize: "0.8rem" }}>
-                      по тегу {(b.asset_match_tags || []).join(", ")}
-                      {b.asset_match_mode === "any" ? " · любой" : " · все"}
+                      {t("assets.byTag", { tags: (b.asset_match_tags || []).join(", ") })}
+                      {b.asset_match_mode === "any" ? t("assets.matchAny") : t("assets.matchAll")}
                     </div>
                   ) : null}
                 </td>
@@ -1822,7 +2127,7 @@ export function AssetEditPage() {
                 <td className="mono">
                   {b.time_start || b.time_end
                     ? `${b.time_start || "00:00"}–${b.time_end || "24:00"}`
-                    : "всегда"}
+                    : t("assets.always")}
                 </td>
                 <td>{formatDays(b.days_of_week)}</td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
@@ -1835,6 +2140,7 @@ export function AssetEditPage() {
                   {(b.allowed_namespaces || []).length ? ` · ns=${b.allowed_namespaces!.join(",")}` : ""}
                   {(b.allowed_egress || []).length ? ` · egress=${b.allowed_egress!.join(",")}` : ""}
                   {b.pii_action ? ` · pii=${b.pii_action}` : ""}
+                  {b.file_transfer && b.file_transfer !== "deny" ? ` · files=${b.file_transfer}` : ""}
                 </td>
                 <td className="mono" style={{ fontSize: "0.85rem" }}>
                   {b.max_risk ? `${b.max_risk}/${b.risk_action || "deny"}` : "off"}
@@ -1854,7 +2160,7 @@ export function AssetEditPage() {
                 <td className="mono">
                   {b.expires_at ? (
                     <>
-                      {new Date(b.expires_at).toLocaleString()}
+                      {formatDate(b.expires_at)}
                       {new Date(b.expires_at).getTime() < Date.now() && (
                         <span className="badge locked" style={{ marginLeft: 6 }}>
                           expired
@@ -1862,17 +2168,17 @@ export function AssetEditPage() {
                       )}
                     </>
                   ) : (
-                    "постоянно"
+                    t("assets.permanent")
                   )}
                 </td>
                 <td>
                   {canACL && !b.inherited && (
                     <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
                       <button className="btn secondary" type="button" onClick={() => void startAclEdit(b)}>
-                        Изменить
+                        {t("assets.edit")}
                       </button>
                       <button className="btn danger" type="button" onClick={() => void onDeleteACL(b)}>
-                        Отозвать
+                        {t("assets.revoke")}
                       </button>
                     </div>
                   )}
@@ -1887,7 +2193,7 @@ export function AssetEditPage() {
             {bindings.length === 0 && (
               <tr>
                 <td colSpan={12} className="muted">
-                  Привязок нет — доступ только у admin
+                  {t("assets.noBindings")}
                 </td>
               </tr>
             )}
@@ -1897,22 +2203,21 @@ export function AssetEditPage() {
 
       {canACL && (
         <form className="card" onSubmit={onAddACL} style={{ maxWidth: 560 }}>
-          <h2>{aclEditId ? "Изменить доступ" : "Выдать доступ"}</h2>
+          <h2>{aclEditId ? t("assets.editAccess") : t("assets.grantAccess")}</h2>
           {aclEditId && (
             <p className="muted">
-              Субъект и актив нельзя сменить. Список выше показывает эффективные поля после Policy; здесь — как
-              записано в ACL.
+              {t("assets.aclEditHint")}
               {aclEditExpires
-                ? ` Сейчас истекает ${new Date(aclEditExpires).toLocaleString()}.`
-                : " Сейчас без TTL."}
+                ? t("assets.expiresNow", { at: formatDate(aclEditExpires) })
+                : t("assets.noTtlNow")}
             </p>
           )}
-          <label>Access Policy (опц.)</label>
+          <label>{t("assets.policyOpt")}</label>
           <select
             value={aclForm.access_policy_id}
             onChange={(e) => setAclForm({ ...aclForm, access_policy_id: e.target.value })}
           >
-            <option value="">— без именованной политики —</option>
+            <option value="">{t("assets.noNamedPolicy")}</option>
             {accessPolicies.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -1920,9 +2225,9 @@ export function AssetEditPage() {
             ))}
           </select>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
-            Пустые поля ниже наследуются из политики. См. <Link to="/jea">JEA → Policy</Link>.
+            {t("assets.aclInherit")}
           </p>
-          <label>Тип</label>
+          <label>{t("common.type")}</label>
           <select
             value={aclForm.kind}
             disabled={!!aclEditId}
@@ -1930,13 +2235,13 @@ export function AssetEditPage() {
               setAclForm({ ...aclForm, kind: e.target.value as "role" | "user" | "group" })
             }
           >
-            <option value="role">Роль</option>
-            <option value="user">Пользователь</option>
-            <option value="group">Группа</option>
+            <option value="role">{t("assets.role")}</option>
+            <option value="user">{t("common.user")}</option>
+            <option value="group">{t("common.group")}</option>
           </select>
           {aclForm.kind === "role" ? (
             <>
-              <label>Роль</label>
+              <label>{t("assets.role")}</label>
               <select
                 value={aclForm.role_id}
                 onChange={(e) => setAclForm({ ...aclForm, role_id: e.target.value })}
@@ -1953,7 +2258,7 @@ export function AssetEditPage() {
             </>
           ) : aclForm.kind === "group" ? (
             <>
-              <label>Группа</label>
+              <label>{t("common.group")}</label>
               <select
                 value={aclForm.group_id}
                 onChange={(e) => setAclForm({ ...aclForm, group_id: e.target.value })}
@@ -1970,7 +2275,7 @@ export function AssetEditPage() {
             </>
           ) : (
             <>
-              <label>Пользователь</label>
+              <label>{t("common.user")}</label>
               <select
                 value={aclForm.user_id}
                 onChange={(e) => setAclForm({ ...aclForm, user_id: e.target.value })}
@@ -1988,7 +2293,7 @@ export function AssetEditPage() {
           )}
           <div className="row" style={{ alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
-              <label>С (HH:MM, опц.)</label>
+              <label>{t("assets.fromTime")}</label>
               <input
                 placeholder="09:00"
                 value={aclForm.time_start}
@@ -1996,7 +2301,7 @@ export function AssetEditPage() {
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label>До (HH:MM, опц.)</label>
+              <label>{t("assets.toTime")}</label>
               <input
                 placeholder="18:00"
                 value={aclForm.time_end}
@@ -2004,12 +2309,12 @@ export function AssetEditPage() {
               />
             </div>
             <div style={{ width: 140 }}>
-              <label>JIT мин (опц.)</label>
+              <label>{t("assets.jitMin")}</label>
               <input
                 type="number"
                 min={1}
                 max={1440}
-                placeholder={aclEditId ? "оставить" : "постоянно"}
+                placeholder={aclEditId ? t("assets.keep") : t("assets.permanent")}
                 value={aclForm.duration_minutes}
                 onChange={(e) => {
                   setAclPermanent(false);
@@ -2028,12 +2333,13 @@ export function AssetEditPage() {
                   if (e.target.checked) setAclForm({ ...aclForm, duration_minutes: "" });
                 }}
               />
-              Постоянно (снять TTL)
+              {t("assets.clearTtl")}
             </label>
           )}
-          <label>Дни недели</label>
+          <label>{t("assets.weekdays")}</label>
           <div className="row" style={{ marginBottom: "0.9rem" }}>
-            {DAY_LABELS.map((label, i) => {
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+              const label = t(`cal.${i}`);
               const bit = 1 << i;
               const on = (aclForm.days_of_week & bit) !== 0;
               return (
@@ -2048,7 +2354,7 @@ export function AssetEditPage() {
               );
             })}
           </div>
-          <label>Required tags (через запятую)</label>
+          <label>{t("assets.tagsCsv")}</label>
           <input
             value={aclForm.required_tags}
             onChange={(e) => setAclForm({ ...aclForm, required_tags: e.target.value })}
@@ -2060,7 +2366,7 @@ export function AssetEditPage() {
               checked={aclForm.require_ticket}
               onChange={(e) => setAclForm({ ...aclForm, require_ticket: e.target.checked })}
             />
-            Требовать ticket_id при подключении
+            {t("assets.requireTicket")}
           </label>
           <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
             <input
@@ -2068,53 +2374,63 @@ export function AssetEditPage() {
               checked={aclForm.require_reason}
               onChange={(e) => setAclForm({ ...aclForm, require_reason: e.target.checked })}
             />
-            Требовать reason при подключении
+            {t("assets.requireReason")}
           </label>
-          <label>Allowed CIDR / IP (через запятую, пусто = любой)</label>
+          <label>{t("assets.cidrHint")}</label>
           <input
             value={aclForm.allowed_cidrs}
             onChange={(e) => setAclForm({ ...aclForm, allowed_cidrs: e.target.value })}
             placeholder="10.0.0.0/8, 192.168.1.10"
           />
-          <label>Allowed countries (ISO + LAN, пусто = любая)</label>
+          <label>{t("assets.countryHint")}</label>
           <input
             value={aclForm.allowed_countries}
             onChange={(e) => setAclForm({ ...aclForm, allowed_countries: e.target.value })}
             placeholder="LAN, RU, KZ"
           />
-          <label>Allowed devices (TLS / WEBAUTHN / SSH / SPIFFE / spiffe://…, пусто = любое)</label>
+          <label>{t("assets.deviceHint")}</label>
           <input
             value={aclForm.allowed_devices}
             onChange={(e) => setAclForm({ ...aclForm, allowed_devices: e.target.value })}
             placeholder="WEBAUTHN, TLS, SPIFFE, spiffe://keeppam.local/ns/prod/*"
           />
-          <label>Allowed namespaces (kubectl, пусто = любой)</label>
+          <label>{t("assets.nsHint")}</label>
           <input
             value={aclForm.allowed_namespaces}
             onChange={(e) => setAclForm({ ...aclForm, allowed_namespaces: e.target.value })}
             placeholder="prod, kube-system"
           />
-          <label>Allowed egress (SSH -L / direct-tcpip; пусто = туннели запрещены)</label>
+          <label>{t("assets.egressHint")}</label>
           <input
             value={aclForm.allowed_egress}
             onChange={(e) => setAclForm({ ...aclForm, allowed_egress: e.target.value })}
             placeholder="10.1.2.0/24:5432, db.prod.local:5432"
           />
-          <label>PII в ответе SQL/HTTP (пусто = выкл.)</label>
+          <label>{t("assets.pii")}</label>
           <select
             value={aclForm.pii_action}
             onChange={(e) => setAclForm({ ...aclForm, pii_action: e.target.value })}
           >
-            <option value="">выкл.</option>
+            <option value="">{t("assets.off")}</option>
             <option value="mask">mask (email/PAN/телефон/СНИЛС → ***)</option>
             <option value="deny">deny (не отдавать результат)</option>
+          </select>
+          <label>SCP/SFTP</label>
+          <select
+            value={aclForm.file_transfer}
+            onChange={(e) => setAclForm({ ...aclForm, file_transfer: e.target.value })}
+          >
+            <option value="">из Policy / deny</option>
+            <option value="deny">deny</option>
+            <option value="audit">audit (лог, без байт)</option>
+            <option value="capture">capture (хранить файл)</option>
           </select>
           <label>JEA command pack (SSH, опц.)</label>
           <select
             value={aclForm.command_policy_pack_id}
             onChange={(e) => setAclForm({ ...aclForm, command_policy_pack_id: e.target.value })}
           >
-            <option value="">— без ограничения команд —</option>
+            <option value="">{t("assets.noCmdLimit")}</option>
             {cmdPacks.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.mode})
@@ -2126,7 +2442,7 @@ export function AssetEditPage() {
             value={aclForm.sql_policy_pack_id}
             onChange={(e) => setAclForm({ ...aclForm, sql_policy_pack_id: e.target.value })}
           >
-            <option value="">— без table/mask политики —</option>
+            <option value="">{t("assets.noSqlPolicy")}</option>
             {sqlPacks.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.mode})
@@ -2138,7 +2454,7 @@ export function AssetEditPage() {
             value={aclForm.http_policy_pack_id}
             onChange={(e) => setAclForm({ ...aclForm, http_policy_pack_id: e.target.value })}
           >
-            <option value="">— без ограничения URL —</option>
+            <option value="">{t("assets.noUrlLimit")}</option>
             {httpPacks.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.mode})
@@ -2150,7 +2466,7 @@ export function AssetEditPage() {
             value={aclForm.app_object_pack_id}
             onChange={(e) => setAclForm({ ...aclForm, app_object_pack_id: e.target.value })}
           >
-            <option value="">— без объектов —</option>
+            <option value="">{t("assets.noObjects")}</option>
             {appPacks.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.unmatched})
@@ -2159,7 +2475,7 @@ export function AssetEditPage() {
           </select>
           <div className="row" style={{ alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
-              <label>Max risk (0 = выкл.)</label>
+              <label>{t("assets.maxRisk")}</label>
               <input
                 type="number"
                 min={0}
@@ -2169,30 +2485,27 @@ export function AssetEditPage() {
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label>Если выше порога</label>
+              <label>{t("assets.ifAbove")}</label>
               <select
                 value={aclForm.risk_action}
                 onChange={(e) => setAclForm({ ...aclForm, risk_action: e.target.value })}
               >
                 <option value="deny">deny</option>
                 <option value="require_approval">require_approval (JIT)</option>
-                <option value="require_mfa">require_mfa (повторный MFA)</option>
+                <option value="require_mfa">{t("assets.requireMfaOpt")}</option>
               </select>
             </div>
           </div>
           <p className="muted" style={{ fontSize: "0.85rem" }}>
-            Score: off_hours 25, break_glass 40, failed_logins 15–45, concurrent 10–20, anom_brute 20,
-            anom_multi 15, ueba_new_asset 25, ueba_spread 20 + операция (DROP/DDL 45, delete 30, k8s write 20…).
-            Cap 100. 0 = выкл. и на connect, и на операции.
-            require_mfa — повторный TOTP/Passkey на connect; операции внутри сессии всё равно deny.
+            {t("assets.riskHint")}
           </p>
           <div className="row" style={{ gap: "0.5rem" }}>
             <button className="btn" type="submit">
-              {aclEditId ? "Сохранить" : "Выдать"}
+              {aclEditId ? t("common.save") : t("assets.grant")}
             </button>
             {aclEditId && (
               <button className="btn secondary" type="button" onClick={resetAclForm}>
-                Отмена
+                {t("common.cancel")}
               </button>
             )}
           </div>

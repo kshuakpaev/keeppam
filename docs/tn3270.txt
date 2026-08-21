@@ -1,0 +1,48 @@
+# KeepPAM: TN3270 gateway (T-33)
+
+Native TN3270-клиент (x3270 / c3270 / wc3270) ходит на KeepPAM; дальше — transparent bridge на mainframe.
+Запись JSONL + `screen_text` в `session_events` (best-effort EBCDIC CP037).
+
+## Как пользоваться
+
+1. Актив `protocol=tn3270`, порт цели обычно `23`.
+2. Создать сессию в портале (JIT/ACL как у SSH).
+3. В ответе / UI: `wire_user` (UUID), `wire_token`, `wire_addr` (default `:2324`).
+4. Клиент:
+
+```text
+x3270 pam.example 2324
+```
+
+На экране KeepPAM: Session UUID + Wire token → Enter → сессия на цель.
+
+Web-вкладка показывает те же инструкции (HTML5 3270 emulator — не в этом срезе).
+
+## Что делает proxy
+
+| Шаг | Поведение |
+|-----|-----------|
+| Negotiate (client→PAM) | BINARY + EOR + SGA + TERMINAL-TYPE (`IBM-3278-2`) |
+| Login screen | Erase/Write форма UUID + token |
+| Wire auth | Redis token (как SQL/Telnet) |
+| Negotiate (PAM→host) | тот же TN3270 option set |
+| Bridge | EOR-frame relay; tee в recording + `screen_text` events |
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| Wire на worker | `KEEPPAM_TN3270_ADDR` default `:2324` |
+| Цель | `assets.port` default 23 |
+
+HA: HAProxy TCP `:2324` → session-worker.
+
+## Ограничения
+
+- Нет HTML5 3270 emulator.
+- Нет vault auto-login в приложение mainframe (только доступ к TCP/TN3270).
+- Нет TN3270E / BIND-IMAGE / printer LU / SYSREQ full.
+- EBCDIC только CP037 Latin — DBCS/кириллические codepages не в срезе.
+- Citrix ICA — SOCKS MVP (`docs/citrix-socks.txt`); HDX/STA — SOW.
+
+Миграция `090_tn3270.sql`. Пакеты `internal/tn3270`, `internal/tn3270gw`.

@@ -34,6 +34,18 @@ func TestFromResultCopiesFields(t *testing.T) {
 	}
 }
 
+func TestSnapshotOCRDefaults(t *testing.T) {
+	opt := (*Snapshot)(nil).OCR()
+	if opt.Lang != OCRDefaultLang || opt.IntervalSec != OCRDefaultInterval || opt.MaxFrames != OCRDefaultFrames {
+		t.Fatalf("%+v", opt)
+	}
+	sn := Snapshot{OCRLang: "eng", OCRIntervalSec: 10, OCRMaxFrames: 40}
+	opt = sn.OCR()
+	if opt.Lang != "eng" || opt.IntervalSec != 10 || opt.MaxFrames != 40 {
+		t.Fatalf("%+v", opt)
+	}
+}
+
 func TestCheckOpRiskSnapshotZeroMaxRisk(t *testing.T) {
 	s := &Service{}
 	ev, err := s.CheckOpRisk(nil, AccessCheck{

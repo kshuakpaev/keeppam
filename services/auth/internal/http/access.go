@@ -83,10 +83,12 @@ func (s *Server) handleApproveAccessRequest(w http.ResponseWriter, r *http.Reque
 	}
 	pending, gerr := s.policy.GetRequest(r.Context(), id)
 	if gerr == nil {
-		need := policy.StagePermission(pending.Stage)
-		if !rbac.HasPermission(sess.Permissions, need) {
-			writeErr(w, http.StatusForbidden, "this stage requires "+need)
-			return
+		if !policy.IsQuorumMode(pending.ApprovalMode) {
+			need := policy.StagePermission(pending.Stage)
+			if !rbac.HasPermission(sess.Permissions, need) {
+				writeErr(w, http.StatusForbidden, "this stage requires "+need)
+				return
+			}
 		}
 		if s.itsm != nil {
 			if err := s.itsm.Enforce(r.Context(), "approve", pending.TicketID); err != nil {
@@ -168,6 +170,11 @@ func (s *Server) handleAccessRequestsSummary(w http.ResponseWriter, r *http.Requ
 	if s.ops != nil && (canManager || canSecurity) {
 		if n, err := s.ops.CountPending(r.Context(), sess.UserID); err == nil {
 			sum.PendingOps = n
+		}
+	}
+	if s.sessionsvc != nil && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+		if n, err := s.sessionsvc.CountWaitingSupervisor(r.Context()); err == nil {
+			sum.PendingSupervise = n
 		}
 	}
 	writeJSON(w, http.StatusOK, sum)

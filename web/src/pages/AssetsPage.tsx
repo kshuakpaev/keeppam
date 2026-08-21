@@ -2,12 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type Asset } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "kubectl"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 
 export function AssetsPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -31,7 +33,7 @@ export function AssetsPage() {
       const res = await api.listAssets();
       setAssets(res.assets || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "assets.loadError"));
     }
   }
 
@@ -71,7 +73,7 @@ export function AssetsPage() {
       });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка создания");
+      setError(te(err, "assets.createError"));
     }
   }
 
@@ -79,26 +81,26 @@ export function AssetsPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Активы</h1>
-          <p className="muted">Целевые хосты и сервисы для привилегированного доступа</p>
+          <h1>{t("assets.title")}</h1>
+          <p className="muted">{t("assets.lead")}</p>
         </div>
         {canWrite && (
           <button className="btn" type="button" onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? "Отмена" : "Создать"}
+            {showCreate ? t("common.cancel") : t("common.create")}
           </button>
         )}
       </div>
       {error && <p className="error">{error}</p>}
       {showCreate && (
         <form className="card" onSubmit={onCreate} style={{ marginBottom: "1rem", maxWidth: 560 }}>
-          <h2>Новый актив</h2>
-          <label>Имя</label>
+          <h2>{t("assets.new")}</h2>
+          <label>{t("common.name")}</label>
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             required
           />
-          <label>Тип</label>
+          <label>{t("common.type")}</label>
           <select
             value={form.asset_type}
             onChange={(e) => {
@@ -120,20 +122,20 @@ export function AssetsPage() {
               </option>
             ))}
           </select>
-          <label>Адрес (IP / FQDN)</label>
+          <label>{t("common.address")} (IP / FQDN)</label>
           <input
             value={form.address}
             onChange={(e) => setForm({ ...form, address: e.target.value })}
             required
           />
-          <label>Hostname (опц.)</label>
+          <label>{t("assets.hostnameOpt")}</label>
           <input
             value={form.hostname}
             onChange={(e) => setForm({ ...form, hostname: e.target.value })}
           />
           <div className="row" style={{ alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
-              <label>Протокол</label>
+              <label>{t("common.protocol")}</label>
               <select
                 value={form.protocol}
                 onChange={(e) => {
@@ -168,7 +170,7 @@ export function AssetsPage() {
               </select>
             </div>
             <div style={{ width: 120 }}>
-              <label>Порт</label>
+              <label>{t("common.port")}</label>
               <input
                 type="number"
                 value={form.port}
@@ -177,29 +179,29 @@ export function AssetsPage() {
               />
             </div>
           </div>
-          {(form.protocol === "postgres" || form.protocol === "mysql") && (
+          {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
             <>
               <label>Database</label>
               <input
                 value={form.database_name}
                 onChange={(e) => setForm({ ...form, database_name: e.target.value })}
-                placeholder={form.protocol === "postgres" ? "postgres" : "(optional)"}
+                placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional)"}
               />
             </>
           )}
-          <label>Теги (через запятую)</label>
+          <label>{t("assets.tagsHint")}</label>
           <input
             value={form.tags}
             onChange={(e) => setForm({ ...form, tags: e.target.value })}
           placeholder="prod/linux, db"
           />
-          <label>Описание</label>
+          <label>{t("common.description")}</label>
           <input
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
           <button className="btn" type="submit">
-            Создать
+            {t("common.create")}
           </button>
         </form>
       )}
@@ -207,12 +209,12 @@ export function AssetsPage() {
         <table>
           <thead>
             <tr>
-              <th>Имя</th>
-              <th>Адрес</th>
-              <th>Протокол</th>
-              <th>Тип</th>
-              <th>Статус</th>
-              <th>Теги</th>
+              <th>{t("common.name")}</th>
+              <th>{t("common.address")}</th>
+              <th>{t("common.protocol")}</th>
+              <th>{t("common.type")}</th>
+              <th>{t("common.status")}</th>
+              <th>{t("common.tags")}</th>
               <th />
             </tr>
           </thead>
@@ -232,7 +234,7 @@ export function AssetsPage() {
                 <td>
                   {canRead && (
                     <Link className="btn secondary" to={`/assets/${a.id}`}>
-                      Открыть
+                      {t("common.open")}
                     </Link>
                   )}
                 </td>
@@ -241,7 +243,7 @@ export function AssetsPage() {
             {assets.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  Активов пока нет
+                  {t("assets.empty")}
                 </td>
               </tr>
             )}

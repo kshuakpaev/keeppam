@@ -68,7 +68,7 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 		held = false
 		v := d.Policy.EvaluateSSHLine(ctx, check, pack, hasPack, line)
 		if v.Allow {
-			d.logPTY(ctx, m.SessionID, line, v)
+			d.logPTY(ctx, m, line, v)
 			return true
 		}
 		if v.Kind != policy.SSHKindApproval || d.Ops == nil {
@@ -106,7 +106,7 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 			if d.Sessions != nil {
 				_ = d.Sessions.AddEvent(ctx, m.SessionID, "command_approved", payload)
 			}
-			d.logPTY(ctx, m.SessionID, line, v)
+			d.logPTY(ctx, m, line, v)
 			return true
 		}
 		if hr.Code != "" {
@@ -124,6 +124,9 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 		}
 		return false
 	})
+	if m.Snap != nil {
+		guard.Charset = m.Snap.TerminalCharset
+	}
 	opts.Guard = guard
 	opts.OnDenied = func(line string) {
 		if held {
@@ -141,11 +144,14 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 	return opts
 }
 
-func (d Deps) logPTY(ctx context.Context, sessionID uuid.UUID, line string, v policy.SSHLineVerdict) {
+func (d Deps) logPTY(ctx context.Context, m Meta, line string, v policy.SSHLineVerdict) {
 	if d.Sessions == nil {
 		return
 	}
 	p := v.Payload(line)
 	p["source"] = "pty"
-	_ = d.Sessions.AddEvent(ctx, sessionID, "command", p)
+	if m.Snap != nil && m.Snap.TerminalCharset != "" {
+		p["charset"] = m.Snap.TerminalCharset
+	}
+	_ = d.Sessions.AddEvent(ctx, m.SessionID, "command", p)
 }

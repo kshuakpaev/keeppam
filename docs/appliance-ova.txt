@@ -1,0 +1,103 @@
+# KeepPAM: Virtual Appliance (OVA / Hyper-V)
+
+КП-2.1 / main22 T-01 + T-02. Compose-дистрибутив (`docs/install.txt`) остаётся основным для пилота на железе заказчика; VA — поставка «импортировал VM → мастер → портал».
+
+## Артефакты
+
+| Файл | Платформа |
+|------|-----------|
+| `dist/appliance/keeppam-<ver>.ova` | VMware vSphere / ESXi / Workstation / Fusion |
+| `dist/appliance/keeppam-<ver>.vhdx` | Hyper-V Generation 2 |
+| `dist/appliance/keeppam-appliance.qcow2` | промежуточный диск (KVM/lab) |
+
+Внутри гостя: Ubuntu 24.04 LTS, Docker CE, дерево `/opt/keeppam` (если образ собран с offline-бандлом), сервис `keeppam-firstboot` на tty1.
+
+## Сборка (build host)
+
+Нужны **HashiCorp Packer** (≥1.9) и **QEMU/KVM**. Системный `/usr/sbin/packer` (cracklib) — не подходит.
+
+```bash
+# 1) offline bundle (образы уже локально после make up)
+SET=core ./scripts/keeppam-pack.sh
+
+# 2) диск appliance (+ bake-in бандла)
+BUNDLE=dist/keeppam-1.0.0-offline-core ./scripts/appliance-build.sh
+
+# 3) экспорт
+./scripts/appliance-export-ova.sh
+./scripts/appliance-export-vhdx.sh
+```
+
+Без `BUNDLE=` образ поднимается, но KeepPAM ставится с USB: положить `keeppam-*-offline-*.tar.gz` в `/opt/keeppam` и вызвать `./install.sh`, либо пересобрать с бандлом.
+
+Проверка wizard без VM:
+
+```bash
+./scripts/appliance-smoke-firstboot.sh
+```
+
+## First-boot wizard
+
+При первом включении на консоли (tty1):
+
+1. Hostname  
+2. Сеть: DHCP или static (IP / prefix / gateway / DNS)  
+3. Пароль bootstrap-админа портала  
+4. CORS origin (по умолчанию `http://<IP>:5173`)  
+5. Опционально LDAP URL (hint-файл; полноценная настройка — в UI Config → Auth)  
+
+Пишет `deploy/.env`, netplan, запускает `keeppam-install.sh` (`--pull never`). Флаг: `/var/lib/keeppam/firstboot.done`.
+
+Повтор: `rm /var/lib/keeppam/firstboot.done && systemctl start keeppam-firstboot`.
+
+Неинтерактивно (cloud-init / automation):
+
+```bash
+KEEPPAM_FB_NONINTERACTIVE=1 \
+  HOSTNAME_VAL=keeppam NET_MODE=dhcp ADMIN_PASS='…' \
+  /usr/local/sbin/keeppam-firstboot
+```
+
+## Импорт VMware
+
+1. Deploy OVF Template → выбрать `.ova`.  
+2. Сеть: VM Network / порт-группа заказчика.  
+3. CPU ≥4, RAM ≥8 GiB, диск ≥80 GiB.  
+4. Power on → консоль → мастер.  
+5. Портал `http://<ip>:5173`, API `http://<ip>:8080/readyz`.
+
+Гостевые tools: `open-vm-tools` в образе.
+
+## Импорт Hyper-V
+
+См. `dist/appliance/keeppam-<ver>-hyperv.txt` после export. Кратко:
+
+```powershell
+New-VM -Name KeepPAM -Generation 2 -MemoryStartupBytes 8GB -VHDPath .\keeppam-1.0.0.vhdx
+Set-VMProcessor KeepPAM -Count 4
+# Secure Boot: Microsoft UEFI Certificate Authority или Off на стенде
+Start-VM KeepPAM
+```
+
+## Порты (как у compose)
+
+| Порт | Назначение |
+|------|------------|
+| 5173 | Web UI |
+| 8080 | API |
+| 2222 | SSH gateway |
+| 15432 / 13306 / 11433 | SQL wire |
+| 16443 | k8s API proxy |
+
+Firewall на гипервизоре / NSX — по политике заказчика.
+
+## Ограничения
+
+- Сборка OVA на CI без KVM невозможна — нужен build host с `/dev/kvm`.  
+- HA 2+2 в одной VA не заложен: для HA — два appliance или внешний compose/Helm (`docs/ha.txt`).  
+- Лицензии VMware/Hyper-V — у заказчика.  
+- Пароль пользователя ОС `keeppam` по умолчанию `keeppam` — сменить после ввода в эксплуатацию.
+
+## Связанное
+
+`docs/install.txt`, `docs/offline-update.txt`, `appliance/packer/keeppam.pkr.hcl`, `appliance/guest/keeppam-firstboot.sh`.

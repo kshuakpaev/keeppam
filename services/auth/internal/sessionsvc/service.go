@@ -20,34 +20,45 @@ import (
 )
 
 type Session struct {
-	ID               uuid.UUID        `json:"id"`
-	UserID           uuid.UUID        `json:"user_id"`
-	AssetID          uuid.UUID        `json:"asset_id"`
-	AccountID        uuid.UUID        `json:"account_id"`
-	Protocol         string           `json:"protocol"`
-	Status           string           `json:"status"`
-	ClientIP         string           `json:"client_ip"`
-	RecordingPath    string           `json:"recording_path,omitempty"`
-	ErrorMessage     string           `json:"error_message,omitempty"`
-	StartedAt        *time.Time       `json:"started_at,omitempty"`
-	EndedAt          *time.Time       `json:"ended_at,omitempty"`
-	LastSeenAt       *time.Time       `json:"last_seen_at,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
-	TicketID         string           `json:"ticket_id,omitempty"`
-	Reason           string           `json:"reason,omitempty"`
-	DBPrivilege      string           `json:"db_privilege,omitempty"`
-	DatabaseName     string           `json:"database_name,omitempty"`
-	SQLPolicyPackID  *uuid.UUID       `json:"sql_policy_pack_id,omitempty"`
-	HTTPPolicyPackID *uuid.UUID       `json:"http_policy_pack_id,omitempty"`
-	AppObjectPackID  *uuid.UUID       `json:"app_object_pack_id,omitempty"`
-	K8sNamespaces    []string         `json:"k8s_namespaces,omitempty"`
-	BreakGlass       bool             `json:"break_glass"`
-	RiskScore        int              `json:"risk_score"`
-	RiskFactors      []string         `json:"risk_factors,omitempty"`
-	Labels           []string         `json:"labels,omitempty"`
-	AccessPolicyID   *uuid.UUID       `json:"access_policy_id,omitempty"`
-	ClientCountry    string           `json:"client_country,omitempty"`
-	PolicySnapshot   *policy.Snapshot `json:"policy_snapshot,omitempty"`
+	ID                   uuid.UUID        `json:"id"`
+	UserID               uuid.UUID        `json:"user_id"`
+	AssetID              uuid.UUID        `json:"asset_id"`
+	AccountID            uuid.UUID        `json:"account_id"`
+	Protocol             string           `json:"protocol"`
+	Status               string           `json:"status"`
+	ClientIP             string           `json:"client_ip"`
+	RecordingPath        string           `json:"recording_path,omitempty"`
+	ErrorMessage         string           `json:"error_message,omitempty"`
+	StartedAt            *time.Time       `json:"started_at,omitempty"`
+	EndedAt              *time.Time       `json:"ended_at,omitempty"`
+	LastSeenAt           *time.Time       `json:"last_seen_at,omitempty"`
+	CreatedAt            time.Time        `json:"created_at"`
+	TicketID             string           `json:"ticket_id,omitempty"`
+	Reason               string           `json:"reason,omitempty"`
+	DBPrivilege          string           `json:"db_privilege,omitempty"`
+	DatabaseName         string           `json:"database_name,omitempty"`
+	SQLPolicyPackID      *uuid.UUID       `json:"sql_policy_pack_id,omitempty"`
+	HTTPPolicyPackID     *uuid.UUID       `json:"http_policy_pack_id,omitempty"`
+	AppObjectPackID      *uuid.UUID       `json:"app_object_pack_id,omitempty"`
+	K8sNamespaces        []string         `json:"k8s_namespaces,omitempty"`
+	BreakGlass           bool             `json:"break_glass"`
+	RiskScore            int              `json:"risk_score"`
+	RiskFactors          []string         `json:"risk_factors,omitempty"`
+	Labels               []string         `json:"labels,omitempty"`
+	AccessPolicyID       *uuid.UUID       `json:"access_policy_id,omitempty"`
+	ClientCountry        string           `json:"client_country,omitempty"`
+	PolicySnapshot       *policy.Snapshot `json:"policy_snapshot,omitempty"`
+	RequireSupervisor    bool             `json:"require_supervisor"`
+	SupervisorGroupID    *uuid.UUID       `json:"supervisor_group_id,omitempty"`
+	SupervisorGroupName  string           `json:"supervisor_group_name,omitempty"`
+	SupervisorID         *uuid.UUID       `json:"supervisor_id,omitempty"`
+	SupervisorUsername   string           `json:"supervisor_username,omitempty"`
+	SupervisorApprovedAt *time.Time       `json:"supervisor_approved_at,omitempty"`
+	WaitingSupervisor    bool             `json:"waiting_supervisor"`
+	Archived             bool             `json:"archived"`
+	ArchiveSHA256        string           `json:"archive_sha256,omitempty"`
+	ArchiveBackend       string           `json:"archive_backend,omitempty"`
+	ArchivedAt           *time.Time       `json:"archived_at,omitempty"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
@@ -62,8 +73,12 @@ type Service struct {
 	aud           *audit.Service
 	recordingsDir string
 	store         recstore.Store
+	startHook     StartHook
 	endHook       EndHook
 }
+
+// StartHook runs once when a session first becomes active (best-effort AD/JIT join).
+type StartHook func(ctx context.Context, id uuid.UUID)
 
 // EndHook runs after a session is marked ended/failed (best-effort cleanup).
 type EndHook func(ctx context.Context, id uuid.UUID, protocol string)
@@ -71,6 +86,10 @@ type EndHook func(ctx context.Context, id uuid.UUID, protocol string)
 func New(db *store.DB, aud *audit.Service, recordingsDir string) *Service {
 	_ = os.MkdirAll(recordingsDir, 0o750)
 	return &Service{db: db, aud: aud, recordingsDir: recordingsDir, store: &recstore.Local{Root: recordingsDir}}
+}
+
+func (s *Service) SetStartHook(h StartHook) {
+	s.startHook = h
 }
 
 func (s *Service) SetEndHook(h EndHook) {
@@ -122,12 +141,13 @@ type CreateInput struct {
 }
 
 type ListFilter struct {
-	OnlyUser *uuid.UUID
-	Status   string
-	Protocol string
-	Q        string
-	Limit    int
-	Offset   int
+	OnlyUser          *uuid.UUID
+	Status            string
+	Protocol          string
+	Q                 string
+	WaitingSupervisor bool
+	Limit             int
+	Offset            int
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, ua string) (Session, error) {
@@ -140,7 +160,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if in.Protocol == "rdp" || in.Protocol == "vnc" {
 		recPath = filepath.Join(s.recordingsDir, "guac", id.String())
 	}
-	if in.Protocol == "postgres" || in.Protocol == "mysql" {
+	if in.Protocol == "postgres" || in.Protocol == "mysql" || in.Protocol == "mssql" {
 		recPath = filepath.Join(s.recordingsDir, "sql", id.String()+".jsonl")
 	}
 	if in.Protocol == "https" {
@@ -152,6 +172,12 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	}
 	if in.Protocol == "kubectl" {
 		recPath = filepath.Join(s.recordingsDir, "k8s", id.String()+".jsonl")
+	}
+	if in.Protocol == "tn3270" {
+		recPath = filepath.Join(s.recordingsDir, "tn3270", id.String()+".jsonl")
+	}
+	if in.Protocol == "citrix" {
+		recPath = filepath.Join(s.recordingsDir, "citrix", id.String()+".jsonl")
 	}
 	dbPriv := "readonly"
 	if in.Protocol == "postgres" || in.Protocol == "mysql" {
@@ -165,6 +191,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if dbName == "" && in.Protocol == "postgres" {
 		dbName = "postgres"
 	}
+	if dbName == "" && in.Protocol == "mssql" {
+		dbName = "master"
+	}
 	ns := in.K8sNamespaces
 	if ns == nil {
 		ns = []string{}
@@ -177,12 +206,19 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if labels == nil {
 		labels = []string{}
 	}
+	needSup := false
+	var supGroup *uuid.UUID
+	if !in.BreakGlass {
+		_ = s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(require_supervisor, FALSE), supervisor_group_id
+			FROM assets WHERE id=$1`, in.AssetID).Scan(&needSup, &supGroup)
+	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at, require_supervisor, supervisor_group_id)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
 		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, ns, in.BreakGlass,
-		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now)
+		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now, needSup, supGroup)
 	if err != nil {
 		return Session{}, err
 	}
@@ -190,6 +226,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 		"asset_id": in.AssetID.String(), "account_id": in.AccountID.String(), "protocol": in.Protocol,
 		"ticket_id": strings.TrimSpace(in.TicketID), "break_glass": in.BreakGlass,
 		"risk_score": in.RiskScore, "labels": labels, "client_country": strings.TrimSpace(in.ClientCountry),
+		"require_supervisor": needSup, "supervisor_skipped": in.BreakGlass && needSup,
 	})
 	_ = s.AddEvent(ctx, id, "created", map[string]any{"protocol": in.Protocol})
 	return s.Get(ctx, id)
@@ -197,14 +234,21 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 
 func (s *Service) MarkActive(ctx context.Context, id uuid.UUID) error {
 	row, _ := s.Get(ctx, id)
+	if row.IsWaitingSupervisor() {
+		return ErrWaitingSupervisor
+	}
+	wasPending := row.Status == "pending"
 	now := time.Now().UTC()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET status='active', started_at=$2, last_seen_at=$2 WHERE id=$1`, id, now)
 	if err != nil {
 		return err
 	}
-	if row.Status == "pending" {
+	if wasPending {
 		obs.Default.ObserveSessionSetup(now.Sub(row.CreatedAt))
+		if s.startHook != nil {
+			s.startHook(ctx, id)
+		}
 	}
 	return s.AddEvent(ctx, id, "started", nil)
 }
@@ -291,6 +335,94 @@ func (s *Service) AddEventAt(ctx context.Context, sessionID uuid.UUID, ts time.T
 	return err
 }
 
+// AppendRisk adds points and a factor to the session (capped at 100). Idempotent per factor name.
+func (s *Service) AppendRisk(ctx context.Context, sessionID uuid.UUID, points int, factor string) (int, []string, error) {
+	factor = strings.TrimSpace(factor)
+	if factor == "" || points <= 0 {
+		row, err := s.Get(ctx, sessionID)
+		return row.RiskScore, row.RiskFactors, err
+	}
+	row, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, f := range row.RiskFactors {
+		if f == factor {
+			return row.RiskScore, row.RiskFactors, nil
+		}
+	}
+	score := row.RiskScore + points
+	if score > 100 {
+		score = 100
+	}
+	factors := append(append([]string{}, row.RiskFactors...), factor)
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE sessions SET risk_score=$2, risk_factors=$3 WHERE id=$1`, sessionID, score, factors)
+	return score, factors, err
+}
+
+// KeystrokeMedians returns historical median IKI (ms) from ueba keystroke_stats events for the user.
+func (s *Service) KeystrokeMedians(ctx context.Context, userID uuid.UUID, since time.Time, excludeSession uuid.UUID) ([]float64, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT (e.payload->>'median_iki_ms')::float8
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		WHERE s.user_id=$1
+		  AND e.event_type='ueba'
+		  AND e.payload->>'factor'=$2
+		  AND e.ts >= $3
+		  AND s.id <> $4
+		  AND (e.payload->>'median_iki_ms') ~ '^[0-9]+(\\.[0-9]+)?$'
+		ORDER BY e.ts DESC
+		LIMIT 50`, userID, "keystroke_stats", since.UTC(), excludeSession)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []float64
+	for rows.Next() {
+		var v float64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v > 0 {
+			out = append(out, v)
+		}
+	}
+	return out, rows.Err()
+}
+
+// MouseVelMedians returns historical median mouse velocities from ueba mouse_stats events.
+func (s *Service) MouseVelMedians(ctx context.Context, userID uuid.UUID, since time.Time, excludeSession uuid.UUID) ([]float64, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT (e.payload->>'median_vel_px_ms')::float8
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		WHERE s.user_id=$1
+		  AND e.event_type='ueba'
+		  AND e.payload->>'factor'=$2
+		  AND e.ts >= $3
+		  AND s.id <> $4
+		  AND (e.payload->>'median_vel_px_ms') ~ '^[0-9]+(\\.[0-9]+)?$'
+		ORDER BY e.ts DESC
+		LIMIT 50`, userID, "mouse_stats", since.UTC(), excludeSession)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []float64
+	for rows.Next() {
+		var v float64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v > 0 {
+			out = append(out, v)
+		}
+	}
+	return out, rows.Err()
+}
+
 type SessionEvent struct {
 	Type    string         `json:"type"`
 	Payload map[string]any `json:"payload"`
@@ -335,12 +467,17 @@ const sessionSelect = `
 			COALESCE(s.k8s_namespaces,'{}'), COALESCE(s.break_glass,false),
 			COALESCE(s.risk_score,0), COALESCE(s.risk_factors,'{}'), COALESCE(s.labels,'{}'),
 			s.access_policy_id, COALESCE(s.client_country,''), s.policy_snapshot,
+			COALESCE(s.require_supervisor, FALSE), s.supervisor_group_id, COALESCE(sg.name,''),
+			s.supervisor_id, COALESCE(su.username,''), s.supervisor_approved_at,
 			u.username, a.name, aa.username, a.address,
-			(s.recording_path <> '' AND s.status IN ('ended','failed','active'))
+			(s.recording_path <> '' AND (s.status IN ('ended','failed','active') OR COALESCE(s.archived, FALSE))),
+			COALESCE(s.archived, FALSE), COALESCE(s.archive_sha256,''), COALESCE(s.archive_backend,''), s.archived_at
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN assets a ON a.id = s.asset_id
-		JOIN asset_accounts aa ON aa.id = s.account_id`
+		JOIN asset_accounts aa ON aa.id = s.account_id
+		LEFT JOIN groups sg ON sg.id = s.supervisor_group_id
+		LEFT JOIN users su ON su.id = s.supervisor_id`
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Session, error) {
 	row := s.db.Pool.QueryRow(ctx, sessionSelect+` WHERE s.id=$1`, id)
@@ -366,6 +503,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 		where += ` AND s.status=$` + itoa(i)
 		args = append(args, st)
 		i++
+	}
+	if f.WaitingSupervisor {
+		where += ` AND s.require_supervisor AND s.supervisor_approved_at IS NULL AND s.status='pending'`
 	}
 	if proto := strings.TrimSpace(f.Protocol); proto != "" {
 		where += ` AND s.protocol=$` + itoa(i)
@@ -399,7 +539,9 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 		if err != nil {
 			return nil, 0, err
 		}
-		if sess.RecordingPath != "" {
+		if sess.Archived {
+			sess.HasRecording = true
+		} else if sess.RecordingPath != "" {
 			if s.store != nil {
 				sess.HasRecording = s.store.Exists(ctx, sess.RecordingPath)
 			} else if _, err := os.Stat(sess.RecordingPath); err == nil {
@@ -474,7 +616,10 @@ func scanSession(row scannable) (Session, error) {
 		&s.TicketID, &s.Reason, &s.DBPrivilege, &s.DatabaseName, &s.SQLPolicyPackID, &s.HTTPPolicyPackID, &s.AppObjectPackID,
 		&s.K8sNamespaces, &s.BreakGlass,
 		&s.RiskScore, &s.RiskFactors, &s.Labels, &s.AccessPolicyID, &s.ClientCountry, &snapRaw,
+		&s.RequireSupervisor, &s.SupervisorGroupID, &s.SupervisorGroupName,
+		&s.SupervisorID, &s.SupervisorUsername, &s.SupervisorApprovedAt,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
+		&s.Archived, &s.ArchiveSHA256, &s.ArchiveBackend, &s.ArchivedAt,
 	)
 	if err != nil {
 		return s, err
@@ -485,6 +630,7 @@ func scanSession(row scannable) (Session, error) {
 	if s.Labels == nil {
 		s.Labels = []string{}
 	}
+	s.WaitingSupervisor = s.IsWaitingSupervisor()
 	s.Isolated = s.Protocol == "https" && strings.Contains(filepath.ToSlash(s.RecordingPath), "/guac/")
 	if len(snapRaw) > 0 {
 		var sn policy.Snapshot

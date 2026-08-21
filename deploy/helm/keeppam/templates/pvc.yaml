@@ -1,0 +1,21 @@
+{{- if .Values.recordings.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "keeppam.fullname" . }}-recordings
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: {{ .Values.recordings.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "keeppam.fullname" . }}-sshhost
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: 16Mi

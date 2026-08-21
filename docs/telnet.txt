@@ -1,0 +1,48 @@
+# KeepPAM: Telnet gateway (T-33)
+
+Native Telnet-клиент и HTML5-терминал портала ходят на KeepPAM; пароль актива не видят.
+Vault-логин подставляется на стороне proxy (best-effort inject после IAC).
+
+## Как пользоваться
+
+1. Актив `protocol=telnet`, порт цели обычно `23`, `terminal_charset` при необходимости (T-43).
+2. Создать сессию (JIT/ACL как у SSH).
+3. **Web:** вкладка Terminal (тот же xterm.js / WS, что SSH).
+4. **Native:** в ответе create — `wire_user` (UUID сессии), `wire_token`, `wire_addr` (default `:2323`):
+
+```text
+telnet pam.example 2323
+login: <session-uuid>
+Password: <wire_token>
+```
+
+## Что делает proxy
+
+| Шаг | Поведение |
+|-----|-----------|
+| IAC | WILL/DO SGA, NAWS, TTYPE; ECHO — DO серверу / WONT клиенту |
+| Upstream | TCP на `assets.address:port` |
+| Login inject | после negotiate: `username\r\n` + `password\r\n` из vault |
+| Запись | asciicast `.cast` + charset decode (как SSH) |
+| Index | `castindex` → `session_events` |
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| Wire на worker | `KEEPPAM_TELNET_ADDR` default `:2323` |
+| Цель | `assets.port` default 23 |
+
+API в режиме `KEEPPAM_MODE=api` не слушает Telnet, но отдаёт `wire_addr` из того же env (клиент идёт на worker/HAProxy).
+
+HA: HAProxy TCP `:2323` → session-worker. Compose: `2323:2323` на worker.
+
+## Ограничения (не обещать без SOW)
+
+- Нет TN3270 / 5250 полного DBCS (TN3270 wire — `docs/tn3270.txt`).
+- Нет Citrix ICA.
+- JEA/command ACL как у SSH — нет (byte-pipe + полная запись).
+- Login inject — best-effort: цели без login-prompt или с banner/OTP могут требовать ручного ввода.
+- Нет TLS/STARTTLS до цели.
+
+Миграция `089_telnet.sql`. Пакеты `internal/telnet`, `internal/telnetgw`.

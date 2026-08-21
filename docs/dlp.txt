@@ -4,12 +4,14 @@
 
 ## SSH
 
-Запрещено всегда (без JEA-пакета):
+Запрещено **по умолчанию** (`file_transfer=deny` на Policy/ACL). Режимы **audit** / **capture** — `docs/file-transfer.txt`.
 
 | Канал | Поведение |
 |-------|-----------|
-| `scp` / `sftp` / `rsync` через `exec` (в т.ч. `sudo scp`) | `Reply(false)`, аудит `session.dlp.denied` |
-| subsystem `sftp` | отказ + аудит |
+| `scp` exec (legacy `-t`/`-f`) | deny / прокси+аудит / прокси+хранение |
+| subsystem `sftp` | то же |
+| `rsync` exec | всегда deny |
+| `scp`/`sftp`/`rsync` в интерактивном PTY | всегда deny (не перехватывается) |
 | каналы `forwarded-tcpip`, `x11`, `tun@openssh.com` | `ssh.Prohibited` + аудит |
 | `direct-tcpip` | пустой `allowed_egress` — deny (как DLP); иначе allowlist назначений, см. `docs/network-pam.txt` |
 | global/session `tcpip-forward`, `x11-req` | отказ + аудит |
@@ -18,7 +20,7 @@
 
 ## SQL
 
-`COPY` / `LOAD` / `INTO OUTFILE` / `INTO DUMPFILE` запрещены всегда (Web SQL и native wire), даже без SQL-пакета. Аудит `session.sql.denied`.
+`COPY` / `LOAD` / `INTO OUTFILE` / `INTO DUMPFILE` / `BULK INSERT` / `OPENROWSET` / `xp_cmdshell` запрещены всегда (Web SQL и native wire), даже без SQL-пакета. Аудит `session.sql.denied`.
 
 На пакете (`sql_policy_packs`, миграция `044`):
 
@@ -54,7 +56,7 @@
 
 ## RDP / VNC (Guacamole)
 
-Для `rdp`: `disable-copy=true`, `enable-drive=false`, `enable-printing=false` (clipboard/drive/printer). Для `vnc`: `disable-copy=true`. USB не пробрасывается.
+Default DLP-strict: clipboard/drive/printer off. Включение — флаги Access Policy `rdp_*` (`docs/native-rdp.txt`, миграция `085`). Native mstsc — `rdp_native` + freerdp-proxy (конфликт с DLP при full redirect).
 
 ## Forensic
 

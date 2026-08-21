@@ -5,5 +5,8 @@ dist/
 .DS_Store
 deploy/auth-server
 deploy/sbom/
+deploy/.upgrade-state
+backups/
 deploy/pades/key.pem
 deploy/pades/cert.pem
+deploy/.demo-seed.txt
