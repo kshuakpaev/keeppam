@@ -81,6 +81,20 @@ func (s *Service) DeleteGuacScreenText(ctx context.Context, sessionID uuid.UUID)
 	return err
 }
 
+func (s *Service) DeleteHDXKeystrokes(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM session_events
+		WHERE session_id=$1 AND event_type='keystroke' AND COALESCE(payload->>'source','')='hdx'`, sessionID)
+	return err
+}
+
+func (s *Service) DeleteHDXScreenText(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM session_events
+		WHERE session_id=$1 AND event_type='screen_text' AND COALESCE(payload->>'source','')='hdx'`, sessionID)
+	return err
+}
+
 func (s *Service) CountScreenText(ctx context.Context, sessionID uuid.UUID) (int, error) {
 	var n int
 	err := s.db.Pool.QueryRow(ctx, `

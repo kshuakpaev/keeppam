@@ -1,30 +1,34 @@
-# KeepPAM: OEM HDX terminate plugin contract (SOW-CITRIX-HDX phase 3)
+# KeepPAM: OEM HDX terminate + recording plugin contract (SOW-CITRIX-HDX phases 3–4)
 
-KeepPAM **does not** decode Citrix HDX/ICA. Phase 3 adds an HTTP plugin boundary so a
-partner/OEM binary can terminate HDX, inject vault credentials, and emit recording metadata.
+KeepPAM **does not** decode Citrix HDX/ICA. The OEM plugin terminates HDX, injects vault
+credentials, and pushes recording/OCR metadata into KeepPAM.
 
 ## Enable
 
 ```bash
-# OEM or mock
-go run ./services/auth/cmd/citrix-hdx-mock   # listens :14950
+go run ./services/auth/cmd/citrix-hdx-mock   # :14950
 
 export KEEPPAM_CITRIX_HDX_PLUGIN_URL=http://127.0.0.1:14950
+export KEEPPAM_CITRIX_HDX_CALLBACK_BASE=http://127.0.0.1:8080   # or KEEPPAM_PUBLIC_URL / CORSOrigin
 # asset.citrix_transport = hdx
 ```
 
-Health: `GET /api/v1/admin/citrix/hdx/health` (perm `assets.read`).
+| API | Auth | Purpose |
+|-----|------|---------|
+| `GET /api/v1/admin/citrix/hdx/health` | `assets.read` | plugin health |
+| `POST /api/v1/citrix/hdx/ingest` | Bearer ingest token | plugin → JSONL + forensic events |
+| `POST /api/v1/admin/sessions/{id}/citrix/hdx/sync` | `sessions.write` | pull Status.events |
 
 ## Plugin HTTP API
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/healthz` | `{status,capabilities,vendor,version}` |
-| POST | `/v1/sessions` | start terminate session (JSON body below) |
-| GET | `/v1/sessions/{id}` | status + optional `events[]` for JSONL |
+| GET | `/healthz` | `{status,capabilities,vendor,version}` — prefer `record`,`ocr` |
+| POST | `/v1/sessions` | start terminate (+ optional record) |
+| GET | `/v1/sessions/{id}` | status + `events[]` |
 | DELETE | `/v1/sessions/{id}` | stop |
 
-### POST /v1/sessions body
+### POST /v1/sessions body (extra phase 4 fields)
 
 ```json
 {
@@ -33,40 +37,38 @@ Health: `GET /api/v1/admin/citrix/hdx/health` (perm `assets.read`).
   "vda_port": 1494,
   "username": "ops",
   "password": "…",
-  "initial_program": "#Excel",
-  "sta_ticket": "…",
-  "storefront_url": "https://sf/…",
-  "ttl_seconds": 3600,
-  "recording_hint": "/path/on/pam"
+  "recording_hint": "/data/recordings/citrix/….jsonl",
+  "callback_url": "https://pam/api/v1/citrix/hdx/ingest",
+  "ingest_token": "…",
+  "record": true
 }
 ```
 
-### Response
+### Recording events (`events[]` / ingest body)
 
 ```json
 {
-  "plugin_session_id": "…",
-  "status": "active",
-  "mode": "terminate",
-  "listen_addr": "127.0.0.1:14940",
-  "message": "optional"
+  "events": [
+    {"t":"…","event":"hdx_frame","seq":2,"meta":{"w":1280,"h":720,"offset":0.5}},
+    {"t":"…","event":"hdx_ocr","seq":3,"meta":{"text":"Password","offset":0.6}},
+    {"t":"…","event":"hdx_keystroke","seq":4,"meta":{"line":"whoami","offset":1.2}},
+    {"t":"…","event":"hdx_ended","seq":9,"meta":{}}
+  ]
 }
 ```
 
-Vault secret is sent **only** to the plugin over the control channel (mTLS recommended on prod).
+`seq` is used for dedup. KeepPAM writes JSONL under `recordings/citrix/{session}.jsonl` and
+stores `screen_text` / `keystroke` with `source=hdx` for transcript + OCR search.
 
-## KeepPAM behaviour
+On session end KeepPAM: sync Status → Finalize (stop plugin) → `castindex` Index/OCR.
+
+## Transport matrix
 
 | `citrix_transport` | Behaviour |
 |--------------------|-----------|
-| `socks` | SOCKS + `.ica` (phase 1–2) |
-| `hdx_pending` | same as socks; marker for commercial |
-| `hdx` | requires healthy plugin; no SOCKS `.ica`; returns `citrix_hdx` block |
+| `socks` / `hdx_pending` | SOCKS + `.ica` |
+| `hdx` | plugin terminate + record path |
 
-## Mock
+## Out of scope (real OEM binary)
 
-`cmd/citrix-hdx-mock` — contract smoke only. Replace with OEM that speaks real HDX.
-
-## Out of scope here
-
-Real CGP/HDX decode, EDT/UDP, screen pixel recording / OCR — OEM phase 4.
+CGP/HDX decode, EDT/UDP, pixel video / MP4 export of ICA frames.

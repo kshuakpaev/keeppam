@@ -58,9 +58,28 @@ import (
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/telnetgw"
 	"github.com/keeppam/auth/internal/tn3270gw"
+	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/citrixgw"
 	"github.com/keeppam/auth/internal/users"
 )
+
+type mainHDXSink struct{ sess *sessionsvc.Service }
+
+func (m mainHDXSink) GetRecordingPath(ctx context.Context, sessionID uuid.UUID) (string, time.Time, error) {
+	row, err := m.sess.Get(ctx, sessionID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	base := row.CreatedAt
+	if row.StartedAt != nil {
+		base = *row.StartedAt
+	}
+	return row.RecordingPath, base, nil
+}
+
+func (m mainHDXSink) AddEventAt(ctx context.Context, sessionID uuid.UUID, ts time.Time, eventType string, payload map[string]any) error {
+	return m.sess.AddEventAt(ctx, sessionID, ts, eventType, payload)
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "readyz" {
@@ -265,6 +284,7 @@ func main() {
 	discoverySvc.SetDirectory(resolveDir)
 	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, resolveDir)
 	assetsSvc.SetLDAPPasswordChanger(adJit)
+	hdxClient := hdx.NewClient(cfg.CitrixHDXPluginURL)
 	sessSvc.SetStartHook(adJit.OnSessionStart)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
@@ -287,14 +307,17 @@ func main() {
 		if rdpBroker != nil {
 			rdpBroker.Stop(id)
 		}
+		if protocol == "citrix" {
+			hdx.Finalize(ctx, sessions.Redis(), hdxClient, mainHDXSink{sess: sessSvc}, id, cfg.SessionTTL)
+		}
 		if row, err := sessSvc.Get(ctx, id); err == nil {
 			if err := assetsSvc.MaybeRotateAfterSession(ctx, row.AccountID); err != nil {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
 			}
 		}
-		if protocol == "ssh" || protocol == "rdp" || protocol == "vnc" || protocol == "https" {
+		if protocol == "ssh" || protocol == "rdp" || protocol == "vnc" || protocol == "https" || protocol == "citrix" {
 			castIdx.IndexAsync(id)
-			if protocol == "rdp" || protocol == "vnc" || protocol == "https" {
+			if protocol == "rdp" || protocol == "vnc" || protocol == "https" || protocol == "citrix" {
 				castIdx.IndexOCRAsync(id)
 			}
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,21 +13,24 @@ import (
 	"time"
 )
 
-// citrix-hdx-mock: OEM HDX terminate stub for KeepPAM SOW phase 3.
-// Does NOT decode real HDX — only exercises the plugin HTTP contract.
+// citrix-hdx-mock: OEM HDX terminate + recording stub (SOW phases 3–4).
+// Does NOT decode real HDX — exercises plugin HTTP + ingest callback.
 
 type sess struct {
-	ID        string
-	KeepPAM   string
-	Started   time.Time
-	VDAHost   string
-	Listen    string
-	Username  string
-	Events    []map[string]any
+	ID       string
+	KeepPAM  string
+	Started  time.Time
+	VDAHost  string
+	Listen   string
+	Username string
+	Token    string
+	Callback string
+	Events   []map[string]any
+	seq      int
 }
 
 var (
-	mu   sync.Mutex
+	mu    sync.Mutex
 	store = map[string]*sess{}
 )
 
@@ -35,8 +39,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"status": "ok", "vendor": "keeppam-mock", "version": "0.1",
-			"capabilities": []string{"terminate", "record_meta"},
+			"status": "ok", "vendor": "keeppam-mock", "version": "0.2",
+			"capabilities": []string{"terminate", "record", "ocr", "record_meta"},
 		})
 	})
 	mux.HandleFunc("/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
@@ -51,27 +55,29 @@ func main() {
 		}
 		id := "mock-" + randHex(8)
 		listen := env("LISTEN_ADDR", "127.0.0.1:14940")
+		now := time.Now().UTC()
 		s := &sess{
 			ID: id, KeepPAM: str(in["keeppam_session_id"]),
-			Started: time.Now().UTC(), VDAHost: str(in["vda_host"]),
+			Started: now, VDAHost: str(in["vda_host"]),
 			Listen: listen, Username: str(in["username"]),
-			Events: []map[string]any{
-				{"t": time.Now().UTC().Format(time.RFC3339Nano), "event": "hdx_started", "meta": map[string]any{
-					"vda": str(in["vda_host"]), "mode": "terminate", "mock": true,
-				}},
-				{"t": time.Now().UTC().Format(time.RFC3339Nano), "event": "hdx_meta", "meta": map[string]any{
-					"note": "no real HDX frames — OEM binary required",
-				}},
-			},
+			Token: str(in["ingest_token"]), Callback: str(in["callback_url"]),
 		}
+		s.push(1, "hdx_started", map[string]any{"vda": s.VDAHost, "mode": "terminate", "mock": true})
+		s.push(2, "hdx_frame", map[string]any{"w": 1280, "h": 720, "offset": 0.5, "note": "meta only — no pixels in mock"})
+		s.push(3, "hdx_ocr", map[string]any{"text": "KeepPAM mock desktop", "offset": 0.6})
+		s.push(4, "hdx_keystroke", map[string]any{"line": "whoami", "offset": 1.2})
+		s.push(5, "hdx_ocr", map[string]any{"text": "C:\\Users\\ops>", "offset": 1.5})
 		mu.Lock()
 		store[id] = s
 		mu.Unlock()
-		log.Printf("start %s keeppam=%s vda=%s", id, s.KeepPAM, s.VDAHost)
+		log.Printf("start %s keeppam=%s vda=%s callback=%v", id, s.KeepPAM, s.VDAHost, s.Callback != "")
 		writeJSON(w, map[string]any{
 			"plugin_session_id": id, "status": "active", "mode": "terminate",
-			"listen_addr": listen, "message": "mock terminate — replace with OEM plugin",
+			"listen_addr": listen, "message": "mock terminate+record — replace with OEM plugin",
 		})
+		if s.Callback != "" && s.Token != "" {
+			go postIngest(s)
+		}
 	})
 	mux.HandleFunc("/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
@@ -87,6 +93,10 @@ func main() {
 			return
 		}
 		if r.Method == http.MethodDelete {
+			s.push(s.seq+1, "hdx_ended", map[string]any{"reason": "stop"})
+			if s.Callback != "" && s.Token != "" {
+				postIngest(s)
+			}
 			mu.Lock()
 			delete(store, id)
 			mu.Unlock()
@@ -100,6 +110,36 @@ func main() {
 	})
 	log.Printf("citrix-hdx-mock listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func (s *sess) push(seq int, event string, meta map[string]any) {
+	if seq > s.seq {
+		s.seq = seq
+	}
+	s.Events = append(s.Events, map[string]any{
+		"t": time.Now().UTC().Format(time.RFC3339Nano), "event": event, "seq": seq, "meta": meta,
+	})
+}
+
+func postIngest(s *sess) {
+	mu.Lock()
+	events := append([]map[string]any{}, s.Events...)
+	cb, tok := s.Callback, s.Token
+	mu.Unlock()
+	body, _ := json.Marshal(map[string]any{"events": events})
+	req, err := http.NewRequest(http.MethodPost, cb, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("ingest callback: %v", err)
+		return
+	}
+	res.Body.Close()
+	log.Printf("ingest callback status=%d events=%d", res.StatusCode, len(events))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

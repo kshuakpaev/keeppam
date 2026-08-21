@@ -36,7 +36,7 @@ MVP как у One Identity SPS «SOCKS mode» и формулировки main22
 - STA: KeepPAM stub ticket + validate API — фаза 1 (`docs/citrix-hdx.txt`); полный CtxSta — фаза 2.
 - StoreFront broker integration — фаза 2+.
 - Нет SOCKS→TLS wrap ICA, EDT/UDP, Framehawk.
-- Нет записи экрана / OCR / replay графики — фаза 4 OEM.
+- Нет пиксельной записи экрана ICA — OEM; KeepPAM ingest/OCR meta — фаза 4 (`docs/citrix-hdx-oem.txt`).
 - XenApp 6.5 / XenDesktop 7.x «как Fudo» — только после OEM модуля.
 
 Миграции: `091_citrix.sql`, `094_citrix_hdx.sql`. Пакеты `internal/citrix`, `internal/citrixgw`.

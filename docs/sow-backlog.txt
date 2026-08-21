@@ -40,7 +40,7 @@
 - Terminate HDX на шлюзе KeepPAM; STA ticket flow; StoreFront broker (или документированный subset).
 - Запись/replay экрана ICA на уровне, согласованном с OEM.
 - Acceptance: сессия через StoreFront → запись → forensic hit.
-- **Статус:** фазы 1–3 в коде (plugin contract + mock); реальный HDX decode — OEM binary.
+- **Статус:** фазы 1–4 в коде (plugin terminate + recording/OCR ingest + mock); пиксельный ICA decode — OEM binary.
 
 ### SOW-GEO-HA
 - Два сайта; async репликация метаданных (+ политика RPO/RGO).

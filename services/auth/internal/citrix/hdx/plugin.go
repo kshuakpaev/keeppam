@@ -60,6 +60,9 @@ type StartRequest struct {
 	StoreFrontURL    string `json:"storefront_url,omitempty"`
 	TTLSeconds       int    `json:"ttl_seconds,omitempty"`
 	RecordingHint    string `json:"recording_hint,omitempty"`
+	CallbackURL      string `json:"callback_url,omitempty"`
+	IngestToken      string `json:"ingest_token,omitempty"`
+	Record           bool   `json:"record,omitempty"`
 }
 
 type StartResponse struct {
@@ -79,7 +82,12 @@ type StatusResponse struct {
 type RecordingEvt struct {
 	T     string         `json:"t"`
 	Event string         `json:"event"`
+	Seq   int            `json:"seq,omitempty"`
 	Meta  map[string]any `json:"meta,omitempty"`
+}
+
+type IngestRequest struct {
+	Events []RecordingEvt `json:"events"`
 }
 
 func (c *Client) Start(ctx context.Context, req StartRequest) (StartResponse, error) {

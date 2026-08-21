@@ -249,6 +249,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			if ttlSec <= 0 {
 				ttlSec = 3600
 			}
+			// Bind first so ingest token exists before plugin Start (callback may fire immediately).
+			bind, err := hdx.Bind(r.Context(), s.sessions.Redis(), created.ID, "pending", s.cfg.SessionTTL)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "hdx bind: "+err.Error())
+				return
+			}
+			cbBase := s.hdxCallbackBase()
 			st, err := s.hdx.Start(r.Context(), hdx.StartRequest{
 				KeepPAMSessionID: created.ID.String(),
 				VDAHost:          target,
@@ -260,14 +267,25 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				StoreFrontURL:    creds.Asset.CitrixStoreFrontURL,
 				TTLSeconds:       ttlSec,
 				RecordingHint:    created.RecordingPath,
+				CallbackURL:      hdx.CallbackURL(cbBase),
+				IngestToken:      bind.IngestToken,
+				Record:           true,
 			})
 			if err != nil {
+				hdx.ClearBinding(r.Context(), s.sessions.Redis(), created.ID)
 				writeErr(w, http.StatusBadGateway, "hdx plugin start: "+err.Error())
 				return
 			}
+			// Re-bind with real plugin session id (same ingest token).
+			_ = hdx.SetPluginSessionID(r.Context(), s.sessions.Redis(), created.ID, st.PluginSessionID, s.cfg.SessionTTL)
+			_ = hdx.AppendJSONL(created.RecordingPath, hdx.RecordingEvt{
+				T: time.Now().UTC().Format(time.RFC3339Nano), Event: "hdx_started", Seq: 1,
+				Meta: map[string]any{"plugin_session_id": st.PluginSessionID, "listen_addr": st.ListenAddr, "mode": st.Mode},
+			})
 			_ = s.sessionsvc.MarkActive(r.Context(), created.ID)
 			_ = s.sessionsvc.AddEvent(r.Context(), created.ID, "citrix_hdx_started", map[string]any{
 				"plugin_session_id": st.PluginSessionID, "listen_addr": st.ListenAddr, "mode": st.Mode,
+				"record": true, "callback": hdx.CallbackURL(cbBase) != "",
 			})
 			out["citrix_transport"] = "hdx"
 			out["citrix_hdx"] = map[string]any{
@@ -275,8 +293,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				"listen_addr":       st.ListenAddr,
 				"mode":              st.Mode,
 				"message":           st.Message,
+				"recording":         created.RecordingPath != "",
 			}
-			out["wire_hint"] = "HDX terminate via OEM plugin (docs/citrix-hdx-oem.txt). Client → listen_addr; vault injected by plugin."
+			out["recording_path"] = created.RecordingPath
+			out["wire_hint"] = "HDX terminate+record via OEM plugin (docs/citrix-hdx-oem.txt). Ingest → /api/v1/citrix/hdx/ingest."
 			writeJSON(w, http.StatusCreated, out)
 			return
 		}

@@ -149,6 +149,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 			r.Get("/citrix/sta/{ticket}", s.handleCitrixSTAValidate)
 			r.Get("/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
 			r.Get("/citrix/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
+			r.Post("/citrix/hdx/ingest", s.handleCitrixHDXIngest)
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
@@ -287,6 +288,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/resources", s.handleCitrixSFResources)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/discovery", s.handleCitrixSFDiscovery)
 				r.With(s.requirePerm("assets.read")).Get("/citrix/hdx/health", s.handleCitrixHDXHealth)
+				r.With(s.requirePerm("sessions.write")).Post("/sessions/{id}/citrix/hdx/sync", s.handleCitrixHDXSync)
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/citrix/sta/probe", s.handleCitrixSTAProbe)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
