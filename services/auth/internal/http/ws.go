@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	citrixica "github.com/keeppam/auth/internal/citrix"
+	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
@@ -217,6 +218,67 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_addr"] = s.cfg.TN3270Addr
 			out["wire_user"] = created.ID.String()
 			out["wire_hint"] = "x3270/c3270 → PAM wire_addr; on KeepPAM login screen: Session UUID + wire_token"
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "citrix" {
+		transport := creds.Asset.CitrixTransport
+		if transport == "" {
+			transport = "socks"
+		}
+		// Phase 3: OEM HDX terminate plugin
+		if transport == "hdx" {
+			if s.hdx == nil || !s.hdx.Enabled() {
+				writeErr(w, http.StatusServiceUnavailable, "citrix_transport=hdx but KEEPPAM_CITRIX_HDX_PLUGIN_URL not set")
+				return
+			}
+			if _, err := s.hdx.Health(r.Context()); err != nil {
+				writeErr(w, http.StatusBadGateway, "hdx plugin unhealthy: "+err.Error())
+				return
+			}
+			target := creds.Asset.Address
+			if target == "" {
+				target = creds.Asset.Hostname
+			}
+			staTicket := ""
+			if sta, err := citrixica.IssueSTATicket(r.Context(), s.sessions.Redis(), created.ID, creds.Asset.ID, s.cfg.SessionTTL); err == nil {
+				staTicket = sta.Ticket
+				out["citrix_sta_ticket"] = sta.Ticket
+				out["citrix_sta_expires_at"] = sta.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			ttlSec := int(s.cfg.SessionTTL.Seconds())
+			if ttlSec <= 0 {
+				ttlSec = 3600
+			}
+			st, err := s.hdx.Start(r.Context(), hdx.StartRequest{
+				KeepPAMSessionID: created.ID.String(),
+				VDAHost:          target,
+				VDAPort:          creds.Asset.Port,
+				Username:         creds.Account.Username,
+				Password:         creds.Secret,
+				InitialProgram:   creds.Asset.CitrixPublishedApp,
+				STATicket:        staTicket,
+				StoreFrontURL:    creds.Asset.CitrixStoreFrontURL,
+				TTLSeconds:       ttlSec,
+				RecordingHint:    created.RecordingPath,
+			})
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, "hdx plugin start: "+err.Error())
+				return
+			}
+			_ = s.sessionsvc.MarkActive(r.Context(), created.ID)
+			_ = s.sessionsvc.AddEvent(r.Context(), created.ID, "citrix_hdx_started", map[string]any{
+				"plugin_session_id": st.PluginSessionID, "listen_addr": st.ListenAddr, "mode": st.Mode,
+			})
+			out["citrix_transport"] = "hdx"
+			out["citrix_hdx"] = map[string]any{
+				"plugin_session_id": st.PluginSessionID,
+				"listen_addr":       st.ListenAddr,
+				"mode":              st.Mode,
+				"message":           st.Message,
+			}
+			out["wire_hint"] = "HDX terminate via OEM plugin (docs/citrix-hdx-oem.txt). Client → listen_addr; vault injected by plugin."
+			writeJSON(w, http.StatusCreated, out)
+			return
 		}
 	}
 	if !created.WaitingSupervisor && created.Protocol == "citrix" && s.cfg.CitrixSocksAddr != "" && s.cfg.CitrixSocksAddr != "off" {

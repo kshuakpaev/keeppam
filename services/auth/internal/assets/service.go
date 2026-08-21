@@ -1069,10 +1069,12 @@ func scanAsset(row scannable) (Asset, error) {
 
 func normalizeCitrixTransport(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "hdx_pending" {
+	switch s {
+	case "hdx", "hdx_pending":
 		return s
+	default:
+		return "socks"
 	}
-	return "socks"
 }
 
 func applyAssetApproval(a *Asset, mode string, stages []string, n, m int, gid *uuid.UUID) error {

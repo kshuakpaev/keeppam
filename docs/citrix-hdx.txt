@@ -1,48 +1,33 @@
 # KeepPAM: SOW-CITRIX-HDX
 
 Модуль уровня C. Базовый mid-market уже даёт Citrix **SOCKS + `.ica`** (`docs/citrix-socks.txt`).
-Этот SOW закрывает путь к HDX terminate / STA / StoreFront / записи экрана.
 
 ## Фазы
 
 | Фаза | Содержание | Статус |
 |------|------------|--------|
-| **1** | Asset metadata; KeepPAM STA ticket; richer `.ica`; SOCKS bytes; JSON validate | **есть** |
-| **2** | CtxSta.dll CGI; probe внешних STA; StoreFront discovery + resources (read-only) | **есть** |
-| **3** | HDX/ICA **terminate** на шлюзе (OEM binary / partner stack) | OEM |
-| **4** | Запись экрана ICA → replay / forensic / OCR | OEM + storage |
+| **1** | Metadata, STA ticket, richer `.ica`, SOCKS bytes | **есть** |
+| **2** | CtxSta.dll CGI, STA probe, StoreFront discovery/resources | **есть** |
+| **3** | OEM **plugin contract** for HDX terminate (`docs/citrix-hdx-oem.txt`, mock) | **есть (контракт)** |
+| **4** | Запись экрана ICA → replay / forensic / OCR | OEM |
 
-## Phase 1 DoD
+## Phase 3 DoD (KeepPAM side)
 
-- [x] Миграция `094_citrix_hdx.sql`
-- [x] Поля актива + STA ticket в `.ica` + JSONL bytes
-- [x] `GET /api/v1/citrix/sta/{ticket}`
-- [x] UI полей Citrix
+- [x] `KEEPPAM_CITRIX_HDX_PLUGIN_URL` + client `internal/citrix/hdx`
+- [x] `citrix_transport=hdx` → start plugin session (vault → plugin); без SOCKS `.ica`
+- [x] `GET /api/v1/admin/citrix/hdx/health`
+- [x] Mock `cmd/citrix-hdx-mock`
+- [x] Миграция `095` (transport `hdx`)
+- [ ] Реальный OEM binary — **вне KeepPAM**
 
-## Phase 2 DoD
-
-- [x] `GET /Scripts/CtxSta.dll?ticket=` и `/citrix/Scripts/CtxSta.dll?ticket=` → text/plain (совместимость Workspace)
-- [x] `POST /api/v1/admin/assets/{id}/citrix/sta/probe` — опрос внешних STA из `citrix_sta_urls`
-- [x] `GET /api/v1/admin/assets/{id}/citrix/discovery` — StoreFront discovery
-- [x] `GET /api/v1/admin/assets/{id}/citrix/resources` — enum published apps (Basic auth от учётки актива)
-- [x] Клиент `internal/citrix/storefront.go` + STA CGI helpers
-- [x] Docs / UI кнопка enum
-
-`citrix_transport=hdx_pending` — маркер «ждём OEM»; трафик по-прежнему SOCKS.
-
-## Phase 3+ (OEM)
-
-- Decode HDX / CGP на KeepPAM, vault inject без SOCKS
-- Screen recording как у RDP `.guac`
-- Полный StoreFront launch ICA от SF (write path)
+Без plugin URL транспорт `hdx` → 503.
 
 ## Acceptance
 
-1. Session → `.ica` + STA ticket; `GET /Scripts/CtxSta.dll?ticket=…` → 200 text/plain.
-2. StoreFront URL на активе → `…/citrix/resources` возвращает список (или явная ошибка HTTP от SF).
-3. Workspace через SOCKS → connect/disconnect JSONL.
-4. (фаза 3+) HDX terminate → forensic — **OEM**.
+1–2. Как в фазах 1–2.
+3. Plugin health OK; session с `transport=hdx` → `citrix_hdx.plugin_session_id`.
+4. Pixel recording — фаза 4 OEM.
 
-## Связанные файлы
+## Файлы
 
-`internal/citrix/{ica,sta,sta_cgi,storefront,socks}.go`, `http/citrix_*.go`, `docs/citrix-socks.txt`, `docs/sow-backlog.txt`.
+`docs/citrix-hdx-oem.txt`, `internal/citrix/hdx`, `cmd/citrix-hdx-mock`, миграции `094`/`095`.

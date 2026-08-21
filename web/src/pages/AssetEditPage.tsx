@@ -1319,11 +1319,12 @@ export function AssetEditPage() {
               disabled={!canWrite}
             >
               <option value="socks">socks (MVP)</option>
-              <option value="hdx_pending">hdx_pending (OEM)</option>
+              <option value="hdx_pending">hdx_pending (await OEM)</option>
+              <option value="hdx">hdx (OEM plugin)</option>
             </select>
             <p className="muted" style={{ marginTop: 0 }}>
-              SOW-CITRIX-HDX фаза 2: STA CGI <code>/Scripts/CtxSta.dll</code>, StoreFront resources.
-              HDX terminate — OEM (`docs/citrix-hdx.txt`).
+              Фазы 1–2: SOCKS/STA/SF. Фаза 3: <code>hdx</code> +{" "}
+              <code>KEEPPAM_CITRIX_HDX_PLUGIN_URL</code> (`docs/citrix-hdx-oem.txt`).
             </p>
             {id && (
               <button

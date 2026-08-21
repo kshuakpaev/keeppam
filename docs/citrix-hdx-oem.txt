@@ -1,0 +1,72 @@
+# KeepPAM: OEM HDX terminate plugin contract (SOW-CITRIX-HDX phase 3)
+
+KeepPAM **does not** decode Citrix HDX/ICA. Phase 3 adds an HTTP plugin boundary so a
+partner/OEM binary can terminate HDX, inject vault credentials, and emit recording metadata.
+
+## Enable
+
+```bash
+# OEM or mock
+go run ./services/auth/cmd/citrix-hdx-mock   # listens :14950
+
+export KEEPPAM_CITRIX_HDX_PLUGIN_URL=http://127.0.0.1:14950
+# asset.citrix_transport = hdx
+```
+
+Health: `GET /api/v1/admin/citrix/hdx/health` (perm `assets.read`).
+
+## Plugin HTTP API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/healthz` | `{status,capabilities,vendor,version}` |
+| POST | `/v1/sessions` | start terminate session (JSON body below) |
+| GET | `/v1/sessions/{id}` | status + optional `events[]` for JSONL |
+| DELETE | `/v1/sessions/{id}` | stop |
+
+### POST /v1/sessions body
+
+```json
+{
+  "keeppam_session_id": "uuid",
+  "vda_host": "vda.corp",
+  "vda_port": 1494,
+  "username": "ops",
+  "password": "…",
+  "initial_program": "#Excel",
+  "sta_ticket": "…",
+  "storefront_url": "https://sf/…",
+  "ttl_seconds": 3600,
+  "recording_hint": "/path/on/pam"
+}
+```
+
+### Response
+
+```json
+{
+  "plugin_session_id": "…",
+  "status": "active",
+  "mode": "terminate",
+  "listen_addr": "127.0.0.1:14940",
+  "message": "optional"
+}
+```
+
+Vault secret is sent **only** to the plugin over the control channel (mTLS recommended on prod).
+
+## KeepPAM behaviour
+
+| `citrix_transport` | Behaviour |
+|--------------------|-----------|
+| `socks` | SOCKS + `.ica` (phase 1–2) |
+| `hdx_pending` | same as socks; marker for commercial |
+| `hdx` | requires healthy plugin; no SOCKS `.ica`; returns `citrix_hdx` block |
+
+## Mock
+
+`cmd/citrix-hdx-mock` — contract smoke only. Replace with OEM that speaks real HDX.
+
+## Out of scope here
+
+Real CGP/HDX decode, EDT/UDP, screen pixel recording / OCR — OEM phase 4.
