@@ -1,0 +1,44 @@
+# KeepPAM: SOW-CITRIX-HDX
+
+Модуль уровня C. Базовый mid-market уже даёт Citrix **SOCKS + `.ica`** (`docs/citrix-socks.txt`).
+Этот SOW закрывает путь к HDX terminate / STA / StoreFront / записи экрана.
+
+## Фазы
+
+| Фаза | Содержание | Статус |
+|------|------------|--------|
+| **1** | Asset metadata (published app, StoreFront URL, STA URLs, transport); KeepPAM **STA ticket stub**; richer `.ica`; SOCKS bytes + disconnect events; `GET /api/v1/citrix/sta/{ticket}` | **есть (срез)** |
+| **2** | Реальный STA CGI / ticket redeem с Citrix Delivery Controller; StoreFront resource enumeration (read-only broker) | план |
+| **3** | HDX/ICA **terminate** на шлюзе (OEM binary / partner stack) | OEM |
+| **4** | Запись экрана ICA → replay / forensic / OCR | OEM + storage |
+
+## Phase 1 DoD
+
+- [x] Миграция `094_citrix_hdx.sql`
+- [x] Поля актива: `citrix_published_app`, `citrix_storefront_url`, `citrix_sta_urls`, `citrix_transport` (`socks` \| `hdx_pending`)
+- [x] При create session: STA ticket в Redis + в `.ica` (`STATicket` / `KeepPAMSTATicket`)
+- [x] `InitialProgram` / `LocHttpBrowserAddress` / `Username` в `.ica`
+- [x] SOCKS: события `citrix_connect` / `citrix_disconnect` + `bytes_up`/`bytes_down` в JSONL
+- [x] Validate: `GET /api/v1/citrix/sta/{ticket}`
+- [x] UI: поля Citrix на карточке актива
+- [x] Acceptance строка SOW
+
+`citrix_transport=hdx_pending` — маркер «ждём OEM»; трафик по-прежнему SOCKS.
+
+## Phase 2+ (не этот срез)
+
+- Полный CtxSta.dll protocol
+- StoreFront auth + launch ICA от SF
+- Decode HDX / CGP на KeepPAM, vault inject без SOCKS
+- Screen recording как у RDP `.guac`
+
+## Acceptance (модуль)
+
+1. Актив citrix с published app → session → `.ica` содержит `InitialProgram` и `STATicket`.
+2. `GET /api/v1/citrix/sta/{ticket}` → 200 + session_id.
+3. Workspace через SOCKS → connect + disconnect в recording JSONL с байтами.
+4. (фаза 3+) StoreFront → HDX terminate → forensic hit по кадру — **OEM**.
+
+## Связанные файлы
+
+`internal/citrix/{ica,sta,socks}.go`, `internal/citrixgw`, `docs/citrix-socks.txt`, `docs/sow-backlog.txt`.

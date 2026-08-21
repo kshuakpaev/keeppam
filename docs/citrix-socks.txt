@@ -32,10 +32,12 @@ MVP как у One Identity SPS «SOCKS mode» и формулировки main22
 
 ## Ограничения (явно в КП как C / SOW)
 
-- Нет terminate ICA/CGP на шлюзе (нет inject vault в сессию Citrix).
-- Нет STA ticket validation / StoreFront broker integration.
+- Нет terminate ICA/CGP на шлюзе (нет inject vault в сессию Citrix) — **SOW-CITRIX-HDX фаза 3**.
+- STA: KeepPAM stub ticket + validate API — фаза 1 (`docs/citrix-hdx.txt`); полный CtxSta — фаза 2.
+- StoreFront broker integration — фаза 2+.
 - Нет SOCKS→TLS wrap ICA, EDT/UDP, Framehawk.
-- Нет записи экрана / OCR / replay графики.
+- Нет записи экрана / OCR / replay графики — фаза 4 OEM.
 - XenApp 6.5 / XenDesktop 7.x «как Fudo» — только после OEM модуля.
 
-Миграция `091_citrix.sql`. Пакеты `internal/citrix`, `internal/citrixgw`.
+Миграции: `091_citrix.sql`, `094_citrix_hdx.sql`. Пакеты `internal/citrix`, `internal/citrixgw`.
+План модуля: `docs/citrix-hdx.txt`.

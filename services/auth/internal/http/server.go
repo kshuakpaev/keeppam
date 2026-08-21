@@ -144,6 +144,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 			r.Use(middleware.Timeout(30 * time.Second))
 
 			r.Post("/alerts/webhook", s.handleAlertWebhook)
+			r.Get("/citrix/sta/{ticket}", s.handleCitrixSTAValidate)
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)

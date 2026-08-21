@@ -103,6 +103,10 @@ export function AssetEditPage() {
     rdp_remote_app: "",
     rdp_remote_app_dir: "",
     rdp_remote_app_args: "",
+    citrix_published_app: "",
+    citrix_storefront_url: "",
+    citrix_sta_urls: "",
+    citrix_transport: "socks",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -178,6 +182,10 @@ export function AssetEditPage() {
         rdp_remote_app: a.rdp_remote_app || "",
         rdp_remote_app_dir: a.rdp_remote_app_dir || "",
         rdp_remote_app_args: a.rdp_remote_app_args || "",
+        citrix_published_app: a.citrix_published_app || "",
+        citrix_storefront_url: a.citrix_storefront_url || "",
+        citrix_sta_urls: a.citrix_sta_urls || "",
+        citrix_transport: a.citrix_transport || "socks",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -458,6 +466,10 @@ export function AssetEditPage() {
         rdp_remote_app: form.rdp_remote_app || "",
         rdp_remote_app_dir: form.rdp_remote_app_dir || "",
         rdp_remote_app_args: form.rdp_remote_app_args || "",
+        citrix_published_app: form.citrix_published_app || "",
+        citrix_storefront_url: form.citrix_storefront_url || "",
+        citrix_sta_urls: form.citrix_sta_urls || "",
+        citrix_transport: form.citrix_transport || "socks",
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1258,6 +1270,46 @@ export function AssetEditPage() {
               disabled={!canWrite}
               placeholder="optional"
             />
+          </>
+        )}
+        {form.protocol === "citrix" && (
+          <>
+            <label>Citrix published app (InitialProgram)</label>
+            <input
+              className="mono"
+              value={form.citrix_published_app || ""}
+              onChange={(e) => setForm({ ...form, citrix_published_app: e.target.value })}
+              disabled={!canWrite}
+              placeholder="#Excel или путь"
+            />
+            <label>StoreFront URL</label>
+            <input
+              className="mono"
+              value={form.citrix_storefront_url || ""}
+              onChange={(e) => setForm({ ...form, citrix_storefront_url: e.target.value })}
+              disabled={!canWrite}
+              placeholder="https://sf.example/Citrix/Store"
+            />
+            <label>STA URLs (comma-separated)</label>
+            <input
+              className="mono"
+              value={form.citrix_sta_urls || ""}
+              onChange={(e) => setForm({ ...form, citrix_sta_urls: e.target.value })}
+              disabled={!canWrite}
+              placeholder="https://sta1/... , https://sta2/..."
+            />
+            <label>Citrix transport</label>
+            <select
+              value={form.citrix_transport || "socks"}
+              onChange={(e) => setForm({ ...form, citrix_transport: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="socks">socks (MVP)</option>
+              <option value="hdx_pending">hdx_pending (OEM)</option>
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              SOW-CITRIX-HDX: STA ticket stub + richer .ica. HDX terminate — OEM (`docs/citrix-hdx.txt`).
+            </p>
           </>
         )}
         <label>{t("common.description")}</label>

@@ -16,8 +16,11 @@ type ICAFileOpts struct {
 	TargetHost    string // VDA / XenApp address
 	TargetPort    int    // ICA port, default 1494
 	AppName       string // section name
-	InitialProg   string // optional #App
+	InitialProg   string // optional #App or path
 	Title         string
+	STATicket     string // KeepPAM STA stub ticket (SOW-CITRIX-HDX)
+	StoreFrontURL string // optional HttpBrowserAddress / LocHttpBrowserAddress
+	Username      string // ClearTextUsername when set (vault inject path — optional)
 }
 
 // BuildICAFile returns an .ica body (INI). ProxyType=Socks — путь как у SPS/Fudo SOCKS mode.
@@ -44,6 +47,9 @@ func BuildICAFile(o ICAFileOpts) string {
 	b.WriteString(fmt.Sprintf("ProxyPort=%d\r\n", o.ProxyPort))
 	b.WriteString(fmt.Sprintf("ProxyUsername=%s\r\n", o.ProxyUser))
 	b.WriteString(fmt.Sprintf("ProxyPassword=%s\r\n", o.ProxyPassword))
+	if o.StoreFrontURL != "" {
+		b.WriteString(fmt.Sprintf("LocHttpBrowserAddress=%s\r\n", o.StoreFrontURL))
+	}
 	b.WriteString("\r\n[ApplicationServers]\r\n")
 	b.WriteString(fmt.Sprintf("%s=\r\n\r\n", safe))
 	b.WriteString(fmt.Sprintf("[%s]\r\n", safe))
@@ -58,7 +64,17 @@ func BuildICAFile(o ICAFileOpts) string {
 	if o.InitialProg != "" {
 		b.WriteString(fmt.Sprintf("InitialProgram=%s\r\n", o.InitialProg))
 	}
+	if o.STATicket != "" {
+		// Documented KeepPAM extension + classic STATicket key for future HDX broker.
+		b.WriteString(fmt.Sprintf("STATicket=%s\r\n", o.STATicket))
+		b.WriteString(fmt.Sprintf("KeepPAMSTATicket=%s\r\n", o.STATicket))
+	}
+	if o.Username != "" {
+		b.WriteString(fmt.Sprintf("Username=%s\r\n", o.Username))
+		b.WriteString("Domain=\r\n")
+	}
 	b.WriteString("AutologonAllowed=ON\r\n")
+	b.WriteString("DesiredColor=8\r\n")
 	return b.String()
 }
 

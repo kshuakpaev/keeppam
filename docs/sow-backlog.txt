@@ -40,6 +40,7 @@
 - Terminate HDX на шлюзе KeepPAM; STA ticket flow; StoreFront broker (или документированный subset).
 - Запись/replay экрана ICA на уровне, согласованном с OEM.
 - Acceptance: сессия через StoreFront → запись → forensic hit.
+- **Статус:** фаза 1 в коде (`docs/citrix-hdx.txt`, миграция `094`) — STA stub + richer ICA + bytes; HDX decode — OEM.
 
 ### SOW-GEO-HA
 - Два сайта; async репликация метаданных (+ политика RPO/RGO).

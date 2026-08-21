@@ -163,6 +163,10 @@ export type Asset = {
   rdp_remote_app?: string;
   rdp_remote_app_dir?: string;
   rdp_remote_app_args?: string;
+  citrix_published_app?: string;
+  citrix_storefront_url?: string;
+  citrix_sta_urls?: string;
+  citrix_transport?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -1191,6 +1195,10 @@ export const api = {
   rdp_remote_app?: string;
   rdp_remote_app_dir?: string;
   rdp_remote_app_args?: string;
+  citrix_published_app?: string;
+  citrix_storefront_url?: string;
+  citrix_sta_urls?: string;
+  citrix_transport?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1223,6 +1231,10 @@ export const api = {
   rdp_remote_app?: string;
   rdp_remote_app_dir?: string;
   rdp_remote_app_args?: string;
+  citrix_published_app?: string;
+  citrix_storefront_url?: string;
+  citrix_sta_urls?: string;
+  citrix_transport?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {

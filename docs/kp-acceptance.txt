@@ -59,7 +59,7 @@
 
 - Native RDP client — если в scope: `.rdp` + freerdp-proxy (`docs/native-rdp.txt`)
 - Telnet / TN3270 / Citrix SOCKS — если в scope: `docs/telnet.txt`, `docs/tn3270.txt`, `docs/citrix-socks.txt`
-- Citrix HDX terminate / STA / StoreFront — OEM SOW
+- Citrix HDX terminate / STA / StoreFront — OEM SOW (`docs/citrix-hdx.txt`); фаза 1: STA stub + published app в `.ica`
 - [ ] Virtual Appliance: импорт OVA или VHDX → first-boot → portal (`docs/appliance-ova.txt`) — если в scope КП-2 / SOW
 - EN locale UI (остальные админ-экраны вне сценария JIT+replay)
 - AD group membership on session

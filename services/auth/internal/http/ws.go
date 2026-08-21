@@ -241,13 +241,38 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				ProxyUser: created.ID.String(), ProxyPassword: tok,
 				TargetHost: target, TargetPort: creds.Asset.Port,
 				AppName: creds.Asset.Name, Title: creds.Asset.Name,
+				InitialProg:   creds.Asset.CitrixPublishedApp,
+				StoreFrontURL: creds.Asset.CitrixStoreFrontURL,
+				Username:      creds.Account.Username,
 			})
+			if sta, err := citrixica.IssueSTATicket(r.Context(), s.sessions.Redis(), created.ID, creds.Asset.ID, s.cfg.SessionTTL); err == nil {
+				ica = citrixica.BuildICAFile(citrixica.ICAFileOpts{
+					ProxyHost: host, ProxyPort: socksPort,
+					ProxyUser: created.ID.String(), ProxyPassword: tok,
+					TargetHost: target, TargetPort: creds.Asset.Port,
+					AppName: creds.Asset.Name, Title: creds.Asset.Name,
+					InitialProg:   creds.Asset.CitrixPublishedApp,
+					StoreFrontURL: creds.Asset.CitrixStoreFrontURL,
+					Username:      creds.Account.Username,
+					STATicket:     sta.Ticket,
+				})
+				out["citrix_sta_ticket"] = sta.Ticket
+				out["citrix_sta_expires_at"] = sta.ExpiresAt.UTC().Format(time.RFC3339)
+				_ = s.sessionsvc.AddEvent(r.Context(), created.ID, "citrix_sta_issued", map[string]any{
+					"ticket_prefix": sta.Ticket[:8], "transport": creds.Asset.CitrixTransport,
+				})
+			}
 			out["wire_token"] = tok
 			out["wire_addr"] = s.cfg.CitrixSocksAddr
 			out["wire_user"] = created.ID.String()
 			out["citrix_ica"] = ica
 			out["citrix_filename"] = fmt.Sprintf("keeppam-%s.ica", created.ID.String()[:8])
-			out["wire_hint"] = "Workspace: откройте .ica (SOCKS через KeepPAM). Полный ICA decode/STA — SOW."
+			out["citrix_transport"] = creds.Asset.CitrixTransport
+			if creds.Asset.CitrixTransport == "hdx_pending" {
+				out["wire_hint"] = "Workspace: .ica через SOCKS. citrix_transport=hdx_pending — HDX terminate ещё OEM (docs/citrix-hdx.txt)."
+			} else {
+				out["wire_hint"] = "Workspace: откройте .ica (SOCKS + STA ticket stub). HDX decode — SOW phase 2+."
+			}
 		}
 	}
 	if created.Protocol == "kubectl" && !created.WaitingSupervisor {
