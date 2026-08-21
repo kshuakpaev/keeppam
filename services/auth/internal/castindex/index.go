@@ -11,6 +11,7 @@ import (
 	"github.com/keeppam/auth/internal/guacindex"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/sessionsvc"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 type Service struct {
@@ -96,14 +97,19 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	if err != nil {
 		return Result{}, err
 	}
+	cs := sessionCharset(row)
 	base := row.CreatedAt
 	if row.StartedAt != nil {
 		base = *row.StartedAt
 	}
 	if needCmd {
 		for _, ln := range inLines {
+			text, meta := indexText(ln.Text, cs)
 			ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
-			payload := map[string]any{"command": ln.Text, "source": "asciicast", "offset": ln.Offset}
+			payload := map[string]any{"command": text, "source": "asciicast", "offset": ln.Offset, "charset": meta.Charset}
+			if meta.RawB64 != "" {
+				payload["raw"] = meta.RawB64
+			}
 			if err := s.sess.AddEventAt(ctx, sessionID, ts, "command", payload); err != nil {
 				return Result{}, err
 			}
@@ -114,7 +120,8 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 		var piiTotal outputPIIStats
 		piiTotal.kinds = map[string]struct{}{}
 		for _, ln := range outLines {
-			text, skip, st := applyContentDLP(dlp, ln.Text)
+			text, meta := indexText(ln.Text, cs)
+			text, skip, st := applyContentDLP(dlp, text)
 			if skip {
 				mergePIIStats(&piiTotal, st)
 				continue
@@ -123,7 +130,10 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 				mergePIIStats(&piiTotal, st)
 			}
 			ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
-			payload := map[string]any{"line": text, "source": "asciicast", "offset": ln.Offset}
+			payload := map[string]any{"line": text, "source": "asciicast", "offset": ln.Offset, "charset": meta.Charset}
+			if meta.RawB64 != "" {
+				payload["raw"] = meta.RawB64
+			}
 			if err := s.sess.AddEventAt(ctx, sessionID, ts, "output", payload); err != nil {
 				return Result{}, err
 			}
@@ -134,6 +144,19 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	}
 	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
 	return s.result(ctx, sessionID, pty, "")
+}
+
+func sessionCharset(row sessionsvc.Session) string {
+	if row.PolicySnapshot != nil && row.PolicySnapshot.TerminalCharset != "" {
+		return termcharset.Normalize(row.PolicySnapshot.TerminalCharset)
+	}
+	return termcharset.UTF8
+}
+
+// indexText: cast is usually already UTF-8 (recorder decoded); re-decode only if needed.
+func indexText(s, charset string) (string, termcharset.Result) {
+	meta := termcharset.DecodeString(s, charset)
+	return meta.Text, meta
 }
 
 func (s *Service) result(ctx context.Context, sessionID uuid.UUID, pty bool, skipped string) (Result, error) {

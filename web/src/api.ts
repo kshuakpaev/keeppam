@@ -158,6 +158,7 @@ export type Asset = {
   supervisor_group_name?: string;
   ad_privileged_group_dn?: string;
   krb_spn?: string;
+  terminal_charset?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -194,6 +195,10 @@ export type AccessBinding = {
   asset_id?: string;
   asset_match_tags?: string[];
   asset_match_mode?: string;
+  asset_match_name?: string;
+  asset_match_hostname?: string;
+  asset_match_types?: string[];
+  asset_match_cidrs?: string[];
   inherited?: boolean;
   user_id?: string;
   role_id?: string;
@@ -738,7 +743,7 @@ function csrfToken(): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type") && init.body) {
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   if (!headers.has("Accept-Language")) {
@@ -1013,7 +1018,14 @@ export const api = {
       body: JSON.stringify(body),
     }),
   listDiscoveryJobs: () => request<{ jobs: DiscoveryJob[] }>("/api/v1/admin/discovery/jobs"),
-  createDiscoveryJob: (body: { kind?: string; cidr?: string; ports?: string; asset_ids?: string[] }) =>
+  createDiscoveryJob: (body: {
+    kind?: string;
+    cidr?: string;
+    ports?: string;
+    asset_ids?: string[];
+    target_asset_id?: string;
+    group_dns?: string[];
+  }) =>
     request<DiscoveryJob>("/api/v1/admin/discovery/jobs", {
       method: "POST",
       body: JSON.stringify(body),
@@ -1147,6 +1159,7 @@ export const api = {
     pam_only?: boolean;
     ad_privileged_group_dn?: string;
   krb_spn?: string;
+  terminal_charset?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1175,6 +1188,7 @@ export const api = {
       pam_only?: boolean;
       ad_privileged_group_dn?: string;
   krb_spn?: string;
+  terminal_charset?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1352,8 +1366,12 @@ export const api = {
       user_id?: string;
       role_id?: string;
       group_id?: string;
-      asset_match_tags: string[];
+      asset_match_tags?: string[];
       asset_match_mode?: string;
+      asset_match_name?: string;
+      asset_match_hostname?: string;
+      asset_match_types?: string[];
+      asset_match_cidrs?: string[];
       duration_minutes?: number;
       access_policy_id?: string;
       max_risk?: number;
@@ -1425,6 +1443,10 @@ export const api = {
       risk_action?: string;
       asset_match_tags?: string[];
       asset_match_mode?: string;
+      asset_match_name?: string;
+      asset_match_hostname?: string;
+      asset_match_types?: string[];
+      asset_match_cidrs?: string[];
     },
   ) =>
     request<AccessBinding>(`/api/v1/admin/assets/${assetId}/acl/${bindingId}`, {
@@ -1865,6 +1887,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  importCommandPack: (id: string, file: File, merge = false) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (merge) fd.append("merge", "true");
+    return request<{
+      pack: CommandPolicyPack;
+      added: number;
+      total: number;
+      merged: boolean;
+    }>(`/api/v1/admin/jea/packs/${id}/import?merge=${merge ? "true" : "false"}`, {
+      method: "POST",
+      body: fd,
+    });
+  },
   deleteCommandPack: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/jea/packs/${id}`, { method: "DELETE" }),
   previewCommand: (body: { command: string; pack_id?: string }) =>

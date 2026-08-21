@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, hasPerm, type DiscoveryCandidate, type DiscoveryJob } from "../api";
 import { useAuth } from "../auth";
 
-type ScanKind = "network" | "accounts";
+type ScanKind = "network" | "accounts" | "ad_accounts";
 
 export function DiscoveryPage() {
   const { user } = useAuth();
@@ -13,6 +13,8 @@ export function DiscoveryPage() {
   const [scanKind, setScanKind] = useState<ScanKind>("network");
   const [cidr, setCidr] = useState("127.0.0.1");
   const [ports, setPorts] = useState("22,3389,5900");
+  const [targetAssetId, setTargetAssetId] = useState("");
+  const [assets, setAssets] = useState<{ id: string; name: string; protocol: string }[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -42,6 +44,7 @@ export function DiscoveryPage() {
   useEffect(() => {
     if (!canRead) return;
     void loadJobs();
+    void api.listAssets().then((r) => setAssets(r.assets || [])).catch(() => {});
     const t = setInterval(() => {
       void loadJobs();
       if (selected) void loadCandidates(selected);
@@ -60,15 +63,20 @@ export function DiscoveryPage() {
     setError("");
     setMsg("");
     try {
-      const job =
-        scanKind === "accounts"
-          ? await api.createDiscoveryJob({ kind: "accounts" })
-          : await api.createDiscoveryJob({ kind: "network", cidr, ports });
-      setMsg(
-        scanKind === "accounts"
-          ? `Account discovery запущен (${job.total_hosts} SSH-активов)`
-          : `Скан запущен: ${job.cidr}`,
-      );
+      let job: DiscoveryJob;
+      if (scanKind === "accounts") {
+        job = await api.createDiscoveryJob({ kind: "accounts" });
+        setMsg(`Account discovery запущен (${job.total_hosts} SSH-активов)`);
+      } else if (scanKind === "ad_accounts") {
+        job = await api.createDiscoveryJob({
+          kind: "ad_accounts",
+          target_asset_id: targetAssetId || undefined,
+        });
+        setMsg("AD privileged discovery запущен (LDAP)");
+      } else {
+        job = await api.createDiscoveryJob({ kind: "network", cidr, ports });
+        setMsg(`Скан запущен: ${job.cidr}`);
+      }
       setSelected(job.id);
       await loadJobs();
       await loadCandidates(job.id);
@@ -98,14 +106,17 @@ export function DiscoveryPage() {
   }
 
   const active = jobs.find((j) => j.id === selected) || null;
-  const accountsMode = (active?.kind || "") === "accounts" || candidates.some((c) => !!c.username);
+  const accountsMode =
+    (active?.kind || "") === "accounts" ||
+    (active?.kind || "") === "ad_accounts" ||
+    candidates.some((c) => !!c.username);
 
   return (
     <div>
       <div className="toolbar">
         <div>
           <h1>Discovery</h1>
-          <p className="muted">Сеть (TCP) и учётные записи на SSH-активах</p>
+          <p className="muted">Сеть (TCP), SSH passwd и привилегированные УЗ AD/LDAP</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -118,6 +129,7 @@ export function DiscoveryPage() {
           <select value={scanKind} onChange={(e) => setScanKind(e.target.value as ScanKind)}>
             <option value="network">Сеть (TCP / хосты)</option>
             <option value="accounts">Учётки (SSH account discovery)</option>
+            <option value="ad_accounts">AD privileged (LDAP)</option>
           </select>
           {scanKind === "network" ? (
             <>
@@ -131,6 +143,22 @@ export function DiscoveryPage() {
               <label>Порты (через запятую)</label>
               <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="22,3389,5900" />
               <p className="muted">Лимит: 1024 хоста. 22→ssh, 3389→rdp, 5900→vnc.</p>
+            </>
+          ) : scanKind === "ad_accounts" ? (
+            <>
+              <label>Актив для импорта в vault (опционально для просмотра, нужен для Импорт)</label>
+              <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
+                <option value="">— только очередь «не под PAM» —</option>
+                {assets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.protocol})
+                  </option>
+                ))}
+              </select>
+              <p className="muted">
+                LDAP из Config → Auth: <span className="mono">adminCount=1</span>, Domain/Enterprise Admins.
+                Кандидаты без vault помечаются как новые.
+              </p>
             </>
           ) : (
             <p className="muted">
@@ -162,7 +190,11 @@ export function DiscoveryPage() {
             {jobs.map((j) => (
               <tr key={j.id}>
                 <td className="mono">{j.kind || "network"}</td>
-                <td className="mono">{j.kind === "accounts" ? j.cidr : `${j.cidr} · ${j.ports}`}</td>
+                <td className="mono">
+                  {j.kind === "accounts" || j.kind === "ad_accounts"
+                    ? j.cidr
+                    : `${j.cidr} · ${j.ports}`}
+                </td>
                 <td>
                   <span className={`badge ${j.status === "done" ? "active" : j.status === "failed" ? "locked" : ""}`}>
                     {j.status}
@@ -238,9 +270,11 @@ export function DiscoveryPage() {
                     <td className="mono">{c.username}</td>
                     <td>{c.privileged ? <span className="badge locked">priv</span> : "—"}</td>
                     <td className="muted mono" style={{ fontSize: "0.85rem" }}>
-                      {c.details
-                        ? `uid=${String(c.details.uid ?? "")} shell=${String(c.details.shell ?? "")}`
-                        : ""}
+                      {c.protocol === "ldap" && c.details
+                        ? `dn=${String(c.details.dn ?? "").slice(0, 48)}${String(c.details.dn ?? "").length > 48 ? "…" : ""} · ${(Array.isArray(c.details.reasons) ? c.details.reasons : []).join(",")}`
+                        : c.details
+                          ? `uid=${String(c.details.uid ?? "")} shell=${String(c.details.shell ?? "")}`
+                          : ""}
                     </td>
                     <td>
                       {c.imported_account_id ? (

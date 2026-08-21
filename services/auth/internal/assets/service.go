@@ -17,6 +17,7 @@ import (
 	"github.com/keeppam/auth/internal/sshkrb"
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/tagpath"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 type Service struct {
@@ -75,6 +76,7 @@ type Asset struct {
 	SupervisorGroupName string     `json:"supervisor_group_name,omitempty"`
 	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn,omitempty"`
 	KrbSPN              string     `json:"krb_spn,omitempty"`
+	TerminalCharset     string     `json:"terminal_charset,omitempty"`
 	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
@@ -140,6 +142,7 @@ type CreateAssetInput struct {
 	PamOnly             *bool      `json:"pam_only"`
 	ADPrivilegedGroupDN string     `json:"ad_privileged_group_dn"`
 	KrbSPN              string     `json:"krb_spn"`
+	TerminalCharset     string     `json:"terminal_charset"`
 }
 
 type UpdateAssetInput struct {
@@ -163,6 +166,7 @@ type UpdateAssetInput struct {
 	PamOnly             *bool      `json:"pam_only"`
 	ADPrivilegedGroupDN *string    `json:"ad_privileged_group_dn"`
 	KrbSPN              *string    `json:"krb_spn"`
+	TerminalCharset     *string    `json:"terminal_charset"`
 }
 
 type CreateAccountInput struct {
@@ -207,7 +211,7 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
-			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, '')
+			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -239,7 +243,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
 			COALESCE(a.approval_mode, 'sequential'), COALESCE(a.quorum_n, 1), COALESCE(a.quorum_m, 1), a.approver_group_id, COALESCE(g.name, ''),
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
-			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, '')
+			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -297,15 +301,16 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	}
 	a.ADPrivilegedGroupDN = strings.TrimSpace(in.ADPrivilegedGroupDN)
 	a.KrbSPN = strings.TrimSpace(in.KrbSPN)
+	a.TerminalCharset = termcharset.Normalize(in.TerminalCharset)
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn, terminal_charset)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -417,6 +422,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.KrbSPN != nil {
 		a.KrbSPN = strings.TrimSpace(*in.KrbSPN)
 	}
+	if in.TerminalCharset != nil {
+		a.TerminalCharset = termcharset.Normalize(*in.TerminalCharset)
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -430,11 +438,11 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			firewall_probe_at=CASE WHEN $19 THEN NULL ELSE firewall_probe_at END,
 			firewall_probe_reachable=CASE WHEN $19 THEN NULL ELSE firewall_probe_reachable END,
 			approval_mode=$20, quorum_n=$21, quorum_m=$22, approver_group_id=$23,
-			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26, krb_spn=$27
+			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26, krb_spn=$27, terminal_charset=$28
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
-		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN)
+		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -702,7 +710,14 @@ func (s *Service) GetAccount(ctx context.Context, id uuid.UUID) (Account, error)
 }
 
 func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username string) (Account, error) {
-	row := s.db.Pool.QueryRow(ctx, `
+	return s.FindAccountByIdentity(ctx, assetID, username, "")
+}
+
+// FindAccountByIdentity matches username on the asset, or ad_user_dn when dn is set.
+func (s *Service) FindAccountByIdentity(ctx context.Context, assetID uuid.UUID, username, dn string) (Account, error) {
+	username = strings.TrimSpace(username)
+	dn = strings.TrimSpace(dn)
+	const cols = `
 		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
 			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
 			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
@@ -712,8 +727,21 @@ func (s *Service) FindAccount(ctx context.Context, assetID uuid.UUID, username s
 			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
 			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
 		FROM asset_accounts a
-		LEFT JOIN users u ON u.id=a.checkout_user_id
-		WHERE a.asset_id=$1 AND a.username=$2`, assetID, username)
+		LEFT JOIN users u ON u.id=a.checkout_user_id`
+	var row pgx.Row
+	if dn != "" {
+		row = s.db.Pool.QueryRow(ctx, cols+`
+			WHERE lower(COALESCE(a.ad_user_dn,''))=lower($1)
+			   OR (a.asset_id=$2 AND lower(a.username)=lower($3))
+			ORDER BY CASE WHEN lower(COALESCE(a.ad_user_dn,''))=lower($1) THEN 0 ELSE 1 END
+			LIMIT 1`, dn, assetID, username)
+		if a, err := scanAccountRow(row); err == nil {
+			s.expireCheckoutIfNeeded(ctx, &a)
+			return a, nil
+		}
+	}
+	row = s.db.Pool.QueryRow(ctx, cols+`
+		WHERE a.asset_id=$1 AND lower(a.username)=lower($2)`, assetID, username)
 	a, err := scanAccountRow(row)
 	if err != nil {
 		return Account{}, err
@@ -945,9 +973,12 @@ func scanAsset(row scannable) (Asset, error) {
 		&a.HostKeyAlgo, &a.HostKeyBlob, &a.HostKeyFingerprint, &a.HostKeyLearnedAt,
 		&a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.ApprovalStages, &a.PamOnly, &a.FirewallAppliedAt,
 		&a.ApprovalMode, &a.QuorumN, &a.QuorumM, &a.ApproverGroupID, &a.ApproverGroupName,
-		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN, &a.KrbSPN)
+		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN, &a.KrbSPN, &a.TerminalCharset)
 	if a.Tags == nil {
 		a.Tags = []string{}
+	}
+	if a.TerminalCharset == "" {
+		a.TerminalCharset = termcharset.UTF8
 	}
 	if len(a.ApprovalStages) == 0 {
 		a.ApprovalStages = []string{"manager"}

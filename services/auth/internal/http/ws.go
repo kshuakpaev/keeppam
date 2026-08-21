@@ -21,6 +21,7 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -146,6 +147,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if at, err := s.policy.AssetTags(r.Context(), assetID); err == nil {
 		labels = sessionsvc.MergeLabels(labels, at)
 	}
+	snap := s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)
+	snap.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: s.clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
@@ -153,7 +156,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 		RiskScore: ev.RiskScore, RiskFactors: ev.RiskFactors, Labels: labels,
 		AccessPolicyID: ev.AccessPolicyID, ClientCountry: s.policy.ClientCountry(s.clientIP(r)),
-		PolicySnapshot: snapPtr(s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)),
+		PolicySnapshot: snapPtr(snap),
 	}, r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -601,6 +604,11 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		_ = writeWSJSON(conn, map[string]string{"type": "error", "message": "recorder failed: " + err.Error()})
 		_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
 		return
+	}
+	if row.PolicySnapshot != nil {
+		rec.SetCharset(row.PolicySnapshot.TerminalCharset)
+	} else {
+		rec.SetCharset(creds.Asset.TerminalCharset)
 	}
 
 	client, err := s.assets.DialSSH(r.Context(), creds)

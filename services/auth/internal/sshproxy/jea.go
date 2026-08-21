@@ -3,14 +3,17 @@ package sshproxy
 import (
 	"strings"
 	"unicode"
+
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 // CommandGuard buffers a line of input and decides allow/deny via AllowFn.
 type CommandGuard struct {
 	AllowFn func(line string) bool
 	// Notify is called immediately (e.g. newline before a blocking AllowFn).
-	Notify func([]byte)
-	buf    []byte
+	Notify  func([]byte)
+	Charset string
+	buf     []byte
 }
 
 func NewCommandGuard(allow func(line string) bool) *CommandGuard {
@@ -27,6 +30,7 @@ func (g *CommandGuard) echoNow(echo *[]byte, p ...byte) {
 
 // Feed processes raw PTY input. Returns (forward, echo, deniedLine).
 // forward is written to remote stdin; echo is shown locally (when remote ECHO is off).
+// AllowFn / denied see UTF-8 (charset-decoded); remote still receives original bytes.
 func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 	if g == nil || g.AllowFn == nil {
 		return p, nil, ""
@@ -34,15 +38,16 @@ func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 	for _, b := range p {
 		switch b {
 		case '\r', '\n':
-			line := string(g.buf)
+			raw := append([]byte(nil), g.buf...)
 			g.buf = g.buf[:0]
 			g.echoNow(&echo, '\r', '\n')
-			if strings.TrimSpace(line) == "" {
+			if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
 				forward = append(forward, '\n')
 				continue
 			}
+			line := termcharset.Decode(raw, g.Charset).Text
 			if g.AllowFn(line) {
-				forward = append(forward, []byte(line)...)
+				forward = append(forward, raw...)
 				forward = append(forward, '\n')
 			} else {
 				denied = line
@@ -52,18 +57,8 @@ func (g *CommandGuard) Feed(p []byte) (forward, echo []byte, denied string) {
 				g.buf = g.buf[:len(g.buf)-1]
 				g.echoNow(&echo, 0x08, ' ', 0x08)
 			}
-		case 0x03: // Ctrl-C
-			g.buf = g.buf[:0]
-			forward = append(forward, 0x03)
-			g.echoNow(&echo, '^', 'C', '\r', '\n')
-		case 0x04: // Ctrl-D
-			forward = append(forward, 0x04)
 		default:
-			if b == 0x1b { // ESC sequences — pass through to remote (arrows etc. break JEA line model)
-				forward = append(forward, b)
-				continue
-			}
-			if unicode.IsPrint(rune(b)) || b == '\t' {
+			if unicode.IsPrint(rune(b)) || b == '\t' || b >= 0x80 {
 				g.buf = append(g.buf, b)
 				g.echoNow(&echo, b)
 			}

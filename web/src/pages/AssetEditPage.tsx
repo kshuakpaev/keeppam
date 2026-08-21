@@ -99,6 +99,7 @@ export function AssetEditPage() {
     pam_only: true,
     ad_privileged_group_dn: "",
     krb_spn: "",
+    terminal_charset: "utf-8",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -170,6 +171,7 @@ export function AssetEditPage() {
         pam_only: a.pam_only !== false,
         ad_privileged_group_dn: a.ad_privileged_group_dn || "",
         krb_spn: a.krb_spn || "",
+        terminal_charset: a.terminal_charset || "utf-8",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -406,6 +408,7 @@ export function AssetEditPage() {
         pam_only: form.pam_only,
         ad_privileged_group_dn: form.ad_privileged_group_dn.trim(),
         krb_spn: form.krb_spn.trim(),
+        terminal_charset: form.terminal_charset || "utf-8",
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1161,6 +1164,20 @@ export function AssetEditPage() {
         />
         <p className="muted" style={{ marginTop: 0 }}>
           Для GSSAPI: host/fqdn или fqdn. Пусто = hostname актива / address.
+        </p>
+        <label>Кодировка терминала (SSH)</label>
+        <select
+          value={form.terminal_charset || "utf-8"}
+          onChange={(e) => setForm({ ...form, terminal_charset: e.target.value })}
+          disabled={!canWrite}
+        >
+          <option value="utf-8">UTF-8</option>
+          <option value="cp1251">CP1251 (Windows)</option>
+          <option value="koi8-r">KOI8-R</option>
+          <option value="auto">auto (detect)</option>
+        </select>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Для индекса и поиска: сырой поток конвертируется в UTF-8 (T-43).
         </p>
         <label>{t("common.description")}</label>
         <input

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -118,6 +119,95 @@ func (s *Server) handleDeleteCommandPack(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleImportCommandPack(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	merge := r.URL.Query().Get("merge") == "1" || r.URL.Query().Get("merge") == "true"
+	ct := strings.ToLower(r.Header.Get("Content-Type"))
+	var data []byte
+	filename := r.URL.Query().Get("filename")
+
+	switch {
+	case strings.HasPrefix(ct, "multipart/"):
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			writeErr(w, http.StatusBadRequest, "multipart: "+err.Error())
+			return
+		}
+		if v := r.FormValue("merge"); v == "1" || v == "true" {
+			merge = true
+		}
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "file required")
+			return
+		}
+		defer f.Close()
+		if hdr != nil {
+			filename = hdr.Filename
+		}
+		data, err = io.ReadAll(io.LimitReader(f, 4<<20))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	case strings.HasPrefix(ct, "application/json"):
+		var body struct {
+			Merge    bool     `json:"merge"`
+			Filename string   `json:"filename"`
+			Text     string   `json:"text"`
+			Patterns []string `json:"patterns"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		merge = merge || body.Merge
+		if body.Filename != "" {
+			filename = body.Filename
+		}
+		if len(body.Patterns) > 0 {
+			raw, _ := json.Marshal(body.Patterns)
+			data = raw
+			if filename == "" {
+				filename = "import.json"
+			}
+		} else {
+			data = []byte(body.Text)
+		}
+	default:
+		var err error
+		data, err = io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if filename == "" {
+			if strings.Contains(ct, "csv") {
+				filename = "import.csv"
+			} else if strings.Contains(ct, "json") {
+				filename = "import.json"
+			} else {
+				filename = "import.txt"
+			}
+		}
+	}
+
+	out, err := s.policy.ImportCommandPackPatterns(r.Context(), sess.UserID, id, data, filename, merge, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleListSQLPacks(w http.ResponseWriter, r *http.Request) {

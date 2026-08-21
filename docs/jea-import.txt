@@ -1,0 +1,33 @@
+# KeepPAM: импорт JEA command lists (T-42)
+
+Массовая загрузка black/white lists в SSH `command_policy_packs`.
+
+## Форматы
+
+| Файл | Содержание |
+|------|------------|
+| `.txt` | один glob на строку; `#` — комментарий |
+| `.csv` | колонка `pattern` / `command` / первая |
+| `.json` | `["rm *", …]` или `{ "patterns": […] }` |
+
+Globs как в JEA: `path.Match` (`rm *`, `dd`, `chmod -R /*`), не regex. Лимит 10 000.
+
+## API
+
+`POST /api/v1/admin/jea/packs/{id}/import?merge=true|false`
+
+- `multipart/form-data` поле `file`
+- или raw `text/plain` / `text/csv` / `application/json`
+- или JSON `{ "text"|"patterns", "merge" }`
+
+`merge=true` — объединить с текущими; иначе заменить.
+
+Kill / live deny / `MatchCommand` — без изменений. После импорта pack с `mode=denylist` режет команды на SSH-сессии.
+
+## UI
+
+JEA → SSH → «Загрузить список». Для существующего пакета — сразу в БД; для нового — в textarea.
+
+## DoD
+
+500 строк denylist → import → ACL с pack → `rm -rf /` → `command_denied`.

@@ -39,6 +39,7 @@ type Snapshot struct {
 	RDPDrive              bool         `json:"rdp_drive,omitempty"`
 	RDPPrinter            bool         `json:"rdp_printer,omitempty"`
 	RDPNative             bool         `json:"rdp_native,omitempty"`
+	TerminalCharset       string       `json:"terminal_charset,omitempty"`
 	DlpPatterns           []DlpPattern `json:"dlp_patterns,omitempty"`
 }
 

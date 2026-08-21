@@ -37,6 +37,7 @@ import (
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/termcharset"
 )
 
 type Gateway struct {
@@ -663,6 +664,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		labels = sessionsvc.MergeLabels(labels, at)
 	}
 	frozen := g.policy.Freeze(ctx, evPolicy, usedBreakGlass, bypassConnect)
+	frozen.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
 	snap := &frozen
 	pamSess, err := g.sessions.Create(ctx, userID, sessionsvc.CreateInput{
 		AssetID: chosen.AssetID, AccountID: chosen.AccountID, Protocol: "ssh", ClientIP: ip, TicketID: ticketID,
@@ -733,6 +735,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		_, _ = fmt.Fprintf(ch, "recorder: %v\n", err)
 		return
 	}
+	rec.SetCharset(frozen.TerminalCharset)
 
 	client, err := g.assets.DialSSH(ctx, creds)
 	creds.WipeSecret()

@@ -234,7 +234,7 @@ func main() {
 		notifySvc.OnOpApproval(ctx, rec)
 	}
 	var k8sGw *k8sproxy.Gateway
-	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, func(ctx context.Context) (adjit.DirectoryConfig, error) {
+	resolveDir := func(ctx context.Context) (adjit.DirectoryConfig, error) {
 		cfg, _, ldapEnc, err := settingsSvc.Get(ctx)
 		if err != nil {
 			return adjit.DirectoryConfig{}, err
@@ -244,7 +244,9 @@ func main() {
 			return adjit.DirectoryConfig{}, err
 		}
 		return adjit.DirectoryFromAuthSettings(cfg, pass), nil
-	})
+	}
+	discoverySvc.SetDirectory(resolveDir)
+	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, resolveDir)
 	assetsSvc.SetLDAPPasswordChanger(adJit)
 	sessSvc.SetStartHook(adJit.OnSessionStart)
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {

@@ -97,11 +97,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **План:** чек-лист пилота: bind, group map, nested groups (`docs/groups.txt`). Расширение — T-17 / T-25 / T-48.
 
 ### T-09. Discovery неконтролируемых привилегированных УЗ
-**Сейчас:** SSH/passwd scan (`docs/account-discovery.txt`). AD/Windows — нет.
-**План (P4):**
-- LDAP search `(adminCount=1)` / privileged groups → unmatched local+domain accounts.
-- Windows: WinRM/LDAP, не агент.
-- UI: очередь «не под PAM» + bind to vault.
+**Статус: есть (срез)** — SSH passwd + AD LDAP (`ad_accounts`, `088`), `docs/account-discovery.txt`.
 **DoD:** в тестовом AD видны Domain Admins, не заведённые в KeepPAM.
 
 ### T-10. Встроенный OCR
@@ -153,12 +149,8 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **DoD:** после сбоя mid-rotate vault и цель сходятся (commit new / drop / force rotate + critical audit).
 
 ### T-20. Динамические группы по имени/тегу/платформе/адресу
-**Сейчас:** теги + policy overlay + nested tags/groups. Нет auto-membership по regex адреса.
-**План (P1–P2, 2 нед.):**
-- `dynamic_group_rules`: match name/tag/platform/hostname/cidr.
-- Cron reconcile → group members.
-- Policy на группу применяется автоматически (уже умеем).
-**DoD:** новый актив `prod-db-01` с тегом `prod` попадает в группу без ручного bind.
+**Статус: есть** — WHAT-селектор на ACL (`086`): tags/name/hostname/type/cidr, `docs/dynamic-groups.txt`.
+**DoD:** новый актив `prod-db-01` с тегом `prod` (+ опц. name glob) покрывается group ACL без ручного bind.
 
 ### T-21. Авторотация по правилам
 **Статус: есть** (rotation policies).
@@ -254,13 +246,11 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Статус: есть** (MP4 из guac). SSH — asciinema → опционально ffmpeg (P2, если требуют «как видео»).
 
 ### T-42. Kill + policy deny + массовая загрузка black/white lists
-**Сейчас:** kill, live deny, JEA packs. Массовая загрузка списков — частично (packs).
-**План (P1, 1 нед.):** CSV/JSON import command lists в JEA pack. UI «загрузить список».
+**Статус: есть** — kill/deny были; import txt/csv/json в pack (`POST …/jea/packs/{id}/import`), `docs/jea-import.txt`.
 **DoD:** 500 команд из файла → pack → deny на сессии.
 
 ### T-43. Состав записи: трафик, кодировки CP1251/KOI8-R/UTF-8, метаданные, подканалы
-**Сейчас:** UTF-8. Кодировки RU — нет явного decoder.
-**План (P2):** для SSH/Telnet — detect/convert CP1251, KOI8-R в индекс (storage raw + `charset` meta). Подканалы: уже network PAM deny; писать allowed/denied channels в session meta.
+**Статус: есть (срез)** — `assets.terminal_charset` (`087`), decode при записи cast + индекс, `docs/terminal-charset.txt`.
 **DoD:** сессия KOI8-R ищется по русскому слову в UI.
 
 ### T-44. Восстановление переданных файлов
@@ -321,19 +311,19 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P1.1  JIT quorum N-of-M                             [T-16]   ✓
   ├─ P1.2  Session supervisor                            [T-23]   ✓
   ├─ P1.3  i18n EN/RU                                    [T-15]   ✓
-  └─ P1.4  JEA list import                               [T-42]
+  └─ P1.4  JEA list import                               [T-42]  ✓
   │
   ├─ P2.1  SCP/SFTP capture + filename search            [T-31, T-37, T-44]  ✓
   ├─ P2.2  OCR rus+eng                                   [T-10]  ✓
-  ├─ P2.3  Charset CP1251/KOI8                           [T-43]
-  └─ P2.4  Dynamic groups auto-match                     [T-20]
+  ├─ P2.3  Charset CP1251/KOI8                           [T-43]  ✓
+  └─ P2.4  Dynamic groups auto-match                     [T-20]  ✓
   │
   ├─ P3.1  HA compose/helm 2+2 + rotation lock           [T-06, T-18]  ✓ T-06; T-18 lock
   ├─ P3.2  SMB/NFS archive                               [T-46]  ✓
   └─ P3.3  RADIUS + x509 admin                           [T-48]  ✓ RADIUS PAP
   │
   ├─ P4.1  MSSQL TDS                                     [T-33]  ✓ wire `:11433`
-  ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09, T-17, T-25]
+  ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09 ✓, T-17, T-25]
   └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27✓, T-29✓]
   │
   └─ P5    OVA/Hyper-V ✓ pipeline; 3+2, Kerberos, Citrix, UEBA mouse [T-01✓, T-02✓, T-07, T-35, T-33, T-50]

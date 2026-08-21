@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/keeppam/auth/internal/adjit"
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/store"
@@ -21,7 +22,7 @@ const maxHosts = 1024
 
 type Job struct {
 	ID           uuid.UUID  `json:"id"`
-	Kind         string     `json:"kind"` // network | accounts
+	Kind         string     `json:"kind"` // network | accounts | ad_accounts
 	CIDR         string     `json:"cidr"`
 	Ports        string     `json:"ports"`
 	Status       string     `json:"status"`
@@ -52,10 +53,12 @@ type Candidate struct {
 }
 
 type CreateJobInput struct {
-	Kind     string   `json:"kind"` // network (default) | accounts
-	CIDR     string   `json:"cidr"`
-	Ports    string   `json:"ports"`
-	AssetIDs []string `json:"asset_ids"` // optional filter for accounts kind
+	Kind          string   `json:"kind"` // network (default) | accounts | ad_accounts
+	CIDR          string   `json:"cidr"`
+	Ports         string   `json:"ports"`
+	AssetIDs      []string `json:"asset_ids"`       // optional filter for accounts kind
+	TargetAssetID string   `json:"target_asset_id"` // AD import target asset
+	GroupDNs      []string `json:"group_dns"`       // optional extra privileged group DNs
 }
 
 type ImportResult struct {
@@ -65,13 +68,18 @@ type ImportResult struct {
 }
 
 type Service struct {
-	db     *store.DB
-	aud    *audit.Service
-	assets *assets.Service
+	db      *store.DB
+	aud     *audit.Service
+	assets  *assets.Service
+	resolve adjit.ResolveDirectory
 }
 
 func New(db *store.DB, aud *audit.Service, assetsSvc *assets.Service) *Service {
 	return &Service{db: db, aud: aud, assets: assetsSvc}
+}
+
+func (s *Service) SetDirectory(resolve adjit.ResolveDirectory) {
+	s.resolve = resolve
 }
 
 func (s *Service) CreateJob(ctx context.Context, actorID uuid.UUID, in CreateJobInput, ip, ua string) (Job, error) {
@@ -84,8 +92,10 @@ func (s *Service) CreateJob(ctx context.Context, actorID uuid.UUID, in CreateJob
 		return s.createNetworkJob(ctx, actorID, in, ip, ua)
 	case "accounts":
 		return s.createAccountsJob(ctx, actorID, in, ip, ua)
+	case "ad_accounts":
+		return s.createADAccountsJob(ctx, actorID, in, ip, ua)
 	default:
-		return Job{}, fmt.Errorf("invalid kind (network|accounts)")
+		return Job{}, fmt.Errorf("invalid kind (network|accounts|ad_accounts)")
 	}
 }
 
@@ -158,6 +168,14 @@ func (s *Service) ListCandidates(ctx context.Context, jobID uuid.UUID) ([]Candid
 		SELECT c.id, c.job_id, c.address, c.port, c.protocol, COALESCE(c.username,''), c.source_asset_id,
 			c.imported_asset_id, c.imported_account_id, c.details, COALESCE(c.privileged,false), c.created_at,
 			CASE
+				WHEN COALESCE(c.username,'') <> '' AND c.protocol = 'ldap' THEN EXISTS(
+					SELECT 1 FROM asset_accounts a
+					WHERE lower(a.username) = lower(c.username)
+					   OR (
+					        COALESCE(c.details->>'dn','') <> ''
+					        AND lower(COALESCE(a.ad_user_dn,'')) = lower(c.details->>'dn')
+					   )
+				)
 				WHEN COALESCE(c.username,'') <> '' AND c.source_asset_id IS NOT NULL THEN EXISTS(
 					SELECT 1 FROM asset_accounts a
 					WHERE a.asset_id = c.source_asset_id AND a.username = c.username
@@ -198,6 +216,9 @@ func (s *Service) ImportCandidate(ctx context.Context, actorID, candidateID uuid
 		return ImportResult{}, err
 	}
 	if c.Username != "" {
+		if c.Protocol == "ldap" {
+			return s.importADAccountCandidate(ctx, actorID, c, ip, ua)
+		}
 		return s.importAccountCandidate(ctx, actorID, c, ip, ua)
 	}
 	return s.importHostCandidate(ctx, actorID, c, ip, ua)

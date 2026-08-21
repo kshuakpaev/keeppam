@@ -1,0 +1,18 @@
+# KeepPAM: кодировки терминала (T-43)
+
+SSH asciicast пишется в UTF-8. На активе `terminal_charset`: `utf-8` | `cp1251` | `koi8-r` | `auto`.
+Значение копируется в `policy_snapshot` при connect.
+
+## Поток
+
+1. Байтный PTY/SSH I/O → `termcharset.Decode` → UTF-8 в asciicast (иначе `json.Marshal` портит KOI8).
+2. `castindex` кладёт `line`/`command` + `charset` (+ `raw` base64 при перекодировании) в `session_events`.
+3. Forensic `q=` — `payload::text ILIKE` (без смены API).
+
+## DoD
+
+Актив `terminal_charset=koi8-r` → сессия с выводом «привет» в KOI8-R → индекс → Events `q=привет` находит hit.
+
+Подканалы SSH (port-forward/X11): уже `egress` / `egress_denied` в events (network PAM).
+
+Миграция `087_terminal_charset.sql`. Пакет `internal/termcharset`.

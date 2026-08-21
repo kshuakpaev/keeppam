@@ -304,6 +304,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs/{id}", s.handleGetCommandPack)
 				r.With(s.requirePerm("jea.write")).Post("/jea/packs", s.handleCreateCommandPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/packs/{id}", s.handleUpdateCommandPack)
+				r.With(s.requirePerm("jea.write")).Post("/jea/packs/{id}/import", s.handleImportCommandPack)
 				r.With(s.requirePerm("jea.write")).Delete("/jea/packs/{id}", s.handleDeleteCommandPack)
 				r.With(s.requirePerm("jea.read")).Get("/jea/sql-packs", s.handleListSQLPacks)
 				r.With(s.requirePerm("jea.read")).Get("/jea/sql-packs/{id}", s.handleGetSQLPack)
