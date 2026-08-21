@@ -7,7 +7,7 @@ func TestDetectUEBA(t *testing.T) {
 		{Actor: "ivan", Baseline: 3, RecentDistinct: 4, NewAssets: 1, NewNames: []string{"db-prod"}},
 		{Actor: "petr", Baseline: 3, RecentDistinct: 6, NewAssets: 3, Spread: true},
 	}
-	anoms := detect(Stats{}, nil, 24, SIEMCorr{}, nil, nil, hits, nil)
+	anoms := detect(Stats{}, nil, 24, SIEMCorr{}, nil, nil, hits, nil, nil)
 	if len(anoms) != 2 {
 		t.Fatalf("len=%d", len(anoms))
 	}

@@ -196,7 +196,7 @@ func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessio
 		return Result{}, err
 	}
 	defer f.Close()
-	lines, tim, err := guacindex.ParseKeysAndTiming(f)
+	lines, tim, mouse, err := guacindex.ParseKeysMouseAndTiming(f)
 	if err != nil {
 		return Result{}, err
 	}
@@ -226,6 +226,7 @@ func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessio
 		_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
 	}
 	s.evaluateKeystrokeUEBA(ctx, row, tim)
+	s.evaluateMouseUEBA(ctx, row, mouse)
 	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
 	n, _ = s.sess.CountKeystrokes(ctx, sessionID)
 	return Result{Indexed: true, Source: "guac", Keystrokes: n}, nil

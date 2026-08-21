@@ -1138,6 +1138,21 @@ export const api = {
     request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
   listAssets: () => request<{ assets: Asset[] }>("/api/v1/admin/assets"),
+  getLicense: () =>
+    request<{
+      issued: string;
+      customer?: string;
+      max_assets: number;
+      asset_count: number;
+      soft_warn_at: number;
+      ha: boolean;
+      expires?: string;
+      expired: boolean;
+      soft_warn: boolean;
+      hard_blocked: boolean;
+      source: string;
+      message?: string;
+    }>("/api/v1/admin/license"),
   getAsset: (id: string) => request<Asset>(`/api/v1/admin/assets/${id}`),
   createAsset: (body: {
     name: string;

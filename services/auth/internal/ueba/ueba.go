@@ -10,10 +10,13 @@ const (
 	FactorSpread         = "ueba_spread"
 	FactorKeystrokeFast  = "ueba_keystroke_fast"
 	FactorKeystrokeStats = "keystroke_stats"
+	FactorMouseFast      = "ueba_mouse_fast"
+	FactorMouseStats     = "mouse_stats"
 
 	NewAssetPoints      = 25
 	SpreadPoints        = 20
 	KeystrokeFastPoints = 30
+	MouseFastPoints     = 25
 
 	MinBaseline     = 3
 	BaselineDays    = 30
@@ -23,6 +26,12 @@ const (
 	MinKeystrokeBaseline = 3
 	KeystrokeZThreshold  = -2.0 // median much faster than baseline
 	KeystrokeAbsFastMs   = 55   // absolute floor when no baseline yet but very fast
+
+	MinMouseMoves      = 40
+	MinMouseBaseline   = 3
+	MinMouseSamples    = 20
+	MouseZThreshold    = 2.0 // median velocity much higher than baseline
+	MouseAbsFastVel    = 1.2 // px/ms cold-start (~1200 px/s)
 
 	// SessionSQL is a fragment for historical sessions that count toward baseline.
 	SessionSQL = `status IN ('pending','active','ended')`
@@ -68,6 +77,18 @@ func FastTyping(medianMs float64, nKeys int, baselineN int, mean, std, z float64
 	}
 	// Cold start: only flag extreme absolute speed (bot-like).
 	return medianMs <= KeystrokeAbsFastMs
+}
+
+// FastMouse is true when pointer velocity is anomalously high vs baseline (z ≥ threshold)
+// or, without enough baseline, median velocity exceeds absolute floor.
+func FastMouse(medianVel float64, nMoves, samples, baselineN int, mean, std, z float64) bool {
+	if nMoves < MinMouseMoves || samples < MinMouseSamples || medianVel <= 0 {
+		return false
+	}
+	if baselineN >= MinMouseBaseline && std > 0 {
+		return z >= MouseZThreshold
+	}
+	return medianVel >= MouseAbsFastVel
 }
 
 // MeanStd of a sample (population std).

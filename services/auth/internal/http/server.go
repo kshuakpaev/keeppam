@@ -34,6 +34,7 @@ import (
 	"github.com/keeppam/auth/internal/health"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
@@ -88,10 +89,16 @@ type Server struct {
 	files      *filexfer.Service
 	health     *health.State
 	rdp        *rdpgw.Broker
+	license    license.File
 }
 
 func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx}
+	lic, err := license.Load(cfg.LicenseFile)
+	if err != nil {
+		lic = license.DefaultFile()
+		lic.Source = "error:" + err.Error()
+	}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic}
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -269,6 +276,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("assets.read")).Get("/assets", s.handleListAssets)
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)
+				r.With(s.requirePerm("assets.read")).Get("/license", s.handleGetLicense)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
@@ -918,11 +926,29 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"assets": list})
 }
 
+func (s *Server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
+	n, err := s.assets.CountActive(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.license.Evaluate(n, time.Now()))
+}
+
 func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	var in assets.CreateAssetInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	n, err := s.assets.CountActive(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.license.AllowCreate(n, time.Now()); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
 	a, err := s.assets.Create(r.Context(), sess.UserID, in, s.clientIP(r), r.UserAgent())

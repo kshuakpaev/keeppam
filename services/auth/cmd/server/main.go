@@ -37,6 +37,7 @@ import (
 	httpapi "github.com/keeppam/auth/internal/http"
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
@@ -182,6 +183,19 @@ func main() {
 	usersSvc := users.New(db, auditSvc)
 	scimSvc := scim.New(db, usersSvc, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
+	licFile, licErr := license.Load(cfg.LicenseFile)
+	if licErr != nil {
+		slog.Warn("license load", "err", licErr)
+		licFile = license.DefaultFile()
+	}
+	assetsSvc.SetAssetQuota(func(ctx context.Context) error {
+		n, err := assetsSvc.CountActive(ctx)
+		if err != nil {
+			return err
+		}
+		return licFile.AllowCreate(n, time.Now())
+	})
+	slog.Info("license", "max_assets", licFile.MaxAssets, "ha", licFile.HA, "source", licFile.Source)
 	sshCASvc := sshca.New(db, env, auditSvc)
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)

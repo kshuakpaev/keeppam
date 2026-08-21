@@ -40,10 +40,33 @@ export function AppLayout() {
   const [inbox, setInbox] = useState<InboxNotification[]>([]);
   const [inboxUnread, setInboxUnread] = useState(0);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [licenseMsg, setLicenseMsg] = useState("");
+  const [licenseHard, setLicenseHard] = useState(false);
   const prevPending = useRef(0);
   const prevOps = useRef(0);
   const prevSupervise = useRef(0);
   const notifyAsked = useRef(false);
+
+  useEffect(() => {
+    if (!user || !hasPerm(user, "assets.read")) return;
+    let cancelled = false;
+    void api
+      .getLicense()
+      .then((lic) => {
+        if (cancelled) return;
+        if (lic.hard_blocked || lic.soft_warn) {
+          setLicenseMsg(lic.message || `${lic.asset_count}/${lic.max_assets}`);
+          setLicenseHard(!!lic.hard_blocked);
+        } else {
+          setLicenseMsg("");
+          setLicenseHard(false);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (
@@ -279,6 +302,21 @@ export function AppLayout() {
       </aside>
       <main className="main">
         <SessionTabBar />
+        {licenseMsg && (
+          <div
+            className={licenseHard ? "error" : "ok"}
+            role="status"
+            style={{
+              margin: "0.75rem 1rem 0",
+              padding: "0.6rem 0.85rem",
+              borderRadius: 6,
+              background: licenseHard ? "rgba(180,40,40,0.12)" : "rgba(180,140,40,0.12)",
+            }}
+          >
+            Лицензия: {licenseMsg}
+            {licenseHard ? " (создание активов запрещено)" : ""}
+          </div>
+        )}
         <div className="main-body">
           <SessionKeepAliveHost />
           <div className={`main-outlet${viewingSession ? " obscured" : ""}`}>

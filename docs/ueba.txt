@@ -1,6 +1,6 @@
 # KeepPAM: UEBA
 
-Не ML. PAM смотрит **куда ходил пользователь** и **как быстро печатал** (RDP/VNC guac) и поднимает риск / шлёт notify.
+Не ML. PAM смотрит **куда ходил пользователь** и **как быстро печатал / двигал мышь** (RDP/VNC guac) и поднимает риск / шлёт notify.
 
 ## Активы (connect)
 
@@ -24,7 +24,18 @@
 | Аномалия | z-score ≤ −2 vs baseline (≥3 прошлых) **или** cold-start median ≤ 55 ms |
 | Фактор | `ueba_keystroke_fast` (+30 к `sessions.risk_score`) |
 
-События: `ueba` (stats + anomaly), `risk` (anomaly). Мышь / guac motion — вне этого среза.
+## Мышь (post-session, T-50)
+
+Те же `.guac`: opcode `mouse` + `sync` → скорость движения (px/ms) между сэмплами с Δ≥8px, dt 5–2000 ms.
+
+| | |
+|--|--|
+| Минимум | 40 moves / 20 velocity samples |
+| Baseline | median velocity прошлых сессий (`ueba` / `mouse_stats`) |
+| Аномалия | z-score ≥ +2 vs baseline **или** cold-start median ≥ 1.2 px/ms |
+| Фактор | `ueba_mouse_fast` (+25) |
+
+События: `ueba` (stats + anomaly), `risk` (anomaly). Notify — T-51 (`OnUEBAAnomaly`).
 
 ## Notify (T-51)
 
@@ -32,8 +43,8 @@
 
 ## Аналитика
 
-`GET .../analytics/overview` → `ueba[]` (активы) + anomaly `ueba_keystroke_fast`. Карточка **Аналитика**.
+`GET .../analytics/overview` → anomaly `ueba_keystroke_fast` / `ueba_mouse_fast`. Карточка **Аналитика**.
 
 ## Вне scope
 
-ML / peer-group, live mid-session scoring, mouse dynamics, полный классификатор поведения.
+ML / peer-group, live mid-session scoring, полный классификатор поведения.

@@ -83,4 +83,22 @@ func TestParseKeysTiming(t *testing.T) {
 	}
 }
 
+func TestParseMouseTiming(t *testing.T) {
+	dump := enc("sync", "0") +
+		enc("mouse", "0", "0", "0") +
+		enc("sync", "10") +
+		enc("mouse", "0", "100", "0") +
+		enc("sync", "20") +
+		enc("mouse", "0", "200", "0") +
+		enc("sync", "30") +
+		enc("mouse", "0", "300", "0")
+	_, _, mouse, err := ParseKeysMouseAndTiming(strings.NewReader(dump))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mouse.NMoves != 4 || mouse.Samples < 2 || mouse.MedianVel < 5 {
+		t.Fatalf("%+v", mouse)
+	}
+}
+
 

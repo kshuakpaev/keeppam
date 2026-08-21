@@ -279,9 +279,8 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **Статус: есть** — baseline 30д + keystroke post-session (`docs/ueba.txt`).
 
 ### T-50. Факторы UEBA: время, серверы, активности, динамика клавиш, мышь
-**Статус: есть (клавиши)** — IKI из guac key+sync, z-score vs baseline; `ueba_keystroke_fast` +30.
-**Мышь:** нет (guac motion sampling — later).
-**DoD:** аномально быстрый ввод поднимает risk; notify — T-51.
+**Статус: есть** — IKI клавиш + velocity мыши из guac; `ueba_keystroke_fast` / `ueba_mouse_fast`, `docs/ueba.txt`.
+**DoD:** аномально быстрый ввод/мышь поднимает risk; notify — T-51.
 
 ### T-51. Уведомление при нетипичном поведении
 **Статус: есть** — `OnUEBAAnomaly` → inbox/SMTP/webhook `ueba.anomaly`.
@@ -292,8 +291,8 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 ## 6. Лицензия и поддержка (T-52 … T-54)
 
 ### T-52. Безлимит пользователей, ≥100 ИС, 3+2 HA
-**Код:** licence enforcement — счётчик активов (soft cap warning / hard cap по контракту), не «безлимит в коде». HA 3+2 — P5 (T-07).
-**План (P0):** `license.json` (issued, max_assets=100, ha=true) + UI banner. Юридическая лицензия — не код.
+**Статус: есть (срез)** — `license.json` / default max_assets=100, soft warn + hard block create, UI banner, `docs/license.txt`. HA flag informational (кластер — T-07).
+**DoD:** при переполнении лимита создание актива запрещено; banner в UI.
 
 ### T-53. Лицензия включает кластер
 **= контракт + T-07 в поставке.**
@@ -326,7 +325,7 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
   ├─ P4.2  AD discovery + password sync + AD group JIT   [T-09 ✓, T-17, T-25]
   └─ P4.3  RDP policy clipboard/drives; native RDP opt   [T-27✓, T-29✓]
   │
-  └─ P5    OVA/Hyper-V ✓ pipeline; 3+2, Kerberos, Citrix, UEBA mouse [T-01✓, T-02✓, T-07, T-35, T-33, T-50]
+  └─ P5    OVA/Hyper-V ✓; 3+2✓; Kerberos✓; UEBA mouse✓; Citrix SOW [T-01✓, T-02✓, T-07✓, T-35✓, T-50✓, T-33]
 ```
 
 Параллелить можно: P1.3 (i18n) с P1.1; P2.2 с P2.1; P3.3 с P3.2.

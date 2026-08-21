@@ -26,6 +26,7 @@ type Service struct {
 	aud      *audit.Service
 	sshCA    SSHCertIssuer
 	ldapPass LDAPPasswordChanger
+	quota    func(ctx context.Context) error
 }
 
 // SSHCertIssuer signs ephemeral user certificates when ssh_auth_mode=ssh_cert
@@ -51,6 +52,10 @@ func (s *Service) SetSSHCA(ca SSHCertIssuer) {
 
 func (s *Service) SetLDAPPasswordChanger(c LDAPPasswordChanger) {
 	s.ldapPass = c
+}
+
+func (s *Service) SetAssetQuota(fn func(ctx context.Context) error) {
+	s.quota = fn
 }
 
 type Asset struct {
@@ -204,6 +209,12 @@ type UpdateAccountInput struct {
 	ADUserDN             *string `json:"ad_user_dn"`
 }
 
+func (s *Service) CountActive(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets WHERE status='active'`).Scan(&n)
+	return n, err
+}
+
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
@@ -261,6 +272,11 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 }
 
 func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetInput, ip, ua string) (Asset, error) {
+	if s.quota != nil {
+		if err := s.quota(ctx); err != nil {
+			return Asset{}, err
+		}
+	}
 	if in.Name == "" || in.Address == "" {
 		return Asset{}, fmt.Errorf("name and address required")
 	}

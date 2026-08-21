@@ -386,6 +386,37 @@ func (s *Service) KeystrokeMedians(ctx context.Context, userID uuid.UUID, since 
 	return out, rows.Err()
 }
 
+// MouseVelMedians returns historical median mouse velocities from ueba mouse_stats events.
+func (s *Service) MouseVelMedians(ctx context.Context, userID uuid.UUID, since time.Time, excludeSession uuid.UUID) ([]float64, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT (e.payload->>'median_vel_px_ms')::float8
+		FROM session_events e
+		JOIN sessions s ON s.id = e.session_id
+		WHERE s.user_id=$1
+		  AND e.event_type='ueba'
+		  AND e.payload->>'factor'=$2
+		  AND e.ts >= $3
+		  AND s.id <> $4
+		  AND (e.payload->>'median_vel_px_ms') ~ '^[0-9]+(\\.[0-9]+)?$'
+		ORDER BY e.ts DESC
+		LIMIT 50`, userID, "mouse_stats", since.UTC(), excludeSession)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []float64
+	for rows.Next() {
+		var v float64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		if v > 0 {
+			out = append(out, v)
+		}
+	}
+	return out, rows.Err()
+}
+
 type SessionEvent struct {
 	Type    string         `json:"type"`
 	Payload map[string]any `json:"payload"`

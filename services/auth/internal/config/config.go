@@ -80,6 +80,7 @@ type Config struct {
 	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
 	RDPProxyCertFile       string
 	RDPProxyKeyFile        string
+	LicenseFile            string // path to license.json (T-52); empty → default max_assets=100
 }
 
 func Load() (Config, error) {
@@ -150,6 +151,7 @@ func Load() (Config, error) {
 		RDPProxyBin:            env("KEEPPAM_RDP_PROXY_BIN", ""),
 		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
 		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
+		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

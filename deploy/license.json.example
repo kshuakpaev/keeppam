@@ -1,0 +1,8 @@
+{
+  "issued": "2026-01-01",
+  "customer": "KeepPAM",
+  "max_assets": 100,
+  "soft_warn_pct": 90,
+  "ha": true,
+  "expires": ""
+}
