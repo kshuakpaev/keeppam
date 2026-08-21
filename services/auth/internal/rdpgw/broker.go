@@ -144,7 +144,11 @@ func (b *Broker) Prepare(ctx context.Context, row sessionsvc.Session, snap *poli
 	if port > 0 {
 		addr = net.JoinHostPort(host, strconv.Itoa(port))
 	}
-	file := BuildRDPFile(host, port, row.ID.String(), rdp)
+	file := BuildRDPFile(host, port, row.ID.String(), rdp, RemoteAppOpts{
+		Program: creds.Asset.RDPRemoteApp,
+		Dir:     creds.Asset.RDPRemoteAppDir,
+		Args:    creds.Asset.RDPRemoteAppArgs,
+	})
 	hint := "mstsc: скачайте .rdp (без пароля цели). Нужен freerdp-proxy на PAM (KEEPPAM_RDP_PROXY_BIN)."
 	if proxyOK {
 		hint = fmt.Sprintf("mstsc /v:%s — пароль цели не нужен (inject на шлюзе). Token=%s для аудита.", addr, tok[:8]+"…")
@@ -273,8 +277,15 @@ func escapeINI(s string) string {
 	return strings.ReplaceAll(s, "\n", "")
 }
 
+// RemoteAppOpts is optional RDS RemoteApp (RAIL) for .rdp / guac.
+type RemoteAppOpts struct {
+	Program string
+	Dir     string
+	Args    string
+}
+
 // BuildRDPFile returns an .rdp body for mstsc (NLA to proxy disabled; creds injected by freerdp-proxy).
-func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir) string {
+func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir, remote ...RemoteAppOpts) string {
 	addr := host
 	if port > 0 {
 		addr = fmt.Sprintf("%s:%d", host, port)
@@ -301,6 +312,21 @@ func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir
 		b.WriteString("redirectprinters:i:1\n")
 	} else {
 		b.WriteString("redirectprinters:i:0\n")
+	}
+	var ra RemoteAppOpts
+	if len(remote) > 0 {
+		ra = remote[0]
+	}
+	if prog := strings.TrimSpace(ra.Program); prog != "" {
+		b.WriteString("remoteapplicationmode:i:1\n")
+		b.WriteString("remoteapplicationprogram:s:" + escapeINI(prog) + "\n")
+		if d := strings.TrimSpace(ra.Dir); d != "" {
+			b.WriteString("remoteapplicationdir:s:" + escapeINI(d) + "\n")
+		}
+		if a := strings.TrimSpace(ra.Args); a != "" {
+			b.WriteString("remoteapplicationcmdline:s:" + escapeINI(a) + "\n")
+		}
+		b.WriteString("disableremoteappcapscheck:i:1\n")
 	}
 	b.WriteString("desktopwidth:i:1280\n")
 	b.WriteString("desktopheight:i:800\n")

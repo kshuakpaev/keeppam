@@ -100,6 +100,9 @@ export function AssetEditPage() {
     ad_privileged_group_dn: "",
     krb_spn: "",
     terminal_charset: "utf-8",
+    rdp_remote_app: "",
+    rdp_remote_app_dir: "",
+    rdp_remote_app_args: "",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -172,6 +175,9 @@ export function AssetEditPage() {
         ad_privileged_group_dn: a.ad_privileged_group_dn || "",
         krb_spn: a.krb_spn || "",
         terminal_charset: a.terminal_charset || "utf-8",
+        rdp_remote_app: a.rdp_remote_app || "",
+        rdp_remote_app_dir: a.rdp_remote_app_dir || "",
+        rdp_remote_app_args: a.rdp_remote_app_args || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -449,6 +455,9 @@ export function AssetEditPage() {
         ad_privileged_group_dn: form.ad_privileged_group_dn.trim(),
         krb_spn: form.krb_spn.trim(),
         terminal_charset: form.terminal_charset || "utf-8",
+        rdp_remote_app: form.rdp_remote_app || "",
+        rdp_remote_app_dir: form.rdp_remote_app_dir || "",
+        rdp_remote_app_args: form.rdp_remote_app_args || "",
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1219,6 +1228,38 @@ export function AssetEditPage() {
         <p className="muted" style={{ marginTop: 0 }}>
           Для индекса и поиска: сырой поток конвертируется в UTF-8 (T-43).
         </p>
+        {form.protocol === "rdp" && (
+          <>
+            <label>RemoteApp (RDS)</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app: e.target.value })}
+              disabled={!canWrite}
+              placeholder="||Notepad или пусто = полный desktop"
+            />
+            <p className="muted" style={{ marginTop: 0 }}>
+              Guacamole <code>remote-app</code> / mstsc <code>remoteapplicationprogram</code>. Alias с{" "}
+              <code>||</code> как в RDS.
+            </p>
+            <label>RemoteApp working dir</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app_dir || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app_dir: e.target.value })}
+              disabled={!canWrite}
+              placeholder="C:\Windows\System32"
+            />
+            <label>RemoteApp args</label>
+            <input
+              className="mono"
+              value={form.rdp_remote_app_args || ""}
+              onChange={(e) => setForm({ ...form, rdp_remote_app_args: e.target.value })}
+              disabled={!canWrite}
+              placeholder="optional"
+            />
+          </>
+        )}
         <label>{t("common.description")}</label>
         <input
           value={form.description}

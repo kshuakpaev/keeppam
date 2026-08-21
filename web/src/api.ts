@@ -159,6 +159,9 @@ export type Asset = {
   ad_privileged_group_dn?: string;
   krb_spn?: string;
   terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -1175,6 +1178,9 @@ export const api = {
     ad_privileged_group_dn?: string;
   krb_spn?: string;
   terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1204,6 +1210,9 @@ export const api = {
       ad_privileged_group_dn?: string;
   krb_spn?: string;
   terminal_charset?: string;
+  rdp_remote_app?: string;
+  rdp_remote_app_dir?: string;
+  rdp_remote_app_args?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {

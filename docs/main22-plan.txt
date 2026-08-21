@@ -204,7 +204,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 |-----------------|---------------|------|--------|
 | SSH + L/R fwd   | есть (+ network PAM) | — | регресс |
 | RDP over TLS    | HTML5 guac    | P4 | native — T-29 |
-| RemoteApp       | нет           | P4 | guac RemoteApp params |
+| RemoteApp       | guac + `.rdp` | — | T-34 ✓ `rdp_remote_app*` |
 | VNC / SSL       | есть          | — | |
 | X11 over SSH    | частично (SSH) | P2 | не отдельный decoder |
 | HTTP/HTTPS      | есть          | — | |
@@ -217,7 +217,7 @@ P4 протоколы/AD      →  P5 appliance / 3+2 / UEBA-ML
 **MSSQL:** worker `protocol=mssql`, pre-login без TLS до PAM, LOGIN7 с session UUID + wire token, vault password на цель, SQL batch в `session_events`. `docs/mssql-wire.txt`. RPC/SSPI — нет.
 
 ### T-34. Приложения RDS / Citrix
-**RDS RemoteApp:** P4 вместе с T-33 RDP.
+**RDS RemoteApp:** есть — поля актива `rdp_remote_app|dir|args` → guac + native `.rdp` (`docs/remoteapp.txt`).
 **Citrix:** MVP SOCKS+`.ica` (`docs/citrix-socks.txt`); полный ICA/STA/запись — SOW.
 
 ### T-35. GSSAPI / Kerberos в SSH
@@ -383,4 +383,5 @@ P0.1  docs этого плана + install.sh + offline-update     [T-03, T-14] 
 - `docs/telnet.txt` — Telnet wire `:2323` + web terminal (T-33)
 - `docs/tn3270.txt` — TN3270 wire `:2324` + login screen (T-33)
 - `docs/citrix-socks.txt` — Citrix SOCKS `:1081` + `.ica` MVP (T-33/T-34)
+- `docs/remoteapp.txt` — RDS RemoteApp via guac / mstsc (T-34)
 - `docs/arch.txt` — архитектура для приложения к контракту

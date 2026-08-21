@@ -25,6 +25,7 @@
 - [ ] Подключение из портала (HTML5)
 - [ ] Запись `.guac`; экспорт MP4
 - [ ] Keystroke index; OCR screen_text rus+eng (≥1 кадр; на экране «пароль»)
+- [ ] RemoteApp (если в scope): актив с `rdp_remote_app=||…` открывает приложение, не полный desktop (`docs/remoteapp.txt`)
 
 ## 4. Vault и секреты
 
@@ -49,9 +50,11 @@
 - [ ] Offline update: `docs/offline-update.txt` — load с USB, `--pull never`, rollback
 - [ ] Demo 45 мин по `docs/demo-45min.txt` (JIT SSH, RDP или SQL, forensic, PDF)
 
-## 7. Явные исключения (не fail, если в КП оговорено)
+## 7. Явные исключения / опции (не fail базового пилота без SOW)
 
-- Native RDP client, Citrix, TN3270
+- Native RDP client — если в scope: `.rdp` + freerdp-proxy (`docs/native-rdp.txt`)
+- Telnet / TN3270 / Citrix SOCKS — если в scope: `docs/telnet.txt`, `docs/tn3270.txt`, `docs/citrix-socks.txt`
+- Citrix HDX terminate / STA / StoreFront — OEM SOW
 - [ ] Virtual Appliance: импорт OVA или VHDX → first-boot → portal (`docs/appliance-ova.txt`) — если в scope КП-2 / SOW
 - EN locale UI (остальные админ-экраны вне сценария JIT+replay)
 - AD group membership on session

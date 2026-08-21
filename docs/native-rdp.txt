@@ -33,7 +33,8 @@ Snapshot замораживается при create session. Включение 
 
 - Полная `.guac`-запись — HTML5-путь; native — audit/session + freerdp-proxy (без guacenc MP4).
 - freerdp-proxy module API / RD Gateway SSO — вне среза.
-- Citrix — КП-3 / SOW.
+- Citrix — КП-3 SOCKS MVP (`docs/citrix-socks.txt`); HDX — SOW.
+- RDS RemoteApp — `docs/remoteapp.txt` (поля актива → guac / `.rdp`).
 
 ## DoD
 
