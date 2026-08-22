@@ -194,6 +194,10 @@ func main() {
 			SiteID: cfg.SiteID, Role: cfg.SiteRole, PeerURL: cfg.SitePeerURL,
 			ReplicaDSN: cfg.SiteReplicaDSN, MaxLagSeconds: cfg.SiteMaxLagSeconds,
 		}
+		wcfg := geo.WitnessConfig{
+			Mode: cfg.GeoWitnessMode, RedisURL: cfg.GeoWitnessRedisURL,
+			HTTPURL: cfg.GeoWitnessHTTPURL, LeaseSeconds: cfg.GeoWitnessLeaseSeconds,
+		}
 		if gcfg.IsStandby() && (gcfg.MaxLagSeconds > 0 || gcfg.ReplicaDSN != "") {
 			st := geo.Probe(ctx, gcfg)
 			if st.ReplicaProbe == "error" {
@@ -201,6 +205,15 @@ func main() {
 			}
 			if st.LagOK != nil && !*st.LagOK {
 				return fmt.Errorf("geo lag %.1fs exceeds max %ds", *st.LagSeconds, gcfg.MaxLagSeconds)
+			}
+		}
+		if wcfg.EffectiveMode(gcfg) != "off" || strings.TrimSpace(gcfg.PeerURL) != "" {
+			ws := geo.EvaluateWitness(ctx, gcfg, wcfg, sessions.Redis())
+			if ws.SplitBrain {
+				return fmt.Errorf("geo split-brain: %s", ws.SplitBrainDetail)
+			}
+			if gcfg.Role == geo.RolePrimary && !ws.OK && wcfg.EffectiveMode(gcfg) != "off" {
+				return fmt.Errorf("geo witness: %s", ws.SplitBrainDetail)
 			}
 		}
 		return nil
@@ -592,7 +605,11 @@ func main() {
 	if runSSH {
 		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
 		sshGw.SetSessionFence(func() error {
-			return geo.FenceError(geo.Config{SiteID: cfg.SiteID, Role: cfg.SiteRole})
+			wcfg := geo.WitnessConfig{
+				Mode: cfg.GeoWitnessMode, RedisURL: cfg.GeoWitnessRedisURL,
+				HTTPURL: cfg.GeoWitnessHTTPURL, LeaseSeconds: cfg.GeoWitnessLeaseSeconds,
+			}
+			return geo.WriteFenceError(context.Background(), geo.Config{SiteID: cfg.SiteID, Role: cfg.SiteRole, PeerURL: cfg.SitePeerURL}, wcfg, sessions.Redis())
 		})
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())

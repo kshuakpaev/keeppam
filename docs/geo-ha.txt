@@ -1,69 +1,48 @@
 # KeepPAM: SOW-GEO-HA — multi-site async geo
 
-Сейчас в продукте: HA **внутри одного сайта** 2+2 / 3+2 (`docs/ha.txt`).
-Этот SOW — **два (и более) ЦОД** с async PostgreSQL + политика fencing.
+HA внутри сайта: `docs/ha.txt`. Geo — два+ ЦОД.
 
 ## Фазы
 
 | Фаза | Содержание | Статус |
 |------|------------|--------|
-| **1** | Site identity, standby write-fence, lag probe, compose overlay | **есть** |
-| **2** | Recordings sync (S3/rsync) + promote helpers | **есть** |
-| **3** | DNS/VIP cutover playbook + acceptance drill | **есть** |
-| **4** | Split-brain fencing hardening / witness | план |
+| **1** | Site identity, standby fence, lag probe | **есть** |
+| **2** | Recordings sync + promote helpers | **есть** |
+| **3** | Cutover playbook + drill | **есть** |
+| **4** | Witness / split-brain fencing | **есть** |
 
-## Phase 1 — site role
+## Быстрый старт
 
 ```bash
+# Site A
 KEEPPAM_SITE_ID=site-a
 KEEPPAM_SITE_ROLE=primary
-KEEPPAM_SITE_PEER_URL=https://site-b.example/geoz
+KEEPPAM_SITE_PEER_URL=https://site-b/geoz
 
-# standby site B
+# Site B standby + witness peer auto
+KEEPPAM_SITE_ID=site-b
 KEEPPAM_SITE_ROLE=standby
-KEEPPAM_SITE_REPLICA_DSN=postgres://…
-KEEPPAM_SITE_MAX_LAG_SECONDS=120
 ```
 
-Compose site B: `docker compose -f docker-compose.yml -f compose.geo-standby.yml up -d`
+Witness: **`docs/geo-ha-witness.txt`**
 
-## Phase 2 — recordings sync
+## Скрипты
 
-S3 shared bucket + replication, или rsync: `KEEPPAM_GEO_RSYNC_TARGET=…`  
-Скрипты: `geo-recordings-sync.sh`, `geo-promote.sh`
+| Script | Purpose |
+|--------|---------|
+| `geo-recordings-sync.sh` | rsync recordings |
+| `geo-promote.sh` | PG promote + role flip |
+| `geo-cutover.sh` | verify DNS/VIP |
+| `geo-drill.sh` | acceptance drill |
 
-## Phase 3 — cutover & drill
-
-Playbook: **`docs/geo-ha-cutover.txt`**
-
-```bash
-./scripts/geo-drill.sh
-KEEPPAM_GEO_PUBLIC_URL=https://pam.corp KEEPPAM_GEO_EXPECT_SITE_ID=site-b ./scripts/geo-cutover.sh
-```
-
-API:
-
-| Endpoint | Perm | Purpose |
-|----------|------|---------|
-| `GET /admin/geo/drill` | compliance.read | acceptance checks |
-| `POST /admin/geo/drill` | compliance.write | drill + optional `{"record":true}` → DR |
-| `GET /geoz` | — | cutover verify (public URL) |
-
-Env: `KEEPPAM_GEO_PUBLIC_URL` (или `KEEPPAM_PUBLIC_URL`) для `cutover_public` в drill.
-
-## API (all phases)
+## API
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /admin/geo/status` | lag, role |
-| `GET /admin/geo/recordings` | sync mode |
-| `POST /admin/geo/recordings/sync` | rsync push |
-| `GET /admin/geo/promote/plan` | promote checklist |
+| `GET /geoz` | public site postcard |
+| `GET /admin/geo/status` | lag + witness |
+| `GET /admin/geo/witness` | split-brain status |
+| `GET /admin/geo/drill` | acceptance |
+| `GET /admin/geo/promote/plan` | cutover checklist |
 
-## Fencing (standby)
-
-Session create → 503; SSH fenced.
-
-## Out of scope phase 3
-
-Automated DNS update; phase 4 witness/split-brain hardening.
+SOW-GEO-HA по KeepPAM **закрыт** (фазы 1–4). Patroni между ЦОД — вне scope.

@@ -96,6 +96,10 @@ type Config struct {
 	GeoRsyncTarget         string // rsync dest for primary→standby
 	GeoRsyncSource         string // override source; default RecordingsDir
 	GeoPublicURL           string // public URL for cutover drill (/geoz)
+	GeoWitnessMode         string // off | peer | redis | http | auto
+	GeoWitnessRedisURL     string // shared witness Redis (optional; default app redis)
+	GeoWitnessHTTPURL      string // HTTP witness service
+	GeoWitnessLeaseSeconds int
 }
 
 func Load() (Config, error) {
@@ -182,6 +186,10 @@ func Load() (Config, error) {
 		GeoRsyncTarget:         env("KEEPPAM_GEO_RSYNC_TARGET", ""),
 		GeoRsyncSource:         env("KEEPPAM_GEO_RSYNC_SOURCE", ""),
 		GeoPublicURL:           env("KEEPPAM_GEO_PUBLIC_URL", env("KEEPPAM_PUBLIC_URL", "")),
+		GeoWitnessMode:         strings.ToLower(env("KEEPPAM_GEO_WITNESS_MODE", "")),
+		GeoWitnessRedisURL:     env("KEEPPAM_GEO_WITNESS_REDIS_URL", ""),
+		GeoWitnessHTTPURL:      env("KEEPPAM_GEO_WITNESS_HTTP_URL", ""),
+		GeoWitnessLeaseSeconds: intEnv("KEEPPAM_GEO_WITNESS_LEASE_SECONDS", 30),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

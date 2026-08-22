@@ -46,7 +46,7 @@ type wsClientMsg struct {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	if s.fenceStandbySessions(w) {
+	if s.fenceStandbySessions(w, r) {
 		return
 	}
 	sess := mustSess(r)

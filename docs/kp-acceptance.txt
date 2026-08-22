@@ -53,7 +53,8 @@
 - [ ] HA 2+2: kill одного api — login жив; stop одного worker — SSH на другом жива
 - [ ] (SOW-GEO-HA) `GET /geoz` role; standby → session create 503; lag в `admin/geo/status` (`docs/geo-ha.txt`)
 - [ ] (SOW-GEO-HA phase 2) `admin/geo/recordings` + rsync/S3 hint; `admin/geo/promote/plan` OK
-- [ ] (SOW-GEO-HA phase 3) `./scripts/geo-drill.sh` OK; `geo-cutover.sh` после DNS flip (`docs/geo-ha-cutover.txt`)
+- [ ] (SOW-GEO-HA phase 3) `./scripts/geo-drill.sh` OK; `geo-cutover.sh` после DNS flip
+- [ ] (SOW-GEO-HA phase 4) `admin/geo/witness` без split_brain; mock `cmd/geo-witness-mock` (`docs/geo-ha-witness.txt`)
 - [ ] Offline update: `docs/offline-update.txt` — load с USB, `--pull never`, rollback
 - [ ] (T-03) После install/upgrade runtime-образы — `keeppam-*` (`docs/runtime-brand.txt`); `NOTICE` в бандле
 - [ ] Demo 45 мин по `docs/demo-45min.txt` (JIT SSH, RDP или SQL, forensic, PDF)

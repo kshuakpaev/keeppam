@@ -1,0 +1,58 @@
+# KeepPAM SOW-GEO-HA: witness & split-brain fencing (phase 4)
+
+Защита от двух одновременных **primary** (split-brain) при geo failover.
+
+## Режимы (`KEEPPAM_GEO_WITNESS_MODE`)
+
+| Mode | Когда | Поведение |
+|------|-------|-----------|
+| **auto** (default) | peer URL / redis / http настроены | выбирает лучший |
+| **peer** | `KEEPPAM_SITE_PEER_URL` | peer `/geoz` `allows_writes` или `role=primary` → fence |
+| **redis** | shared `KEEPPAM_GEO_WITNESS_REDIS_URL` | lease key `geo:witness:primary` |
+| **http** | `KEEPPAM_GEO_WITNESS_HTTP_URL` | внешний witness HTTP |
+| **off** | — | только standby fence (фаза 1) |
+
+## Peer witness (простой)
+
+Site A primary + Site B geoz `allows_writes=true` → **split-brain** → A и B блокируют session writes, `/readyz` 503 на primary.
+
+После cutover: старый site **обязан** стать `standby` или быть выключен.
+
+## Redis witness
+
+Третий Redis (или stretched) — оба primary renew lease:
+
+```bash
+KEEPPAM_GEO_WITNESS_MODE=redis
+KEEPPAM_GEO_WITNESS_REDIS_URL=redis://witness:6379/0
+KEEPPAM_GEO_WITNESS_LEASE_SECONDS=30
+```
+
+Только holder `site_id` может принимать session writes.
+
+## HTTP witness (mock / OEM)
+
+```bash
+go run ./services/auth/cmd/geo-witness-mock   # :14960
+KEEPPAM_GEO_WITNESS_MODE=http
+KEEPPAM_GEO_WITNESS_HTTP_URL=http://127.0.0.1:14960
+```
+
+`POST /v1/lease` — acquire; 409 если другой site держит lease.
+
+## API
+
+- `GET /api/v1/admin/geo/witness` — status holder, split_brain
+- `GET /api/v1/admin/geo/status` — включает `witness` block
+- `/readyz` — fail при split-brain на primary
+
+## Операции при split-brain
+
+1. Определить канонический primary (DNS/VIP / runbook)
+2. На **другом** site: `KEEPPAM_SITE_ROLE=standby` + restart **или** stop edge
+3. На witness: release lease (`DELETE /v1/lease` mock) или дождаться TTL
+4. `./scripts/geo-drill.sh`
+
+## Связанные документы
+
+- `docs/geo-ha.txt`, `docs/geo-ha-cutover.txt`

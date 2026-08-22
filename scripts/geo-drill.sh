@@ -32,6 +32,12 @@ else
   bad "GET /readyz"
 fi
 
+if [[ -f "$ROOT/docs/geo-ha-witness.txt" ]]; then
+  ok "playbook geo-ha-witness.txt"
+else
+  bad "missing docs/geo-ha-witness.txt"
+fi
+
 if [[ -f "$ROOT/docs/geo-ha-cutover.txt" ]]; then
   ok "playbook geo-ha-cutover.txt"
 else

@@ -2,10 +2,7 @@ package geo
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -25,8 +22,8 @@ type DrillReport struct {
 	Hint        string       `json:"hint"`
 }
 
-// RunDrill builds SOW-GEO-HA phase 3 acceptance checks from local probe state.
-func RunDrill(cfg Config, st Status, rec RecordingsStatus) DrillReport {
+// RunDrill builds SOW-GEO-HA phase 3+ acceptance checks from local probe state.
+func RunDrill(cfg Config, st Status, rec RecordingsStatus, ws WitnessStatus) DrillReport {
 	cfg.Role = NormalizeRole(cfg.Role)
 	rep := DrillReport{
 		SiteID:      cfg.SiteID,
@@ -91,42 +88,26 @@ func RunDrill(cfg Config, st Status, rec RecordingsStatus) DrillReport {
 		add("recordings_sync", "warn", rec.Hint)
 	}
 
+	if ws.Mode != "off" {
+		stt := "pass"
+		if ws.SplitBrain {
+			stt = "fail"
+		} else if !ws.OK {
+			stt = "warn"
+		}
+		add("witness_split_brain", stt, ws.SplitBrainDetail)
+		if ws.Mode != "" {
+			add("witness_mode", "pass", ws.Mode)
+		}
+	}
+
 	return rep
 }
 
 // ProbePeer GETs peer /geoz (or path suffix) for cutover verification.
 func ProbePeer(ctx context.Context, peerURL string) (siteID, role string, err error) {
-	peerURL = strings.TrimSpace(peerURL)
-	if peerURL == "" {
-		return "", "", fmt.Errorf("peer url empty")
-	}
-	if !strings.Contains(peerURL, "://") {
-		peerURL = "http://" + peerURL
-	}
-	u := strings.TrimRight(peerURL, "/")
-	if !strings.HasSuffix(u, "/geoz") {
-		u += "/geoz"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", "", err
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(res.Body, 256))
-		return "", "", fmt.Errorf("peer HTTP %d: %s", res.StatusCode, string(b))
-	}
-	var body map[string]any
-	if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&body); err != nil {
-		return "", "", err
-	}
-	siteID, _ = body["site_id"].(string)
-	role, _ = body["role"].(string)
-	return siteID, role, nil
+	pi, err := ProbePeerInfo(ctx, peerURL)
+	return pi.SiteID, pi.Role, err
 }
 
 // CutoverCheck verifies public URL points at expected site after DNS/VIP flip.

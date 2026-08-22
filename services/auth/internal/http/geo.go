@@ -22,6 +22,19 @@ func (s *Server) geoConfig() geo.Config {
 	}
 }
 
+func (s *Server) geoWitnessConfig() geo.WitnessConfig {
+	return geo.WitnessConfig{
+		Mode:         s.cfg.GeoWitnessMode,
+		RedisURL:     s.cfg.GeoWitnessRedisURL,
+		HTTPURL:      s.cfg.GeoWitnessHTTPURL,
+		LeaseSeconds: s.cfg.GeoWitnessLeaseSeconds,
+	}
+}
+
+func (s *Server) evaluateWitness(ctx context.Context) geo.WitnessStatus {
+	return geo.EvaluateWitness(ctx, s.geoConfig(), s.geoWitnessConfig(), s.sessions.Redis())
+}
+
 func (s *Server) geoRecordingsConfig() geo.RecordingsConfig {
 	return geo.RecordingsConfig{
 		Mode:              s.cfg.GeoRecordingsSync,
@@ -38,7 +51,14 @@ func (s *Server) handleGeoStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	st := geo.Probe(ctx, s.geoConfig())
-	writeJSON(w, http.StatusOK, st)
+	ws := s.evaluateWitness(ctx)
+	writeJSON(w, http.StatusOK, map[string]any{"status": st, "witness": ws})
+}
+
+func (s *Server) handleGeoWitness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.evaluateWitness(ctx))
 }
 
 func (s *Server) handleGeoRecordings(w http.ResponseWriter, r *http.Request) {
@@ -106,18 +126,7 @@ func (s *Server) handleGeoDrill(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rep := geo.RunDrill(gcfg, st, rec)
-	if gcfg.PeerURL != "" {
-		sid, role, err := geo.ProbePeer(ctx, gcfg.PeerURL)
-		ch := geo.DrillCheck{Name: "peer_geoz", Status: "pass", Detail: fmt.Sprintf("site_id=%s role=%s", sid, role)}
-		if err != nil {
-			ch = geo.DrillCheck{Name: "peer_geoz", Status: "warn", Detail: err.Error()}
-		}
-		rep.Checks = append(rep.Checks, ch)
-		if ch.Status == "fail" {
-			rep.OK = false
-		}
-	}
+	rep := geo.RunDrill(gcfg, st, rec, s.evaluateWitness(ctx))
 	pub := strings.TrimSpace(s.cfg.GeoPublicURL)
 	if pub != "" {
 		expectRole := geo.RolePrimary
@@ -160,9 +169,10 @@ func (s *Server) handleGeoPublic(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) fenceStandbySessions(w http.ResponseWriter) bool {
-	cfg := s.geoConfig()
-	if err := geo.FenceError(cfg); err != nil {
+func (s *Server) fenceStandbySessions(w http.ResponseWriter, r *http.Request) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := geo.WriteFenceError(ctx, s.geoConfig(), s.geoWitnessConfig(), s.sessions.Redis()); err != nil {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return true
 	}
