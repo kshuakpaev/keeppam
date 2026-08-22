@@ -4,7 +4,7 @@
 
 SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`). Имена файлов SCP/SFTP — тип `file_transfer`.
 
-RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео).
+RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео). Из OCR/клавиш → `win_process` (`docs/win-proc.txt`, best-effort без агента).
 
 Лента «все действия пользователя за день» — `docs/forensic.txt`.
 
@@ -16,13 +16,14 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 |-------|--------|
 | `q` | подстрока в payload / event_type (ILIKE, экранирование `%_`) |
 | `filename` | имя/путь `file_transfer` (payload `filename`/`path`); без `type` — только эти события |
+| `process` | имя `win_process` (payload `name`); без `type` — только эти события |
 | `protocol` | протокол сессии |
 | `client_ip` | подстрока `sessions.client_ip` |
 | `type` | пусто = forensic (`sql`, …, `file_transfer`); `all` = любые; иначе точный тип |
 | `hours` | окно, default 168, max 2160 |
 | `limit` / `offset` | пагинация |
 
-`GET /api/v1/admin/sessions/{id}/transcript` — команды + `output[]` + `keystrokes[]` + `screen_text[]`.  
+`GET /api/v1/admin/sessions/{id}/transcript` — команды + `output[]` + `keystrokes[]` + `screen_text[]` + `processes[]` (RDP/VNC).  
 `POST .../transcript` `{force?, ocr?}` — asciicast (SSH), `.guac` keys, опционально OCR (RDP/VNC/isolated).
 
 Оператор видит только свои сессии; `audit.read` / `users.write` — все.
@@ -31,7 +32,7 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 
 ## UI
 
-Сессии → вкладка **События**: тип, имя файла, протокол, IP. Replay SSH: команды + вывод + **файлы** (клик — seek по offset). Replay RDP/VNC: клавиши + OCR + **окна** (первая строка кадра). Скорость SSH 1×/2×/4×.
+Сессии → вкладка **События**: тип, имя файла, **процесс**, протокол, IP. Replay SSH: команды + вывод + **файлы** (клик — seek по offset). Replay RDP/VNC: клавиши + OCR + **окна** + **процессы** (первая строка кадра / Task Manager). Скорость SSH 1×/2×/4×.
 
 ## Индекс
 

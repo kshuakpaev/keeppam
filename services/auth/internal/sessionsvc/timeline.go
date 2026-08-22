@@ -20,6 +20,7 @@ type TimelineFilter struct {
 	To       time.Time
 	Q        string
 	Filename string
+	Process  string
 	Source   string // all|audit|session
 	Limit    int
 	Offset   int
@@ -145,8 +146,9 @@ func (s *Service) Timeline(ctx context.Context, f TimelineFilter) (TimelineResul
 	q := strings.TrimSpace(f.Q)
 	like := likePattern(q)
 	fname := strings.TrimSpace(f.Filename)
+	proc := strings.TrimSpace(f.Process)
 
-	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src, q != "" || fname != "")
+	union, args := timelineUnionSQL(f.UserID, f.From, f.To, src, q != "" || fname != "" || proc != "")
 	var extra []string
 	if q != "" {
 		args = append(args, like)
@@ -157,6 +159,11 @@ func (s *Service) Timeline(ctx context.Context, f TimelineFilter) (TimelineResul
 		args = append(args, likePattern(fname))
 		p := len(args)
 		extra = append(extra, fmt.Sprintf("x.kind = 'file_transfer' AND (COALESCE(x.payload->>'filename','') ILIKE $%d ESCAPE '\\' OR COALESCE(x.payload->>'path','') ILIKE $%d ESCAPE '\\')", p, p))
+	}
+	if proc != "" {
+		args = append(args, likePattern(proc))
+		p := len(args)
+		extra = append(extra, fmt.Sprintf("x.kind = 'win_process' AND COALESCE(x.payload->>'name','') ILIKE $%d ESCAPE '\\'", p))
 	}
 	where := ""
 	if len(extra) > 0 {

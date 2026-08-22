@@ -40,8 +40,17 @@ export function ForensicPage() {
   const [to, setTo] = useState(initialTo);
   const [q, setQ] = useState("");
   const [filename, setFilename] = useState("");
+  const [process, setProcess] = useState("");
   const [source, setSource] = useState("all");
-  const [applied, setApplied] = useState({ userId: "", from: initialFrom, to: initialTo, q: "", filename: "", source: "all" });
+  const [applied, setApplied] = useState({
+    userId: "",
+    from: initialFrom,
+    to: initialTo,
+    q: "",
+    filename: "",
+    process: "",
+    source: "all",
+  });
   const [offset, setOffset] = useState(0);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -71,6 +80,7 @@ export function ForensicPage() {
         user_id: applied.userId,
         q: applied.q || undefined,
         filename: applied.filename || undefined,
+        process: applied.process || undefined,
         source: applied.source !== "all" ? applied.source : undefined,
         from: fromLocalInput(applied.from) || undefined,
         to: fromLocalInput(applied.to) || undefined,
@@ -96,7 +106,7 @@ export function ForensicPage() {
   function onSearch(e: FormEvent) {
     e.preventDefault();
     setOffset(0);
-    setApplied({ userId, from, to, q: q.trim(), filename: filename.trim(), source });
+    setApplied({ userId, from, to, q: q.trim(), filename: filename.trim(), process: process.trim(), source });
   }
 
   async function onCsv() {
@@ -106,6 +116,7 @@ export function ForensicPage() {
         user_id: applied.userId || undefined,
         q: applied.q || undefined,
         filename: applied.filename || undefined,
+        process: applied.process || undefined,
         source: applied.source !== "all" ? applied.source : undefined,
         from: fromLocalInput(applied.from) || undefined,
         to: fromLocalInput(applied.to) || undefined,
@@ -180,6 +191,10 @@ export function ForensicPage() {
         <label>
           Имя файла
           <input value={filename} onChange={(e) => setFilename(e.target.value)} placeholder="secret.bin" />
+        </label>
+        <label>
+          Процесс
+          <input value={process} onChange={(e) => setProcess(e.target.value)} placeholder="notepad.exe" />
         </label>
         <button className="btn" type="submit" disabled={busy}>
           Показать

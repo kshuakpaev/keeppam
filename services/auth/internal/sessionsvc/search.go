@@ -14,6 +14,7 @@ type EventSearchFilter struct {
 	Q        string
 	Type     string // empty = forensic types; "all" = any
 	Filename string // payload filename/path (file_transfer)
+	Process  string // win_process name
 	Protocol string
 	ClientIP string
 	Hours    int
@@ -156,6 +157,21 @@ func EventSnippet(eventType string, payload map[string]any) string {
 			line += " (audit)"
 		}
 		return line
+	case "win_process":
+		name := payloadString(payload, "name")
+		if name == "" {
+			break
+		}
+		title := payloadString(payload, "title")
+		src := payloadString(payload, "source")
+		line := name
+		if title != "" {
+			line += " — " + title
+		}
+		if src != "" {
+			line += " [" + src + "]"
+		}
+		return line
 	case "egress":
 		h := payloadString(payload, "host")
 		if h == "" {
@@ -234,7 +250,7 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 
 	switch typ {
 	case "", "forensic":
-		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','output','keystroke','screen_text','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied','file_transfer')")
+		where = append(where, "e.event_type IN ('sql','sql_denied','k8s','command','command_denied','command_approval','command_approved','output','keystroke','screen_text','dlp','risk','http_denied','app_denied','app_approval','app_approved','egress','egress_denied','file_transfer','win_process')")
 	case "all":
 	default:
 		where = append(where, "e.event_type = "+add(typ))
@@ -249,6 +265,13 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 		}
 		p := add(likePattern(name))
 		where = append(where, "(COALESCE(e.payload->>'filename','') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.payload->>'path','') ILIKE "+p+" ESCAPE '\\')")
+	}
+	if proc := strings.TrimSpace(f.Process); proc != "" {
+		if typ == "" || typ == "forensic" {
+			where = append(where, "e.event_type = 'win_process'")
+		}
+		p := add(likePattern(proc))
+		where = append(where, "COALESCE(e.payload->>'name','') ILIKE "+p+" ESCAPE '\\'")
 	}
 	if proto := strings.TrimSpace(f.Protocol); proto != "" {
 		where = append(where, "s.protocol = "+add(proto))

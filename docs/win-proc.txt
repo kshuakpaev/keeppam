@@ -1,0 +1,63 @@
+# KeepPAM: Windows process metadata (SOW-WIN-PROC)
+
+Best-effort извлечение **имён процессов Windows** из RDP/VNC/isolated записи **без агента** на целевой ОС — для forensic «что запускали».
+
+## Источники (без агента)
+
+| Источник | Как |
+|----------|-----|
+| `ocr_title` | Заголовок окна (первая строка OCR-кадра) → таблица title→exe + `.exe` в тексте |
+| `ocr_screen` | Строки OCR (Task Manager, списки `.exe`) |
+| `taskmgr` | Строка вида `notepad.exe 1234` в OCR |
+| `keystroke` | Win+R / имя `.exe` в клавишах записи |
+
+Confidence: `high` (явный `.exe`, Task Manager), `medium` (title→exe эвристика).
+
+## События
+
+Тип `win_process` в `session_events`:
+
+```json
+{
+  "name": "Notepad.exe",
+  "title": "Untitled - Notepad",
+  "source": "ocr_title",
+  "confidence": "high",
+  "offset": 12.5
+}
+```
+
+Индекс после OCR guacd (`castindex.IndexWinProcesses`) и после `.guac` index (`IndexWinProcessesAsync`).
+
+## API / UI
+
+| Endpoint | Поле |
+|----------|------|
+| `GET /api/v1/admin/sessions/events?process=` | фильтр по `payload.name` |
+| `GET /api/v1/admin/sessions/timeline?process=` | то же в ленте расследования |
+| `GET /api/v1/admin/sessions/{id}/transcript` | массив `processes[]` |
+
+UI: **Сессии → События** (тип `win_process`, фильтр процесса), **Расследование** (поле «Процесс»), replay RDP — блок «Процессы (OCR)» с seek по offset.
+
+Snippet поиска: `Notepad.exe — Untitled - Notepad [ocr_title]`.
+
+## Acceptance (DoD)
+
+1. RDP HTML5-сессия на Windows; открыть Notepad, Task Manager или Win+R → `notepad.exe`.
+2. Завершить сессию; в replay нажать **OCR экрана** (или дождаться авто-индекса).
+3. В replay — `processes[]` содержит `notepad.exe`; в **События** `process=notepad` находит hit.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| guacd HTML5 + OCR/keystrokes | Native mstsc / freerdp-proxy без OCR |
+| Best-effort эвристики | WMI/ETW/агент на Windows |
+| До 200 событий на сессию | Полный список процессов ОС |
+
+## Связанные документы
+
+- `docs/ocr-rdp.txt` — OCR кадров
+- `docs/session-search.txt` — forensic-поиск
+- `docs/forensic.txt` — timeline
+- `docs/sow-backlog.txt` — SOW-WIN-PROC

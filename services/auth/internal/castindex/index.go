@@ -237,6 +237,7 @@ func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessio
 	}
 	s.evaluateKeystrokeUEBA(ctx, row, tim)
 	s.evaluateMouseUEBA(ctx, row, mouse)
+	_, _ = s.IndexWinProcesses(ctx, sessionID, force)
 	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
 	n, _ = s.sess.CountKeystrokes(ctx, sessionID)
 	return Result{Indexed: true, Source: "guac", Keystrokes: n}, nil

@@ -26,6 +26,7 @@
 | `source` | `all` (default) / `audit` / `session` |
 | `q` | ILIKE по kind, payload, имени актива |
 | `filename` | только `file_transfer` по `filename`/`path` |
+| `process` | только `win_process` по `payload.name` |
 | `limit` / `offset` | max 200 |
 | `format=csv` | выгрузка текущей страницы (limit до 200) |
 
@@ -38,7 +39,7 @@
 
 ## UI
 
-**Расследование** в меню (`sessions.read`). Фильтр: пользователь, окно, источник, поиск, **имя файла**. Клик «Сессия» — replay/sql/k8s. Кнопка CSV.
+**Расследование** в меню (`sessions.read`). Фильтр: пользователь, окно, источник, поиск, **имя файла**, **процесс** (`win_process`). Клик «Сессия» — replay/sql/k8s. Кнопка CSV.
 
 ## Вне scope
 

@@ -1713,6 +1713,7 @@ export const api = {
     q?: string;
     type?: string;
     filename?: string;
+    process?: string;
     protocol?: string;
     client_ip?: string;
     hours?: number;
@@ -1723,6 +1724,7 @@ export const api = {
     if (params?.q) qs.set("q", params.q);
     if (params?.type) qs.set("type", params.type);
     if (params?.filename) qs.set("filename", params.filename);
+    if (params?.process) qs.set("process", params.process);
     if (params?.protocol) qs.set("protocol", params.protocol);
     if (params?.client_ip) qs.set("client_ip", params.client_ip);
     if (params?.hours != null) qs.set("hours", String(params.hours));
@@ -1743,6 +1745,7 @@ export const api = {
       screen_text?: TranscriptLine[];
       files?: TranscriptLine[];
       window_titles?: TranscriptLine[];
+      processes?: TranscriptLine[];
     }>(`/api/v1/admin/sessions/${id}/transcript`),
   indexSessionTranscript: (id: string, opts?: { force?: boolean; ocr?: boolean }) =>
     request<{
@@ -1766,6 +1769,7 @@ export const api = {
       screen_text?: TranscriptLine[];
       files?: TranscriptLine[];
       window_titles?: TranscriptLine[];
+      processes?: TranscriptLine[];
     }>(
       `/api/v1/admin/sessions/${id}/transcript`,
       { method: "POST", body: JSON.stringify({ force: !!opts?.force, ocr: !!opts?.ocr }) },
@@ -1775,6 +1779,7 @@ export const api = {
     username?: string;
     q?: string;
     filename?: string;
+    process?: string;
     source?: string;
     hours?: number;
     from?: string;
@@ -1787,6 +1792,7 @@ export const api = {
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
     if (params.filename) qs.set("filename", params.filename);
+    if (params.process) qs.set("process", params.process);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
@@ -1801,6 +1807,7 @@ export const api = {
     username?: string;
     q?: string;
     filename?: string;
+    process?: string;
     source?: string;
     from?: string;
     to?: string;
@@ -1812,6 +1819,7 @@ export const api = {
     if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
     if (params.filename) qs.set("filename", params.filename);
+    if (params.process) qs.set("process", params.process);
     if (params.source) qs.set("source", params.source);
     if (params.hours != null) qs.set("hours", String(params.hours));
     if (params.from) qs.set("from", params.from);
