@@ -1,28 +1,114 @@
-# KeepPAM: лабораторный прогон acceptance smoke
+# KeepPAM: лабораторный прогон acceptance (ручная приёмка)
 
-Дата: 2026-08-21  
-Стенд: локальный `deploy/docker-compose.yml` (api + session-worker + web + obs).  
-Скрипт: `scripts/kp-acceptance-smoke.sh` (`make acceptance-smoke`).
+Дата: **2026-08-22**  
+Стенд: `deploy/docker-compose.yml` (api + session-worker + web + obs)  
+API: `http://127.0.0.1:8080` · Portal: `http://127.0.0.1:5173`
 
-## Результат авто-проверки
+## 1. Авто-smoke
 
+```bash
+./scripts/kp-acceptance-smoke.sh
+# ACCEPTANCE SMOKE OK — pass=26 fail=0
 ```
-ACCEPTANCE SMOKE OK — pass=26 fail=0
+
+Покрывает: readyz/healthz, артефакты КП/T-03, `/auth/methods` (+ `cert_login`),
+порты SSH/portal/wire (Telnet :2323, TN3270 :2324, Citrix :1081, MSSQL :11433),
+`compose.branded.yml`.
+
+## 2. Миграции (перед E2E)
+
+После merge SOW 096–104 на lab потребовался restart API:
+
+```bash
+cd deploy && docker compose restart api session-worker
 ```
 
-Покрывает **автоматизируемый поднабор** `docs/kp-acceptance.txt`:
-readyz/healthz, артефакты КП/NOTICE/T-03, `/auth/methods` (+ ключ `cert_login`),
-порты SSH/portal/API и опциональные Telnet/TN3270/Citrix/MSSQL,
-merge `compose.branded.yml`.
+Применены: `096_oracle` … `104_tn3270_dbcs` (в т.ч. `tn3270_codepage`, `winrm_accounts`, UEBA/NAC/EIDAS).
 
-## Не покрыто скриптом (ручная приёмка на стенде Заказчика)
+## 3. Автоматические пробы (без сессии admin)
 
-- JIT / кворум / 4-eyes / break-glass end-to-end
-- Replay, OCR, RemoteApp, compliance PDF, SIEM sink
-- HA kill-node, offline update USB, OVA import
-- Полный демо-сценарий `docs/demo-45min.txt`
+| Проверка | Результат |
+|----------|-----------|
+| Admin API routes (assets, sessions, audit, discovery, license, analytics, compliance) | PASS — HTTP 401 (RBAC) |
+| SOW settings routes (eidas, nac, uebaml, geo) | PASS — HTTP 401 |
+| Wire TCP :2323/:2324/:1081/:11433 | PASS |
+| SSH gateway :2222 banner | PASS — `SSH-2.0-KeepPAM` |
+| Web portal :5173 | PASS — HTTP 200 |
+| DB active assets | 5 |
+| DB users (admin, ops1, …) | present |
 
-## Примечание lab
+## 4. Чек-лист `docs/kp-acceptance.txt` — lab статус
 
-`cert_login=false` при HTTP без client CA — ожидаемо; ключ в methods есть после rebuild API.
-Рабочий стенд: `make api-build` + `docker compose restart api session-worker`.
+Легенда: **PASS** автомат/проба · **MANUAL** нужен оператор с паролем/TOTP · **SKIP** не в scope lab · **FAIL** не OK
+
+### §1 Identity
+
+| Пункт | Lab |
+|-------|-----|
+| Вход local | **MANUAL** — пароль admin ≠ demo default; нужен известный пароль + TOTP если включён |
+| LDAP/OIDC/SAML/RADIUS (2 источника) | **SKIP** — lab mode=local |
+| x509 client cert | **SKIP** — cert_login=false без mTLS |
+| MFA TOTP/WebAuthn | **MANUAL** |
+| JIT / кворум / 4-eyes / break-glass | **MANUAL** — demo-45min сценарий |
+| Deny-by-default | **MANUAL** — ops без ACL |
+
+### §2 SSH
+
+| Пункт | Lab |
+|-------|-----|
+| `ssh -p 2222` | **MANUAL** — gateway отвечает (banner OK) |
+| Vault inject, replay, kill, live-watch, SCP capture | **MANUAL** |
+
+### §3 RDP/VNC
+
+| Пункт | Lab |
+|-------|-----|
+| HTML5 RDP, guac replay, MP4, OCR, RemoteApp | **MANUAL** — нужен demo-win или SQL fallback |
+
+### §4 Vault
+
+| Пункт | Lab |
+|-------|-----|
+| Checkout/rotate | **MANUAL** |
+
+### §5 Audit / compliance
+
+| Пункт | Lab |
+|-------|-----|
+| Audit log, forensic, PDF/PAdES, SIEM | **MANUAL** (API routes PASS) |
+
+### §6 Эксплуатация
+
+| Пункт | Lab |
+|-------|-----|
+| acceptance-smoke | **PASS** 26/26 |
+| Backup/restore, archive SMB, HA kill-node, offline USB, OVA | **MANUAL** / стенд заказчика |
+| GEO-HA drill | **MANUAL** |
+| Runtime brand keeppam-* | **PASS** (smoke) |
+| Demo 45 min | **MANUAL** — `docs/demo-45min.txt` |
+
+### §7 Опции / SOW
+
+| Пункт | Lab |
+|-------|-----|
+| Telnet / TN3270 / Citrix wire | **PASS** порты |
+| SOW modules в коде + migrations | **PASS** 096–104 applied |
+| Citrix HDX pixel OEM | **SKIP** |
+
+## 5. Рекомендуемый ручной прогон (оператор)
+
+1. Войти admin (пароль lab) → при MFA: `ADMIN_TOTP=… ./scripts/demo-seed.sh` если seed устарел.
+2. **Demo 45 min** (`docs/demo-45min.txt`): JIT ops → SSH → `KEEP-PAM-DEMO-42` → forensic → PDF.
+3. Отметить pass/fail в `docs/kp-acceptance.txt` §1–§6.
+4. Подписать акт (строка внизу kp-acceptance.txt).
+
+## 6. Блокер lab на 2026-08-22
+
+- Login `admin` / `ChangeMeNow!1` → **401** (пароль сменён при setup) — E2E только с актуальным паролем оператора.
+
+## 7. История прогонов
+
+| Дата | Smoke | Примечание |
+|------|-------|------------|
+| 2026-08-21 | 26/26 | `kp-acceptance-lab.txt` первый прогон |
+| 2026-08-22 | 26/26 | + migrations 096–104, route/wire probes, manual matrix |
