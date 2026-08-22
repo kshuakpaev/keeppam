@@ -40,6 +40,7 @@ type AccessPolicy struct {
 	MaxRisk               int          `json:"max_risk"`
 	RiskAction            string       `json:"risk_action"`
 	PIIAction             string       `json:"pii_action"`
+	NlpDlpAction          string       `json:"nlp_dlp_action"`
 	FileTransfer          string       `json:"file_transfer"`
 	OCRLang               string       `json:"ocr_lang"`
 	OCRIntervalSec        int          `json:"ocr_interval_sec"`
@@ -48,8 +49,9 @@ type AccessPolicy struct {
 	RDPDrive              bool         `json:"rdp_drive"`
 	RDPPrinter            bool         `json:"rdp_printer"`
 	RDPNative             bool         `json:"rdp_native"`
-	DlpPatterns           []DlpPattern `json:"dlp_patterns"`
-	CreatedAt             time.Time    `json:"created_at"`
+	DlpPatterns           []DlpPattern    `json:"dlp_patterns"`
+	NlpClassifiers        []NlpClassifier `json:"dlp_classifiers"`
+	CreatedAt             time.Time       `json:"created_at"`
 	UpdatedAt             time.Time    `json:"updated_at"`
 }
 
@@ -74,6 +76,7 @@ type AccessPolicyInput struct {
 	MaxRisk             int          `json:"max_risk"`
 	RiskAction          string       `json:"risk_action"`
 	PIIAction           string       `json:"pii_action"`
+	NlpDlpAction        string       `json:"nlp_dlp_action"`
 	FileTransfer        string       `json:"file_transfer"`
 	OCRLang             string       `json:"ocr_lang"`
 	OCRIntervalSec      int          `json:"ocr_interval_sec"`
@@ -82,7 +85,8 @@ type AccessPolicyInput struct {
 	RDPDrive            bool         `json:"rdp_drive"`
 	RDPPrinter          bool         `json:"rdp_printer"`
 	RDPNative           bool         `json:"rdp_native"`
-	DlpPatterns         []DlpPattern `json:"dlp_patterns"`
+	DlpPatterns         []DlpPattern    `json:"dlp_patterns"`
+	NlpClassifiers      []NlpClassifier `json:"dlp_classifiers"`
 }
 
 func (s *Service) ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error) {
@@ -98,6 +102,9 @@ func (s *Service) ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error
 			return nil, err
 		}
 		if err := s.attachDlpPatterns(ctx, &p); err != nil {
+			return nil, err
+		}
+		if err := s.attachNlpClassifiers(ctx, &p); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -117,6 +124,9 @@ func (s *Service) GetAccessPolicy(ctx context.Context, id uuid.UUID) (AccessPoli
 	if err := s.attachDlpPatterns(ctx, &p); err != nil {
 		return AccessPolicy{}, err
 	}
+	if err := s.attachNlpClassifiers(ctx, &p); err != nil {
+		return AccessPolicy{}, err
+	}
 	return p, nil
 }
 
@@ -132,19 +142,22 @@ func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in 
 			required_tags, require_ticket, require_reason,
 			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress,
 			command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id,
-			max_risk, risk_action, pii_action, file_transfer, ocr_lang, ocr_interval_sec, ocr_max_frames,
+			max_risk, risk_action, pii_action, nlp_dlp_action, file_transfer, ocr_lang, ocr_interval_sec, ocr_max_frames,
 			rdp_clipboard, rdp_drive, rdp_printer, rdp_native, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,NOW(),NOW(),$30)`,
+		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,NOW(),NOW(),$31)`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
+		norm.maxRisk, norm.riskAction, norm.piiAction, norm.nlpDlpAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
 		norm.rdpClipboard, norm.rdpDrive, norm.rdpPrinter, norm.rdpNative, actorID)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
 	if err := s.ReplaceDlpPatterns(ctx, id, in.DlpPatterns); err != nil {
+		return AccessPolicy{}, err
+	}
+	if err := s.ReplaceNlpClassifiers(ctx, id, in.NlpClassifiers); err != nil {
 		return AccessPolicy{}, err
 	}
 	_ = s.aud.Record(ctx, &actorID, "access.policy.created", "access_policy", id.String(), ip, ua, map[string]any{
@@ -184,21 +197,26 @@ func (s *Service) UpdateAccessPolicy(ctx context.Context, actorID, id uuid.UUID,
 			required_tags=$7, require_ticket=$8, require_reason=$9,
 			allowed_cidrs=$10, allowed_countries=$11, allowed_devices=$12, allowed_namespaces=$13, allowed_egress=$14,
 			command_policy_pack_id=$15, sql_policy_pack_id=$16, http_policy_pack_id=$17, app_object_pack_id=$18,
-			max_risk=$19, risk_action=$20, pii_action=$21, file_transfer=$22,
-			ocr_lang=$23, ocr_interval_sec=$24, ocr_max_frames=$25,
-			rdp_clipboard=$26, rdp_drive=$27, rdp_printer=$28, rdp_native=$29, updated_at=NOW()
+			max_risk=$19, risk_action=$20, pii_action=$21, nlp_dlp_action=$22, file_transfer=$23,
+			ocr_lang=$24, ocr_interval_sec=$25, ocr_max_frames=$26,
+			rdp_clipboard=$27, rdp_drive=$28, rdp_printer=$29, rdp_native=$30, updated_at=NOW()
 		WHERE id=$1`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
-		norm.maxRisk, norm.riskAction, norm.piiAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
+		norm.maxRisk, norm.riskAction, norm.piiAction, norm.nlpDlpAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
 		norm.rdpClipboard, norm.rdpDrive, norm.rdpPrinter, norm.rdpNative)
 	if err != nil {
 		return AccessPolicy{}, err
 	}
 	if in.DlpPatterns != nil {
 		if err := s.ReplaceDlpPatterns(ctx, id, in.DlpPatterns); err != nil {
+			return AccessPolicy{}, err
+		}
+	}
+	if in.NlpClassifiers != nil {
+		if err := s.ReplaceNlpClassifiers(ctx, id, in.NlpClassifiers); err != nil {
 			return AccessPolicy{}, err
 		}
 	}
@@ -230,7 +248,7 @@ const accessPolicySelect = `
 			p.sql_policy_pack_id, COALESCE(sp.name,''),
 			p.http_policy_pack_id, COALESCE(hp.name,''),
 			p.app_object_pack_id, COALESCE(ao.name,''),
-			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), COALESCE(p.file_transfer,'deny'),
+			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), COALESCE(p.nlp_dlp_action,''), COALESCE(p.file_transfer,'deny'),
 			COALESCE(p.ocr_lang,'rus+eng'), COALESCE(p.ocr_interval_sec,15), COALESCE(p.ocr_max_frames,60),
 			COALESCE(p.rdp_clipboard,false), COALESCE(p.rdp_drive,false), COALESCE(p.rdp_printer,false), COALESCE(p.rdp_native,false),
 			p.created_at, p.updated_at
@@ -249,7 +267,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 		&cidrs, &countries, &devices, &namespaces, &egress,
 		&p.CommandPolicyPackID, &cmdName, &p.SQLPolicyPackID, &sqlName, &p.HTTPPolicyPackID, &httpName,
 		&p.AppObjectPackID, &appName,
-		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.FileTransfer, &p.OCRLang, &p.OCRIntervalSec, &p.OCRMaxFrames,
+		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.NlpDlpAction, &p.FileTransfer, &p.OCRLang, &p.OCRIntervalSec, &p.OCRMaxFrames,
 		&p.RDPClipboard, &p.RDPDrive, &p.RDPPrinter, &p.RDPNative, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return AccessPolicy{}, err
@@ -273,7 +291,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 }
 
 type normalizedPolicy struct {
-	name, description, riskAction, piiAction, fileTransfer, ocrLang string
+	name, description, riskAction, piiAction, nlpDlpAction, fileTransfer, ocrLang string
 	timeStart, timeEnd                                              *string
 	days, maxRisk, ocrInterval, ocrFrames                           int
 	tags, cidrs, countries, devices, namespaces, egress             []string
@@ -327,6 +345,10 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 	if err != nil {
 		return normalizedPolicy{}, err
 	}
+	nlpDlpAction, err := NormalizeNlpDlpAction(in.NlpDlpAction)
+	if err != nil {
+		return normalizedPolicy{}, err
+	}
 	fileTransfer, err := NormalizeFileTransfer(in.FileTransfer, false)
 	if err != nil {
 		return normalizedPolicy{}, err
@@ -357,7 +379,7 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 		return normalizedPolicy{}, err
 	}
 	return normalizedPolicy{
-		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction, piiAction: piiAction, fileTransfer: fileTransfer,
+		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction, piiAction: piiAction, nlpDlpAction: nlpDlpAction, fileTransfer: fileTransfer,
 		ocrLang: ocrLang, ocrInterval: ocrInterval, ocrFrames: ocrFrames,
 		rdpClipboard: in.RDPClipboard, rdpDrive: in.RDPDrive, rdpPrinter: in.RDPPrinter, rdpNative: in.RDPNative,
 		timeStart: in.TimeStart, timeEnd: in.TimeEnd, days: days, maxRisk: in.MaxRisk,

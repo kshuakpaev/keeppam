@@ -8,9 +8,10 @@ import (
 )
 
 type outputPIIStats struct {
-	denied int
-	masked int
-	kinds  map[string]struct{}
+	denied    int
+	masked    int
+	auditOnly int
+	kinds     map[string]struct{}
 }
 
 func applyContentDLP(c policy.ContentDLP, text string) (line string, skip bool, st *outputPIIStats) {
@@ -26,8 +27,14 @@ func applyContentDLP(c policy.ContentDLP, text string) (line string, skip bool, 
 		s.denied = 1
 		return "", true, s
 	}
-	s.masked = 1
-	return out, false, s
+	if out != text {
+		s.masked = 1
+		return out, false, s
+	}
+	if c.NLP.Active() && c.NLP.Action == "audit" {
+		s.auditOnly = 1
+	}
+	return text, false, s
 }
 
 func mergePIIStats(dst *outputPIIStats, src *outputPIIStats) {
@@ -39,6 +46,7 @@ func mergePIIStats(dst *outputPIIStats, src *outputPIIStats) {
 	}
 	dst.denied += src.denied
 	dst.masked += src.masked
+	dst.auditOnly += src.auditOnly
 	for k := range src.kinds {
 		dst.kinds[k] = struct{}{}
 	}
@@ -67,6 +75,9 @@ func dlpPayload(total *outputPIIStats, via string) map[string]any {
 	if total.masked > 0 {
 		ev["action"] = "mask"
 		ev["masked_lines"] = total.masked
+	} else if total.auditOnly > 0 {
+		ev["action"] = "audit"
+		ev["audit_lines"] = total.auditOnly
 	}
 	return ev
 }

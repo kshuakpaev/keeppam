@@ -48,11 +48,13 @@
 
 **Свои regex** на именованной Policy (`dlp_patterns`, миграция `071`): до 16 правил, имя `[a-z][a-z0-9_]{0,31}`, RE2. UI: JEA → Policy → textarea «имя regex». Kind в audit = имя правила.
 
+**NLP-классификатор** (`nlp_dlp_action`, `dlp_classifiers`, миграция `099`, `docs/nlp-dlp.txt`): встроенные категории credentials/financial/legal + свои keyword-правила; `audit` | `mask` | `deny`. Те же каналы сканирования.
+
 Где: ячейки SQL (web-консоль и native wire); тело HTTPS reverse-proxy; **SSH stdout** (индекс `output`); **keystroke** RDP/VNC (guac); **screen_text** OCR. RDP / k8s body — нет.
 
 Аудит: `session.dlp.masked` / `session.dlp.denied` (только kinds) — SQL, HTTPS, native wire. **SSH stdout / keystroke / OCR:** событие `dlp` при индексе (`via`: `ssh_stdout`, `keystroke`, `screen_text`).
 
-Миграции `065`, `071`. UI: карточка актива и JEA → Policy.
+Миграции `065`, `071`, `099`. UI: карточка актива и JEA → Policy.
 
 ## RDP / VNC (Guacamole)
 
@@ -64,4 +66,4 @@ Default DLP-strict: clipboard/drive/printer off. Включение — флаг
 
 ## Вне scope
 
-Полноценный классификатор PII/NLP, clipboard RDP без guacd, интерактивный scp без JEA-пакета, live PII в stdout до индекса.
+Полноценный ML/NLP (transformers), clipboard RDP без guacd, интерактивный scp без JEA-пакета, live PII в stdout до индекса. Keyword NLP — см. `docs/nlp-dlp.txt` (SOW-NLP-DLP).

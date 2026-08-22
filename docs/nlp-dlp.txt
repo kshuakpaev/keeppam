@@ -1,0 +1,78 @@
+# KeepPAM: NLP/DLP content classifier (SOW-NLP-DLP)
+
+On-prem **keyword-классификатор** контента для комплаенса — дополнение к regex/PII (`docs/dlp.txt`). Без внешних ML-моделей и облака.
+
+## Политика
+
+На ACL / Access Policy:
+
+| Поле | Смысл |
+|------|--------|
+| `pii_action` | regex + встроенный PII: mask/deny |
+| `nlp_dlp_action` | NLP-классификатор: `audit` / `mask` / `deny` / выкл. |
+| `dlp_classifiers` | до 16 своих правил (имя + keywords + min_hits) |
+
+Overlay: пустое на ACL наследуется из Policy. Снимок на connect.
+
+## Встроенные категории
+
+| Kind | Примеры триггеров |
+|------|-------------------|
+| `nlp_credentials` | password, secret, token, пароль, секрет |
+| `nlp_financial` | bank account, invoice, IBAN, реквизит |
+| `nlp_personal_id` | passport, INN, ОГРН, паспорт |
+| `nlp_health` | patient, diagnosis, медицин |
+| `nlp_legal` | NDA, confidential, коммерческая тайна |
+| `nlp_private_key` | `-----BEGIN … PRIVATE KEY-----` |
+
+Свои правила: имя `[a-z][a-z0-9_]{0,31}`, keywords через `\n`, `|`, `,`; `min_hits` 1…8 (default 1). Имена `nlp_*` зарезервированы.
+
+## Где сканируется
+
+Те же каналы, что Content DLP:
+
+- SQL (web + native wire) — ячейки результата
+- HTTPS reverse-proxy — textual body
+- SSH stdout, RDP/VNC keystroke, OCR `screen_text` — при индексе
+
+**Не** отдельный OCR-index pipeline — классификация внутри DLP-скана контента.
+
+## Действия
+
+| `nlp_dlp_action` | Поведение |
+|------------------|-----------|
+| `audit` | kinds в событии `dlp`, контент не меняется |
+| `mask` | matched keywords → `***` |
+| `deny` | блокировка ответа/строки (как PII deny) |
+
+Событие `dlp`: `{via, kinds, action: audit|mask|deny}`. Audit control-plane: `session.dlp.masked` / `session.dlp.denied` (PII path без изменений).
+
+## UI
+
+JEA → Policy → **NLP/DLP классификатор** + textarea классификаторов.
+
+Формат строки: `trade_secret min=2 alpha|beta roadmap`
+
+## Acceptance (DoD)
+
+1. Policy: `nlp_dlp_action=audit`, classifier `hr_data salary bonus`.
+2. SQL-запрос с колонкой «salary review» → событие `dlp` с kind `hr_data`, строки не обрезаны.
+3. `nlp_dlp_action=deny` + текст «CONFIDENTIAL project» → deny/mask по политике, kind `nlp_legal`.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| Keyword + phrase classifier RU/EN | Transformer/BERT/облачный NLP |
+| On-prem, без GPU | Live scan stdout до индекса |
+| Комбинация с PII/regex | Отдельный DLP-продукт |
+
+## Миграция
+
+`099_nlp_dlp.sql` — `nlp_dlp_action`, таблица `dlp_classifiers`.
+
+## Связанные документы
+
+- `docs/dlp.txt` — каналы и PII
+- `docs/session-search.txt` — forensic `type=dlp`
+- `docs/sow-backlog.txt` — SOW-NLP-DLP

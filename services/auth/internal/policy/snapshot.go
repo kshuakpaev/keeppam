@@ -31,6 +31,7 @@ type Snapshot struct {
 	BreakGlass            bool         `json:"break_glass,omitempty"`
 	AdminBypass           bool         `json:"admin_bypass,omitempty"`
 	PIIAction             string       `json:"pii_action,omitempty"`
+	NlpDlpAction          string       `json:"nlp_dlp_action,omitempty"`
 	FileTransfer          string       `json:"file_transfer,omitempty"`
 	OCRLang               string       `json:"ocr_lang,omitempty"`
 	OCRIntervalSec        int          `json:"ocr_interval_sec,omitempty"`
@@ -41,6 +42,7 @@ type Snapshot struct {
 	RDPNative             bool         `json:"rdp_native,omitempty"`
 	TerminalCharset       string       `json:"terminal_charset,omitempty"`
 	DlpPatterns           []DlpPattern `json:"dlp_patterns,omitempty"`
+	NlpClassifiers        []NlpClassifier `json:"dlp_classifiers,omitempty"`
 }
 
 func FromResult(ev AccessResult) Snapshot {
@@ -72,6 +74,7 @@ func FromResult(ev AccessResult) Snapshot {
 		MatchTags:           tags,
 		MatchMode:           ev.MatchMode,
 		PIIAction:           ev.PIIAction,
+		NlpDlpAction:        ev.NlpDlpAction,
 		FileTransfer:        ev.FileTransfer,
 	}
 }
@@ -98,6 +101,7 @@ func (sn Snapshot) toResult() AccessResult {
 		MatchTags:           sn.MatchTags,
 		MatchMode:           sn.MatchMode,
 		PIIAction:           sn.PIIAction,
+		NlpDlpAction:        sn.NlpDlpAction,
 		FileTransfer:        sn.FileTransfer,
 	}
 }
@@ -137,6 +141,7 @@ func (s *Service) EnrichSnapshot(ctx context.Context, sn *Snapshot) {
 		_ = s.db.Pool.QueryRow(ctx, `SELECT name FROM app_object_packs WHERE id=$1`, *sn.AppObjectPackID).Scan(&sn.AppObjectPackName)
 	}
 	s.loadDlpPatternsForSnapshot(ctx, sn)
+	s.loadNlpClassifiersForSnapshot(ctx, sn)
 	s.loadOCRForSnapshot(ctx, sn)
 	s.loadRDPForSnapshot(ctx, sn)
 }

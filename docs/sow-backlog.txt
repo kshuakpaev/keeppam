@@ -24,7 +24,7 @@
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | **Закрыт** — EAP-TTLS/PEAP + RadSec; см. `docs/radius-eap.txt` |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | **Закрыт** — drive/clipboard ingest; см. `docs/rdp-file-capture.txt` |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
-| **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | Не OCR-index |
+| **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | **Закрыт** — keyword classifier + audit/mask/deny; см. `docs/nlp-dlp.txt` |
 | **SOW-NAC** | NAC-клиент | Сетевой контроль | Вне PAM-ядра |
 | **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | PAdES B-B уже опция |
 | **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | Сейчас heuristics + notify |
@@ -65,6 +65,12 @@
 - Default deny; policy enable.
 - Acceptance: copy file in RDP → artifact SHA совпадает.
 - **Статус:** закрыт (guacd staging + ingest на end session).
+
+### SOW-NLP-DLP
+- Keyword/phrase classifier контента (credentials, financial, legal, custom rules).
+- `nlp_dlp_action` audit/mask/deny; те же каналы что PII DLP.
+- Acceptance: audit hit на «salary»; deny на CONFIDENTIAL/NDA.
+- **Статус:** закрыт (on-prem, без ML-моделей).
 
 ---
 

@@ -227,6 +227,7 @@ export type AccessBinding = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -1476,6 +1477,7 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
@@ -1508,6 +1510,7 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
@@ -2198,6 +2201,12 @@ export type DlpPattern = {
   pattern: string;
 };
 
+export type NlpClassifier = {
+  name: string;
+  keywords: string;
+  min_hits?: number;
+};
+
 export type AccessPolicy = {
   id: string;
   name: string;
@@ -2214,6 +2223,7 @@ export type AccessPolicy = {
   allowed_namespaces: string[];
   allowed_egress: string[];
   pii_action: string;
+  nlp_dlp_action?: string;
   file_transfer: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;
@@ -2223,6 +2233,7 @@ export type AccessPolicy = {
   rdp_printer?: boolean;
   rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
+  dlp_classifiers?: NlpClassifier[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -2252,6 +2263,7 @@ export type AccessPolicyInput = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;
@@ -2261,6 +2273,7 @@ export type AccessPolicyInput = {
   rdp_printer?: boolean;
   rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
+  dlp_classifiers?: NlpClassifier[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
   http_policy_pack_id?: string;
@@ -2392,6 +2405,7 @@ export type PolicySnapshot = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;

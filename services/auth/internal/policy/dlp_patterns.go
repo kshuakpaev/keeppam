@@ -29,6 +29,7 @@ type CompiledDlpPattern struct {
 type ContentDLP struct {
 	Action   string
 	Patterns []CompiledDlpPattern
+	NLP      NlpDLP
 }
 
 func NormalizeDlpPatterns(raw []DlpPattern) ([]DlpPattern, error) {
@@ -162,6 +163,10 @@ func (sn *Snapshot) ContentDLP() ContentDLP {
 	return ContentDLP{
 		Action:   sn.PIIAction,
 		Patterns: compileSnapshotPatterns(sn.DlpPatterns),
+		NLP: NlpDLP{
+			Action:      sn.NlpDlpAction,
+			Classifiers: compileSnapshotClassifiers(sn.NlpClassifiers),
+		},
 	}
 }
 
