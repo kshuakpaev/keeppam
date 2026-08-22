@@ -1,0 +1,54 @@
+# KeepPAM: RDP file capture (SOW-RDP-FILE)
+
+Захват файлов из RDP **drive redirection** и **clipboard** (через staging drive guacd) в `session_files` — тот же replay/download, что SCP/SFTP.
+
+## Политика
+
+| Флаг | Смысл |
+|------|--------|
+| `file_transfer` | `deny` (default) / `audit` / `capture` — как у SSH |
+| `rdp_drive` | Redirect диска → `recordings/rdp-drive/{session_id}/` |
+| `rdp_clipboard` | Clipboard on; при `file_transfer≠deny` без drive — staging `KeepPAMClip` → `recordings/rdp-clipboard/{session_id}/` |
+
+**Default deny:** без `file_transfer=audit|capture` ingest не выполняется (DLP-strict).
+
+## Как работает
+
+1. HTML5 RDP (guacd): при connect создаётся staging-каталог.
+2. Пользователь копирует файл в RDP (clipboard или drive) → файл появляется в staging на API-хосте.
+3. При завершении сессии `IngestRDPSession` индексирует файлы:
+   - `audit` — SHA-256 + метаданные в `session_events` (`file_transfer`), байты не хранятся
+   - `capture` — копия в `recordings/files/{session_id}/`, download в replay
+
+## UI / API
+
+Тот же блок «Файлы» в replay и API:
+
+- `GET /api/v1/admin/sessions/{id}/files`
+- `GET /api/v1/admin/sessions/{id}/files/{fileId}`
+
+Поле `protocol`: `rdp-drive` | `rdp-clipboard`.
+
+## Acceptance (DoD)
+
+1. Policy: `rdp_drive=true` (или clipboard + staging), `file_transfer=capture`.
+2. RDP HTML5-сессия → скопировать файл на redirected drive / через clipboard.
+3. Завершить сессию → replay → файл в списке, SHA совпадает с оригиналом.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| guacd HTML5 path | Native mstsc freerdp-proxy file channel parse |
+| Drive + clipboard staging | Live fsnotify (ingest на end) |
+| ≤512 MiB на файл | Bidirectional metadata-only без файла |
+
+## Миграция
+
+`098_rdp_file.sql` — protocol `rdp-drive` / `rdp-clipboard`.
+
+## Связанные документы
+
+- `docs/file-transfer.txt` — SCP/SFTP
+- `docs/native-rdp.txt` — `rdp_drive` / `rdp_clipboard`
+- `docs/sow-backlog.txt` — SOW-RDP-FILE

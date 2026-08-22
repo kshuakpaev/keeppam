@@ -331,8 +331,15 @@ func main() {
 			}
 		}
 		adJit.OnSessionEnd(ctx, id)
-		if rdpBroker != nil {
+		if protocol == "rdp" && rdpBroker != nil {
 			rdpBroker.Stop(id)
+			if filesSvc != nil {
+				if row, err := sessSvc.Get(ctx, id); err == nil {
+					if err := filesSvc.IngestRDPSession(ctx, id, cfg.RecordingsDir, row.PolicySnapshot); err != nil {
+						slog.Warn("rdp file ingest", "session", id.String(), "err", err)
+					}
+				}
+			}
 		}
 		if protocol == "citrix" {
 			hdx.Finalize(ctx, sessions.Redis(), hdxClient, mainHDXSink{sess: sessSvc}, id, cfg.SessionTTL)

@@ -9,7 +9,8 @@
 | Флаг | Default | Guacamole |
 |------|---------|-----------|
 | `rdp_clipboard` | off | `disable-copy` / `disable-paste` |
-| `rdp_drive` | off | `enable-drive` + `recordings/rdp-drive/{session}` |
+| `rdp_drive` | off | `enable-drive` + `recordings/rdp-drive/{session}`; ingest при `file_transfer=audit|capture` |
+| `rdp_clipboard` | off | clip on; staging `KeepPAMClip` при capture без drive — `docs/rdp-file-capture.txt` |
 | `rdp_printer` | off | `enable-printing` |
 
 Snapshot замораживается при create session. Включение = явное исключение из DLP (`docs/dlp.txt`).

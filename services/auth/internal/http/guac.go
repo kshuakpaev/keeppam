@@ -233,8 +233,10 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 		"color-depth": "24",
 	}
 	rdp := policy.RDPRedir{}
+	ft := policy.FileTransferDeny
 	if snap != nil {
 		rdp = snap.RDP()
+		ft = snap.EffectiveFileTransfer()
 	}
 	switch protocol {
 	case "rdp":
@@ -251,10 +253,18 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 			cfg.Parameters["disable-copy"] = "true"
 			cfg.Parameters["disable-paste"] = "true"
 		}
+		captureFiles := !policy.FileTransferDenied(ft)
 		if rdp.Drive {
 			driveDir := filepath.Join(s.cfg.RecordingsDir, "rdp-drive", sessID.String())
 			cfg.Parameters["enable-drive"] = "true"
 			cfg.Parameters["drive-path"] = driveDir
+			cfg.Parameters["create-drive-path"] = "true"
+		} else if rdp.Clipboard && captureFiles {
+			// Clipboard file drops land in a staging drive (guacd cliprdr → redirected folder).
+			clipDir := filepath.Join(s.cfg.RecordingsDir, "rdp-clipboard", sessID.String())
+			cfg.Parameters["enable-drive"] = "true"
+			cfg.Parameters["drive-name"] = "KeepPAMClip"
+			cfg.Parameters["drive-path"] = clipDir
 			cfg.Parameters["create-drive-path"] = "true"
 		} else {
 			cfg.Parameters["enable-drive"] = "false"

@@ -1,12 +1,14 @@
-# KeepPAM: захват SCP/SFTP
+# KeepPAM: захват SCP/SFTP и RDP файлов
 
 Политика `file_transfer` на named Policy и ACL: **deny** (default) | **audit** | **capture**.
 
 | Режим | Шлюз | Хранение |
 |-------|------|----------|
 | deny | отказ exec `scp` / subsystem `sftp` (как раньше) | нет |
-| audit | прокси на актив | метаданные + SHA-256, байты не пишутся |
-| capture | прокси на актив | файл в `recordings/files/{session_id}/`, download байт-в-байт |
+| audit | прокси на актив / RDP ingest | метаданные + SHA-256, байты не пишутся |
+| capture | прокси / RDP ingest | файл в `recordings/files/{session_id}/`, download байт-в-байт |
+
+**RDP:** drive/clipboard staging → ingest при завершении сессии. См. `docs/rdp-file-capture.txt`.
 
 Интерактивный `scp`/`sftp`/`rsync` **в PTY** по-прежнему DLP deny (канал не перехватывается). `rsync` exec — всегда deny.
 
@@ -25,13 +27,13 @@ scp secret.bin user+demo-linux-01@keeppam:
 
 ## UI / API
 
-Replay сессии → «Файлы SCP/SFTP»: список из событий `file_transfer` (audit и capture), клик перематывает запись на `offset`. Download — если `captured`.  
+Replay сессии → «Файлы»: SCP/SFTP и RDP (`rdp-drive`, `rdp-clipboard`). Список из событий `file_transfer` (audit и capture), клик перематывает запись на `offset`. Download — если `captured`.  
 `GET /api/v1/admin/sessions/{id}/files`  
 `GET /api/v1/admin/sessions/{id}/files/{fileId}` — download (`sessions.files.read`).
 
 Forensic: тип `file_transfer`, поиск по имени файла.
 
-WORM: тот же `recstore`, что recordings (S3 Object Lock). RDP clipboard — не в этом срезе.
+WORM: тот же `recstore`, что recordings (S3 Object Lock).
 
 ## Связанное
 

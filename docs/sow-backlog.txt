@@ -22,7 +22,7 @@
 | **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | **фазы 1–4 в коде** — SOW закрыт |
 | **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | **Закрыт** — thin rotate + sqlplus fallback; см. `docs/oracle-pwdsync.txt` |
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | **Закрыт** — EAP-TTLS/PEAP + RadSec; см. `docs/radius-eap.txt` |
-| **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | DLP-политика; не metadata-only |
+| **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | **Закрыт** — drive/clipboard ingest; см. `docs/rdp-file-capture.txt` |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
 | **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | Не OCR-index |
 | **SOW-NAC** | NAC-клиент | Сетевой контроль | Вне PAM-ядра |
@@ -64,6 +64,7 @@
 - Файл из RDP clipboard/drive redirection в storage + replay download (как SCP capture).
 - Default deny; policy enable.
 - Acceptance: copy file in RDP → artifact SHA совпадает.
+- **Статус:** закрыт (guacd staging + ingest на end session).
 
 ---
 
