@@ -33,6 +33,8 @@ func (s *Service) Run(ctx context.Context) {
 				runErr = s.runAccountsJob(ctx, *job)
 			} else if job.Kind == "ad_accounts" {
 				runErr = s.runADAccountsJob(ctx, *job)
+			} else if job.Kind == "winrm_accounts" {
+				runErr = s.runWinRMAccountsJob(ctx, *job)
 			} else {
 				runErr = s.runJob(ctx, *job)
 			}

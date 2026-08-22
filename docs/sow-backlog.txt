@@ -28,7 +28,7 @@
 | **SOW-NAC** | NAC-клиент | Сетевой контроль | **Закрыт** — posture REST client; см. `docs/nac-client.txt` |
 | **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | **Закрыт** — QES/КЭП OID + PKCS#11; см. `docs/eidas-qualified.txt` |
 | **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | **Закрыт** — peer + ML score + live; см. `docs/ueba-ml.txt` |
-| **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | Сейчас SSH+AD LDAP |
+| **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | **Закрыт** — WinRM + SAM SSH fallback; см. `docs/winrm-discovery.txt` |
 | **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | MVP wire есть |
 | **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
 
@@ -89,6 +89,13 @@
 - Factors: `ueba_peer_outlier`, `ueba_ml_high`, `ueba_live_fast`.
 - Acceptance: rare asset → peer outlier; live RDP bot typing → mid-session notify.
 - **Статус:** закрыт (weighted on-prem model, no external ML runtime).
+
+### SOW-WINRM-DISC
+- WinRM discovery локальных privileged users на Windows RDP-активах (5985/5986).
+- Fallback SAM через SSH (`net user` / administrators group).
+- Import кандидата → vault account без секрета.
+- Acceptance: RDP asset + WinRM → Administrator в кандидатах; WinRM down + SSH :22 → SAM fallback.
+- **Статус:** закрыт (`winrm_accounts`, migration 103); см. `docs/winrm-discovery.txt`.
 
 ---
 

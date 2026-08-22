@@ -22,7 +22,7 @@ const maxHosts = 1024
 
 type Job struct {
 	ID           uuid.UUID  `json:"id"`
-	Kind         string     `json:"kind"` // network | accounts | ad_accounts
+	Kind         string     `json:"kind"` // network | accounts | ad_accounts | winrm_accounts
 	CIDR         string     `json:"cidr"`
 	Ports        string     `json:"ports"`
 	Status       string     `json:"status"`
@@ -53,7 +53,7 @@ type Candidate struct {
 }
 
 type CreateJobInput struct {
-	Kind          string   `json:"kind"` // network (default) | accounts | ad_accounts
+	Kind          string   `json:"kind"` // network | accounts | ad_accounts | winrm_accounts
 	CIDR          string   `json:"cidr"`
 	Ports         string   `json:"ports"`
 	AssetIDs      []string `json:"asset_ids"`       // optional filter for accounts kind
@@ -94,8 +94,10 @@ func (s *Service) CreateJob(ctx context.Context, actorID uuid.UUID, in CreateJob
 		return s.createAccountsJob(ctx, actorID, in, ip, ua)
 	case "ad_accounts":
 		return s.createADAccountsJob(ctx, actorID, in, ip, ua)
+	case "winrm_accounts":
+		return s.createWinRMAccountsJob(ctx, actorID, in, ip, ua)
 	default:
-		return Job{}, fmt.Errorf("invalid kind (network|accounts|ad_accounts)")
+		return Job{}, fmt.Errorf("invalid kind (network|accounts|ad_accounts|winrm_accounts)")
 	}
 }
 
@@ -176,7 +178,7 @@ func (s *Service) ListCandidates(ctx context.Context, jobID uuid.UUID) ([]Candid
 					        AND lower(COALESCE(a.ad_user_dn,'')) = lower(c.details->>'dn')
 					   )
 				)
-				WHEN COALESCE(c.username,'') <> '' AND c.source_asset_id IS NOT NULL THEN EXISTS(
+				WHEN COALESCE(c.username,'') <> '' AND c.protocol IN ('ssh','winrm') AND c.source_asset_id IS NOT NULL THEN EXISTS(
 					SELECT 1 FROM asset_accounts a
 					WHERE a.asset_id = c.source_asset_id AND a.username = c.username
 				)
