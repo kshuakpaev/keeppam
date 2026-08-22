@@ -44,6 +44,7 @@ export function SessionReplayPage() {
   const [files, setFiles] = useState<SessionFile[]>([]);
   const [transferFiles, setTransferFiles] = useState<TranscriptLine[]>([]);
   const [windowTitles, setWindowTitles] = useState<TranscriptLine[]>([]);
+  const [processes, setProcesses] = useState<TranscriptLine[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [sshSpeed, setSshSpeed] = useState(1);
@@ -92,6 +93,7 @@ export function SessionReplayPage() {
               setScreenText(t.screen_text || []);
               setTransferFiles(t.files || []);
               setWindowTitles(t.window_titles || []);
+              setProcesses(t.processes || []);
             }
           } catch {
             /* replay still works */
@@ -332,6 +334,7 @@ export function SessionReplayPage() {
       setScreenText(res.screen_text || []);
       setTransferFiles(res.files || []);
       setWindowTitles(res.window_titles || []);
+      setProcesses(res.processes || []);
     } catch (err) {
       setError(te(err, "replay.indexError"));
     } finally {
@@ -348,6 +351,7 @@ export function SessionReplayPage() {
       setKeystrokes(res.keystrokes || []);
       setScreenText(res.screen_text || []);
       setWindowTitles(res.window_titles || []);
+      setProcesses(res.processes || []);
     } catch (err) {
       setError(te(err, "replay.ocrError"));
     } finally {
@@ -611,6 +615,26 @@ export function SessionReplayPage() {
                 >
                   {ln.offset != null ? `[${ln.offset}s] ` : ""}
                   {ln.command}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <h2>{t("replay.processes")}</h2>
+          <p className="muted">
+            {processes.length === 0 ? t("replay.emptyProcesses") : t("replay.nFrags", { n: processes.length })}
+          </p>
+          <ul className="plain-list">
+            {processes.map((ln, i) => (
+              <li key={`p-${ln.ts}-${i}`}>
+                <button
+                  type="button"
+                  className="mono"
+                  style={{ background: "none", border: 0, padding: 0, color: "inherit", cursor: "pointer", textAlign: "left" }}
+                  onClick={() => seekToMs((ln.offset || 0) * 1000)}
+                >
+                  {ln.offset != null ? `[${ln.offset}s] ` : ""}
+                  {ln.command}
+                  {ln.source ? ` [${ln.source}]` : ""}
                 </button>
               </li>
             ))}

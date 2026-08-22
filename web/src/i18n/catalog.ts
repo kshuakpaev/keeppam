@@ -472,6 +472,7 @@ export const catalog = {
   "sess.all": { ru: "Все", en: "All" },
   "sess.events": { ru: "События", en: "Events" },
   "sess.filename": { ru: "Имя файла", en: "Filename" },
+  "sess.process": { ru: "Процесс", en: "Process" },
   "sess.clientIP": { ru: "IP клиента", en: "Client IP" },
   "sess.search": { ru: "Поиск", en: "Search" },
   "sess.window": { ru: "Окно", en: "Window" },
@@ -534,6 +535,11 @@ export const catalog = {
   "replay.emptyTitles": {
     ru: "Нет заголовков. Сначала OCR экрана — первая строка кадра.",
     en: "No titles. Run screen OCR — first line of each frame.",
+  },
+  "replay.processes": { ru: "Процессы (OCR)", en: "Processes (OCR)" },
+  "replay.emptyProcesses": {
+    ru: "Нет процессов. Индекс/OCR экрана — best-effort из заголовков и Task Manager.",
+    en: "No processes. Index/screen OCR — best-effort from titles and Task Manager.",
   },
   "replay.files": { ru: "Файлы SCP/SFTP", en: "SCP/SFTP files" },
   "replay.emptyFiles": { ru: "Нет захваченных файлов.", en: "No captured files." },

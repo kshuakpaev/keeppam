@@ -391,6 +391,7 @@ func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Reques
 		Q:        r.URL.Query().Get("q"),
 		Type:     r.URL.Query().Get("type"),
 		Filename: r.URL.Query().Get("filename"),
+		Process:  r.URL.Query().Get("process"),
 		Protocol: r.URL.Query().Get("protocol"),
 		ClientIP: r.URL.Query().Get("client_ip"),
 		Hours:    168,
@@ -428,6 +429,7 @@ func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	f := sessionsvc.TimelineFilter{
 		Q:        q.Get("q"),
 		Filename: q.Get("filename"),
+		Process:  q.Get("process"),
 		Source:   q.Get("source"),
 		Limit:    50,
 	}

@@ -25,6 +25,7 @@ func TestEventSnippet(t *testing.T) {
 		{"egress", map[string]any{"host": "10.1.2.9", "port": 5432}, "10.1.2.9:5432"},
 		{"egress_denied", map[string]any{"host": "8.8.8.8", "port": 53, "reason": "ssh egress destination not allowed"}, "DENIED 8.8.8.8:53 (ssh egress destination not allowed)"},
 		{"file_transfer", map[string]any{"filename": "secret.bin", "protocol": "scp", "direction": "upload"}, "scp upload secret.bin"},
+		{"win_process", map[string]any{"name": "Notepad.exe", "title": "Untitled - Notepad", "source": "ocr_title"}, "Notepad.exe — Untitled - Notepad [ocr_title]"},
 	}
 	for _, tc := range cases {
 		got := EventSnippet(tc.typ, tc.p)

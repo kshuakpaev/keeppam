@@ -108,6 +108,7 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 		_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
 	}
 	n, _ = s.sess.CountScreenText(ctx, sessionID)
+	_, _ = s.IndexWinProcesses(ctx, sessionID, force)
 	return OCRResult{Indexed: true, Source: "guacenc", ScreenText: n}, nil
 }
 

@@ -291,6 +291,56 @@ func (s *Service) ListFileTranscript(ctx context.Context, sessionID uuid.UUID) (
 	return out, rows.Err()
 }
 
+func (s *Service) CountWinProcesses(ctx context.Context, sessionID uuid.UUID) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM session_events WHERE session_id=$1 AND event_type='win_process'`, sessionID).Scan(&n)
+	return n, err
+}
+
+func (s *Service) DeleteWinProcesses(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM session_events WHERE session_id=$1 AND event_type='win_process'`, sessionID)
+	return err
+}
+
+func (s *Service) ListWinProcessTranscript(ctx context.Context, sessionID uuid.UUID) ([]TranscriptLine, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT ts, event_type, payload FROM session_events
+		WHERE session_id=$1 AND event_type='win_process'
+		ORDER BY ts ASC
+		LIMIT 200`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TranscriptLine
+	for rows.Next() {
+		var line TranscriptLine
+		var raw []byte
+		if err := rows.Scan(&line.TS, &line.Type, &raw); err != nil {
+			return nil, err
+		}
+		var p map[string]any
+		_ = json.Unmarshal(raw, &p)
+		name := payloadString(p, "name")
+		title := payloadString(p, "title")
+		line.Command = name
+		if title != "" {
+			line.Command = name + " (" + title + ")"
+		}
+		line.Source = payloadString(p, "source")
+		if v, ok := p["offset"].(float64); ok {
+			line.Offset = v
+		}
+		out = append(out, line)
+	}
+	if out == nil {
+		out = []TranscriptLine{}
+	}
+	return out, rows.Err()
+}
+
 func WindowTitleFromOCR(line string) string {
 	line = strings.TrimSpace(line)
 	if line == "" {

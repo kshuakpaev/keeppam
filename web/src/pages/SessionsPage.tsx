@@ -44,6 +44,8 @@ export function SessionsPage() {
   const [eventType, setEventType] = useState("");
   const [filename, setFilename] = useState("");
   const [appliedFilename, setAppliedFilename] = useState("");
+  const [process, setProcess] = useState("");
+  const [appliedProcess, setAppliedProcess] = useState("");
   const [eventProtocol, setEventProtocol] = useState("");
   const [clientIP, setClientIP] = useState("");
   const [appliedIP, setAppliedIP] = useState("");
@@ -63,6 +65,7 @@ export function SessionsPage() {
           q: appliedQ || undefined,
           type: eventType || undefined,
           filename: appliedFilename || undefined,
+          process: appliedProcess || undefined,
           protocol: eventProtocol || undefined,
           client_ip: appliedIP || undefined,
           hours,
@@ -86,7 +89,7 @@ export function SessionsPage() {
     } catch (err) {
       setError(te(err));
     }
-  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours, appliedFilename, eventProtocol, appliedIP]);
+  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours, appliedFilename, appliedProcess, eventProtocol, appliedIP]);
 
   async function onEnd(id: string) {
     setError("");
@@ -191,6 +194,7 @@ export function SessionsPage() {
           e.preventDefault();
           setAppliedQ(q.trim());
           setAppliedFilename(filename.trim());
+          setAppliedProcess(process.trim());
           setAppliedIP(clientIP.trim());
           setOffset(0);
         }}
@@ -223,6 +227,7 @@ export function SessionsPage() {
                 <option value="output">output (SSH stdout)</option>
                 <option value="keystroke">keystroke (RDP/VNC)</option>
                 <option value="screen_text">screen_text (OCR RDP/VNC)</option>
+                <option value="win_process">win_process (RDP/VNC)</option>
                 <option value="dlp">dlp</option>
                 <option value="egress">egress</option>
                 <option value="egress_denied">egress_denied</option>
@@ -241,6 +246,14 @@ export function SessionsPage() {
                 value={filename}
                 onChange={(e) => setFilename(e.target.value)}
                 placeholder="secret.bin"
+              />
+            </label>
+            <label>
+              {t("sess.process")}
+              <input
+                value={process}
+                onChange={(e) => setProcess(e.target.value)}
+                placeholder="notepad.exe"
               />
             </label>
             <label>
