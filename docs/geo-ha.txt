@@ -7,63 +7,83 @@
 
 | Фаза | Содержание | Статус |
 |------|------------|--------|
-| **1** | Site identity, standby write-fence, lag probe, compose overlay, runbook | **есть** |
-| **2** | Recordings sync (S3/rsync) + promote automation helpers | план |
+| **1** | Site identity, standby write-fence, lag probe, compose overlay | **есть** |
+| **2** | Recordings sync (S3/rsync) + promote helpers | **есть** |
 | **3** | DNS/VIP cutover playbook + acceptance drill script | план |
 | **4** | Split-brain fencing hardening / witness | план |
 
-## Phase 1 — включение
+## Phase 1 — site role
 
 ```bash
 # Site A (primary)
 KEEPPAM_SITE_ID=site-a
 KEEPPAM_SITE_ROLE=primary
-KEEPPAM_SITE_PEER_URL=https://site-b.example/livez
-KEEPPAM_SITE_REPLICA_DSN=postgres://…@site-b-pg:5432/keeppam   # optional lag view of B
+KEEPPAM_SITE_PEER_URL=https://site-b.example/geoz
 
 # Site B (standby)
 KEEPPAM_SITE_ID=site-b
 KEEPPAM_SITE_ROLE=standby
-KEEPPAM_SITE_REPLICA_DSN=postgres://keeppam:…@postgres:5432/keeppam  # local standby PG
-KEEPPAM_SITE_MAX_LAG_SECONDS=120   # /readyz → 503 if lag exceeds
+KEEPPAM_SITE_REPLICA_DSN=postgres://keeppam:…@postgres:5432/keeppam
+KEEPPAM_SITE_MAX_LAG_SECONDS=120
 ```
 
-Compose sketch (site B reads from A):
+Compose site B: `docker compose -f docker-compose.yml -f compose.geo-standby.yml up -d`
+
+## Phase 2 — recordings sync
+
+### Вариант A: shared S3 (рекомендуется)
+
+Оба сайта:
 
 ```bash
-cd deploy
-# Site A: обычный HA
-docker compose -f docker-compose.yml -f compose.ha.yml up -d
-
-# Site B: overlay geo (PG streaming replica + API standby)
-docker compose -f docker-compose.yml -f compose.geo-standby.yml up -d
+KEEPPAM_RECORDINGS_BACKEND=s3
+KEEPPAM_S3_ENDPOINT=…
+KEEPPAM_S3_BUCKET=keeppam-geo
+KEEPPAM_S3_PREFIX=recordings/
+# bucket replication (MinIO/AWS CRR) — вне KeepPAM
 ```
+
+Статус: `GET /api/v1/admin/geo/recordings` → `mode=s3`.
+
+### Вариант B: rsync (primary → standby)
+
+Site A:
+
+```bash
+KEEPPAM_GEO_RSYNC_TARGET=backup@10.0.2.10:/var/keeppam/recordings
+# или KEEPPAM_GEO_RECORDINGS_SYNC=rsync
+```
+
+Push:
+
+```bash
+./scripts/geo-recordings-sync.sh
+# или POST /api/v1/admin/geo/recordings/sync (compliance.write, primary only)
+```
+
+## Promote (cutover)
+
+1. `GET /api/v1/admin/geo/promote/plan` — чеклист ok/warn/block
+2. Final rsync или дождаться S3 replication
+3. `./scripts/geo-promote.sh` (или `--pg-only` / `--role-only`)
+4. DNS/VIP → site B
+5. Smoke: login, JIT, SSH
 
 ## API
 
-- `GET /api/v1/admin/geo/status` (`compliance.read`) — role, lag, allows_writes
-- `/readyz` — на standby с `MAX_LAG` падает при отставании реплики
+| Endpoint | Perm | Purpose |
+|----------|------|---------|
+| `GET /geoz` | — | site postcard |
+| `GET /admin/geo/status` | compliance.read | lag, role |
+| `GET /admin/geo/recordings` | compliance.read | inventory + sync mode |
+| `POST /admin/geo/recordings/sync` | compliance.write | rsync push (primary) |
+| `GET /admin/geo/promote/plan` | compliance.read | promote checklist |
 
-## Fencing
+## Fencing (standby)
 
-При `SITE_ROLE=standby`:
+- Session create → 503; SSH fenced
+- Admin read + promote plan OK
 
-- `POST` создание сессии → **503**
-- SSH gateway не принимает новые коннекты
-- Login/admin read-only сценарии допустимы (метаданные с replica)
+## Out of scope
 
-## Promote (ручной, фаза 1)
-
-1. Убедиться, что site A down / planned cutover.
-2. Promote PG standby (`pg_ctl promote` / Patroni).
-3. `KEEPPAM_SITE_ROLE=primary` + restart API/workers на B.
-4. Переключить DNS/VIP на edge B.
-5. Smoke: login, JIT, SSH session (`docs/dr-runbook.txt`).
-
-## Acceptance (цель SOW)
-
-Kill site A → login/JIT на site B в согласованном SLA (после promote).
-
-## Out of scope phase 1
-
-Автоматический Patroni/Keepalived VIP между ЦОД; bi-directional active-active writes.
+Auto Patroni between DC; bi-directional active-active; phase 3 drill automation.

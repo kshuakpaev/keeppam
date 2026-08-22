@@ -44,6 +44,7 @@ services:
       KEEPPAM_SITE_ROLE: standby
       KEEPPAM_SITE_REPLICA_DSN: postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable
       KEEPPAM_SITE_MAX_LAG_SECONDS: ${KEEPPAM_SITE_MAX_LAG_SECONDS:-120}
+      KEEPPAM_GEO_RSYNC_TARGET: ${KEEPPAM_GEO_RSYNC_TARGET:-}
 
 volumes:
   pgdata_geo:

@@ -272,6 +272,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("compliance.read")).Get("/dr/status", s.handleDRStatus)
 				r.With(s.requirePerm("compliance.read")).Get("/geo/status", s.handleGeoStatus)
+				r.With(s.requirePerm("compliance.read")).Get("/geo/recordings", s.handleGeoRecordings)
+				r.With(s.requirePerm("compliance.write")).Post("/geo/recordings/sync", s.handleGeoRecordingsSync)
+				r.With(s.requirePerm("compliance.read")).Get("/geo/promote/plan", s.handleGeoPromotePlan)
 				r.With(s.requirePerm("compliance.read")).Get("/dr/settings", s.handleGetDRSettings)
 				r.With(s.requirePerm("compliance.write")).Put("/dr/settings", s.handlePutDRSettings)
 				r.With(s.requirePerm("compliance.write")).Post("/dr/backup", s.handleDRBackup)

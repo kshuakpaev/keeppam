@@ -92,6 +92,9 @@ type Config struct {
 	SitePeerURL            string // optional peer /livez
 	SiteReplicaDSN         string // optional PG DSN for lag probe
 	SiteMaxLagSeconds      int    // 0 = don't fail readyz on lag
+	GeoRecordingsSync      string // off | s3 | rsync (auto if unset)
+	GeoRsyncTarget         string // rsync dest for primary→standby
+	GeoRsyncSource         string // override source; default RecordingsDir
 }
 
 func Load() (Config, error) {
@@ -174,6 +177,9 @@ func Load() (Config, error) {
 		SitePeerURL:            env("KEEPPAM_SITE_PEER_URL", ""),
 		SiteReplicaDSN:         env("KEEPPAM_SITE_REPLICA_DSN", ""),
 		SiteMaxLagSeconds:      intEnv("KEEPPAM_SITE_MAX_LAG_SECONDS", 0),
+		GeoRecordingsSync:      strings.ToLower(env("KEEPPAM_GEO_RECORDINGS_SYNC", "")),
+		GeoRsyncTarget:         env("KEEPPAM_GEO_RSYNC_TARGET", ""),
+		GeoRsyncSource:         env("KEEPPAM_GEO_RSYNC_SOURCE", ""),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
