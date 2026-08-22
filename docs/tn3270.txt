@@ -42,7 +42,7 @@ HA: HAProxy TCP `:2324` → session-worker.
 - Нет HTML5 3270 emulator.
 - Нет vault auto-login в приложение mainframe (только доступ к TCP/TN3270).
 - Нет TN3270E / BIND-IMAGE / printer LU / SYSREQ full.
-- EBCDIC только CP037 Latin — DBCS/кириллические codepages не в срезе.
+- EBCDIC CP037 Latin по умолчанию; DBCS JP/KR — `docs/tn3270-dbcs.txt` (SOW-TN3270-DBCS).
 - Citrix ICA — SOCKS MVP (`docs/citrix-socks.txt`); HDX/STA — SOW.
 
 Миграция `090_tn3270.sql`. Пакеты `internal/tn3270`, `internal/tn3270gw`.

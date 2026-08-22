@@ -251,12 +251,13 @@ func unescapeIAC(in []byte) []byte {
 	return out
 }
 
-// ExtractScreenText best-effort pulls printable EBCDIC from a 3270 data stream.
-func ExtractScreenText(stream []byte) string {
+// ExtractScreenText best-effort pulls printable EBCDIC/DBCS from a 3270 data stream.
+func ExtractScreenText(stream []byte, cp Codepage) string {
 	if len(stream) == 0 {
 		return ""
 	}
-	// Skip leading command / WCC when present
+	cp = NormalizeCodepage(string(cp))
+	dec := NewTextDecoder(cp)
 	i := 0
 	if stream[0] == 0xF1 || stream[0] == 0xF5 || stream[0] == 0x7E || stream[0] == 0xF2 {
 		i = 1
@@ -264,14 +265,17 @@ func ExtractScreenText(stream []byte) string {
 			i++ // WCC
 		}
 	}
-	var eb []byte
 	for i < len(stream) {
 		b := stream[i]
 		switch b {
 		case 0x11: // SBA
 			i += 3
 		case 0x1D: // SF
-			i += 2
+			if i+1 < len(stream) && stream[i+1] == 0x29 && i+3 < len(stream) {
+				i += 4
+			} else {
+				i += 2
+			}
 		case 0x28: // SA
 			i += 3
 		case 0x13: // IC
@@ -282,16 +286,32 @@ func ExtractScreenText(stream []byte) string {
 			i += 4
 		case 0x12: // EUA
 			i += 3
-		case 0x08: // GE
-			i += 2
-		default:
-			if b >= 0x40 || b == 0x00 {
-				eb = append(eb, b)
+		case 0x08: // GE — 2-byte graphic
+			if i+2 < len(stream) {
+				dec.WriteDBCS(stream[i+1], stream[i+2])
+				i += 3
+			} else {
+				i++
 			}
+		case 0x0E: // SO → DBCS
+			dec.SetDBCS(true)
 			i++
+		case 0x0F: // SI → SBCS
+			dec.SetDBCS(false)
+			i++
+		default:
+			if dec.DBCS() && IsDBCSCodepage(cp) && IsDBCSLead(b) && i+1 < len(stream) {
+				dec.WriteDBCS(b, stream[i+1])
+				i += 2
+			} else if b >= 0x40 || b == 0x00 {
+				dec.WriteSBCS(b)
+				i++
+			} else {
+				i++
+			}
 		}
 	}
-	s := DecodeEBCDIC(eb)
+	s := dec.String()
 	if len(s) > 4000 {
 		s = s[:4000]
 	}

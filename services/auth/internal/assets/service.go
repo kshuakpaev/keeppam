@@ -89,6 +89,8 @@ type Asset struct {
 	CitrixStoreFrontURL string     `json:"citrix_storefront_url,omitempty"`
 	CitrixSTAURLs       string     `json:"citrix_sta_urls,omitempty"`
 	CitrixTransport     string     `json:"citrix_transport,omitempty"`
+	Tn3270Codepage      string     `json:"tn3270_codepage,omitempty"`
+	Tn3270TerminalType  string     `json:"tn3270_terminal_type,omitempty"`
 	HostKeyAlgo         string     `json:"host_key_algo,omitempty"`
 	HostKeyFingerprint  string     `json:"host_key_fingerprint,omitempty"`
 	HostKeyLearnedAt    *time.Time `json:"host_key_learned_at,omitempty"`
@@ -162,6 +164,8 @@ type CreateAssetInput struct {
 	CitrixStoreFrontURL string     `json:"citrix_storefront_url"`
 	CitrixSTAURLs       string     `json:"citrix_sta_urls"`
 	CitrixTransport     string     `json:"citrix_transport"`
+	Tn3270Codepage      string     `json:"tn3270_codepage"`
+	Tn3270TerminalType  string     `json:"tn3270_terminal_type"`
 }
 
 type UpdateAssetInput struct {
@@ -193,6 +197,8 @@ type UpdateAssetInput struct {
 	CitrixStoreFrontURL *string    `json:"citrix_storefront_url"`
 	CitrixSTAURLs       *string    `json:"citrix_sta_urls"`
 	CitrixTransport     *string    `json:"citrix_transport"`
+	Tn3270Codepage      *string    `json:"tn3270_codepage"`
+	Tn3270TerminalType  *string    `json:"tn3270_terminal_type"`
 }
 
 type CreateAccountInput struct {
@@ -245,7 +251,8 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
 			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8'),
 			COALESCE(a.rdp_remote_app, ''), COALESCE(a.rdp_remote_app_dir, ''), COALESCE(a.rdp_remote_app_args, ''),
-			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks')
+			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks'),
+			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -279,7 +286,8 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 			COALESCE(a.require_supervisor, FALSE), a.supervisor_group_id, COALESCE(sg.name, ''),
 			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8'),
 			COALESCE(a.rdp_remote_app, ''), COALESCE(a.rdp_remote_app_dir, ''), COALESCE(a.rdp_remote_app_args, ''),
-			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks')
+			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks'),
+			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
@@ -350,15 +358,17 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	a.CitrixStoreFrontURL = strings.TrimSpace(in.CitrixStoreFrontURL)
 	a.CitrixSTAURLs = strings.TrimSpace(in.CitrixSTAURLs)
 	a.CitrixTransport = normalizeCitrixTransport(in.CitrixTransport)
+	a.Tn3270Codepage = normalizeTn3270Codepage(in.Tn3270Codepage)
+	a.Tn3270TerminalType = normalizeTn3270TermType(in.Tn3270TerminalType)
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn, terminal_charset, rdp_remote_app, rdp_remote_app_dir, rdp_remote_app_args, citrix_published_app, citrix_storefront_url, citrix_sta_urls, citrix_transport)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset, a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs, a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn, terminal_charset, rdp_remote_app, rdp_remote_app_dir, rdp_remote_app_args, citrix_published_app, citrix_storefront_url, citrix_sta_urls, citrix_transport, tn3270_codepage, tn3270_terminal_type)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset, a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs, a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -494,6 +504,12 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.CitrixTransport != nil {
 		a.CitrixTransport = normalizeCitrixTransport(*in.CitrixTransport)
 	}
+	if in.Tn3270Codepage != nil {
+		a.Tn3270Codepage = normalizeTn3270Codepage(*in.Tn3270Codepage)
+	}
+	if in.Tn3270TerminalType != nil {
+		a.Tn3270TerminalType = normalizeTn3270TermType(*in.Tn3270TerminalType)
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -509,13 +525,14 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			approval_mode=$20, quorum_n=$21, quorum_m=$22, approver_group_id=$23,
 			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26, krb_spn=$27, terminal_charset=$28,
 			rdp_remote_app=$29, rdp_remote_app_dir=$30, rdp_remote_app_args=$31,
-			citrix_published_app=$32, citrix_storefront_url=$33, citrix_sta_urls=$34, citrix_transport=$35
+			citrix_published_app=$32, citrix_storefront_url=$33, citrix_sta_urls=$34, citrix_transport=$35,
+			tn3270_codepage=$36, tn3270_terminal_type=$37
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
 		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset,
 		a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs,
-		a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport)
+		a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -1048,7 +1065,8 @@ func scanAsset(row scannable) (Asset, error) {
 		&a.ApprovalMode, &a.QuorumN, &a.QuorumM, &a.ApproverGroupID, &a.ApproverGroupName,
 		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN, &a.KrbSPN, &a.TerminalCharset,
 		&a.RDPRemoteApp, &a.RDPRemoteAppDir, &a.RDPRemoteAppArgs,
-		&a.CitrixPublishedApp, &a.CitrixStoreFrontURL, &a.CitrixSTAURLs, &a.CitrixTransport)
+		&a.CitrixPublishedApp, &a.CitrixStoreFrontURL, &a.CitrixSTAURLs, &a.CitrixTransport,
+		&a.Tn3270Codepage, &a.Tn3270TerminalType)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}
@@ -1057,6 +1075,9 @@ func scanAsset(row scannable) (Asset, error) {
 	}
 	if a.CitrixTransport == "" {
 		a.CitrixTransport = "socks"
+	}
+	if a.Tn3270Codepage == "" {
+		a.Tn3270Codepage = "cp037"
 	}
 	if len(a.ApprovalStages) == 0 {
 		a.ApprovalStages = []string{"manager"}
@@ -1074,6 +1095,28 @@ func normalizeCitrixTransport(s string) string {
 		return s
 	default:
 		return "socks"
+	}
+}
+
+func normalizeTn3270Codepage(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "cp930", "930":
+		return "cp930"
+	case "cp939", "939":
+		return "cp939"
+	case "cp933", "933":
+		return "cp933"
+	default:
+		return "cp037"
+	}
+}
+
+func normalizeTn3270TermType(s string) string {
+	switch strings.TrimSpace(s) {
+	case "IBM-3278-2", "IBM-3278-4", "IBM-3279-4", "IBM-3278-5":
+		return strings.TrimSpace(s)
+	default:
+		return ""
 	}
 }
 

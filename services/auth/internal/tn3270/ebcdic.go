@@ -1,7 +1,7 @@
 package tn3270
 
 // Minimal EBCDIC CP037 (US) ↔ Unicode for Latin letters, digits, space, common punct.
-// Enough for login screens and forensic text extraction.
+// DBCS codepages reuse CP037 SBCS layer + pair tables in codepage_dbcs.go.
 
 var e2u [256]rune
 var u2e = map[rune]byte{}
@@ -48,21 +48,54 @@ func set(r rune, b byte) {
 	u2e[r] = b
 }
 
+func decodeSBCS(b byte) rune {
+	r := e2u[b]
+	if r == 0xFFFD {
+		return 0
+	}
+	return r
+}
+
 // DecodeEBCDIC maps CP037 bytes to UTF-8 (skips unmapped/controls).
 func DecodeEBCDIC(in []byte) string {
-	out := make([]rune, 0, len(in))
-	for _, b := range in {
-		r := e2u[b]
-		if r == 0xFFFD {
-			continue
-		}
-		out = append(out, r)
-	}
-	return string(out)
+	return DecodeBytes(in, CP037)
 }
 
 // EncodeEBCDIC maps UTF-8 to CP037 (unknown → space).
 func EncodeEBCDIC(s string) []byte {
+	return EncodeString(s, CP037)
+}
+
+// DecodeBytes decodes EBCDIC bytes with optional DBCS pairs when cp is DBCS.
+func DecodeBytes(in []byte, cp Codepage) string {
+	if len(in) == 0 {
+		return ""
+	}
+	dec := NewTextDecoder(cp)
+	for i := 0; i < len(in); i++ {
+		b := in[i]
+		switch b {
+		case 0x0E:
+			dec.dbcs = true
+		case 0x0F:
+			dec.dbcs = false
+		default:
+			if dec.dbcs && IsDBCSCodepage(cp) && IsDBCSLead(b) && i+1 < len(in) {
+				dec.WriteRune(decodeDBCSPair(cp, b, in[i+1]))
+				i++
+			} else if b >= 0x40 || b == 0x00 {
+				if r := decodeSBCS(b); r != 0 {
+					dec.WriteRune(r)
+				}
+			}
+		}
+	}
+	return dec.String()
+}
+
+// EncodeString encodes UTF-8 to EBCDIC SBCS (DBCS runes → space unless in reverse map).
+func EncodeString(s string, cp Codepage) []byte {
+	_ = cp
 	out := make([]byte, 0, len(s))
 	for _, r := range s {
 		if b, ok := u2e[r]; ok {
@@ -72,4 +105,50 @@ func EncodeEBCDIC(s string) []byte {
 		}
 	}
 	return out
+}
+
+// TextDecoder accumulates runes during stream parse.
+type TextDecoder struct {
+	cp   Codepage
+	dbcs bool
+	buf  []rune
+}
+
+func NewTextDecoder(cp Codepage) *TextDecoder {
+	d := &TextDecoder{cp: NormalizeCodepage(string(cp))}
+	if IsDBCSCodepage(d.cp) {
+		d.dbcs = true
+	}
+	return d
+}
+
+func (d *TextDecoder) SetDBCS(on bool) { d.dbcs = on }
+
+func (d *TextDecoder) DBCS() bool { return d.dbcs }
+
+func (d *TextDecoder) WriteSBCS(b byte) {
+	if r := decodeSBCS(b); r != 0 {
+		d.buf = append(d.buf, r)
+	}
+}
+
+func (d *TextDecoder) WriteDBCS(lead, trail byte) {
+	if IsDBCSCodepage(d.cp) {
+		d.buf = append(d.buf, decodeDBCSPair(d.cp, lead, trail))
+	} else {
+		d.WriteSBCS(lead)
+	}
+}
+
+func (d *TextDecoder) WriteRune(r rune) {
+	if r != 0 {
+		d.buf = append(d.buf, r)
+	}
+}
+
+func (d *TextDecoder) String() string {
+	if len(d.buf) == 0 {
+		return ""
+	}
+	return string(d.buf)
 }

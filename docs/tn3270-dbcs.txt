@@ -1,0 +1,67 @@
+# KeepPAM: TN3270 DBCS (SOW-TN3270-DBCS)
+
+Полный DBCS-профиль для native TN3270 (x3270/c3270) на мейнфрейм JP/KR: codepage,
+TERMINAL-TYPE к хосту и DBCS-aware forensic decode. Wire bridge без изменений (прозрачный relay).
+
+## Asset fields (migration 104)
+
+| Поле | Значения | Назначение |
+|------|----------|------------|
+| `tn3270_codepage` | `cp037`, `cp930`, `cp939`, `cp933` | EBCDIC decode для `screen_text` |
+| `tn3270_terminal_type` | `IBM-3278-2`, `-4`, `3279-4`, `-5` или пусто | TERMINAL-TYPE к mainframe; пусто = auto |
+
+Auto TERMINAL-TYPE:
+
+| Codepage | Default term |
+|----------|--------------|
+| cp037 | IBM-3278-2 |
+| cp930/cp939 | IBM-3279-4 |
+| cp933 | IBM-3278-5 |
+
+## Forensic decode
+
+Пакет `internal/tn3270`:
+
+- CP037 SBCS (Latin) — как MVP
+- CP930/939/933 — DBCS пары + GE order (`0x08` + 2 bytes)
+- SO/SI (`0x0E`/`0x0F`) shift в stream parser
+- Extended SF `0x29` skip
+
+События `screen_text` включают `codepage` в payload.
+
+Recording JSONL `{t, dir, n, text}` — UTF-8 текст после decode.
+
+## Gateway flow
+
+1. Client negotiate/login — Latin CP037 (UUID + wire token)
+2. Host negotiate — asset `tn3270_terminal_type` или auto
+3. Bridge — `ExtractScreenText(fr, codepage)`
+
+Login screen KeepPAM остаётся Latin; DBCS только на трафике host↔client после bridge.
+
+## UI
+
+Asset edit → protocol `tn3270` → codepage + TERMINAL-TYPE override.
+
+Session wire JSON: `tn3270_codepage`, `tn3270_terminal_type` при DBCS asset.
+
+## Acceptance (DoD)
+
+1. Asset `tn3270` с `cp930` или `cp933`
+2. x3270 → PAM login → mainframe session
+3. Host screen с DBCS (GE или DBCS pair) → `screen_text` содержит декодированный символ (не пусто/мусор CP037)
+4. Unit: `TestExtractScreenTextDBCS_GE` — カ из cp930 GE bytes
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| guacd-free native wire | HTML5 3270 emulator |
+| Subset IBM DBCS tables (JP/KR) | Полные ICU/IBM tables OEM |
+| Transparent bridge | TN3270E BIND-IMAGE full |
+| Forensic UTF-8 text | Agent WMI/ETW на z/OS |
+
+## Связанные документы
+
+- `docs/tn3270.txt` — MVP wire T-33
+- `docs/sow-backlog.txt` — SOW-TN3270-DBCS

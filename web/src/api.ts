@@ -167,6 +167,8 @@ export type Asset = {
   citrix_storefront_url?: string;
   citrix_sta_urls?: string;
   citrix_transport?: string;
+  tn3270_codepage?: string;
+  tn3270_terminal_type?: string;
   host_key_algo?: string;
   host_key_fingerprint?: string;
   host_key_learned_at?: string;
@@ -1287,6 +1289,8 @@ export const api = {
   citrix_storefront_url?: string;
   citrix_sta_urls?: string;
   citrix_transport?: string;
+  tn3270_codepage?: string;
+  tn3270_terminal_type?: string;
   }) =>
     request<Asset>("/api/v1/admin/assets", {
       method: "POST",
@@ -1323,6 +1327,8 @@ export const api = {
   citrix_storefront_url?: string;
   citrix_sta_urls?: string;
   citrix_transport?: string;
+  tn3270_codepage?: string;
+  tn3270_terminal_type?: string;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
