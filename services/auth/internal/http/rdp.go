@@ -54,7 +54,7 @@ func (s *Server) handleDownloadRDP(w http.ResponseWriter, r *http.Request) {
 			port = s.rdp.PortOf(id)
 		}
 	}
-	body := rdpgw.BuildRDPFile(s.rdp.PublicHost, port, row.ID.String(), rdp)
+	body := rdpgw.BuildRDPFile(s.rdp.PublicHost, port, row.ID.String(), rdp, row.RDPWidth, row.RDPHeight)
 	w.Header().Set("Content-Type", "application/x-rdp")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="keeppam-%s.rdp"`, id.String()[:8]))
 	_, _ = w.Write([]byte(body))

@@ -144,7 +144,7 @@ func (b *Broker) Prepare(ctx context.Context, row sessionsvc.Session, snap *poli
 	if port > 0 {
 		addr = net.JoinHostPort(host, strconv.Itoa(port))
 	}
-	file := BuildRDPFile(host, port, row.ID.String(), rdp, RemoteAppOpts{
+	file := BuildRDPFile(host, port, row.ID.String(), rdp, row.RDPWidth, row.RDPHeight, RemoteAppOpts{
 		Program: creds.Asset.RDPRemoteApp,
 		Dir:     creds.Asset.RDPRemoteAppDir,
 		Args:    creds.Asset.RDPRemoteAppArgs,
@@ -277,6 +277,26 @@ func escapeINI(s string) string {
 	return strings.ReplaceAll(s, "\n", "")
 }
 
+// NormalizeSize clamps RDP desktop size; 0 means use defaults (1280×800).
+func NormalizeSize(width, height int) (int, int) {
+	if width <= 0 || height <= 0 {
+		return 1280, 800
+	}
+	if width < 640 {
+		width = 640
+	}
+	if width > 7680 {
+		width = 7680
+	}
+	if height < 480 {
+		height = 480
+	}
+	if height > 4320 {
+		height = 4320
+	}
+	return width, height
+}
+
 // RemoteAppOpts is optional RDS RemoteApp (RAIL) for .rdp / guac.
 type RemoteAppOpts struct {
 	Program string
@@ -285,7 +305,7 @@ type RemoteAppOpts struct {
 }
 
 // BuildRDPFile returns an .rdp body for mstsc (NLA to proxy disabled; creds injected by freerdp-proxy).
-func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir, remote ...RemoteAppOpts) string {
+func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir, width, height int, remote ...RemoteAppOpts) string {
 	addr := host
 	if port > 0 {
 		addr = fmt.Sprintf("%s:%d", host, port)
@@ -328,8 +348,9 @@ func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir
 		}
 		b.WriteString("disableremoteappcapscheck:i:1\n")
 	}
-	b.WriteString("desktopwidth:i:1280\n")
-	b.WriteString("desktopheight:i:800\n")
+	w, h := NormalizeSize(width, height)
+	b.WriteString(fmt.Sprintf("desktopwidth:i:%d\n", w))
+	b.WriteString(fmt.Sprintf("desktopheight:i:%d\n", h))
 	b.WriteString("session bpp:i:24\n")
 	return b.String()
 }

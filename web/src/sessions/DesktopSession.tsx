@@ -1,5 +1,7 @@
 import Guacamole from "guacamole-common-js";
 import { useEffect, useRef, useState } from "react";
+import { api } from "../api";
+import { autoRdpSize } from "../rdpResolution";
 import { SessionStepUpHost } from "../components/SessionStepUpHost";
 
 type Props = {
@@ -27,107 +29,133 @@ export function DesktopSession({ id, title, visible, onClose }: Props) {
     if (startedRef.current) return;
     startedRef.current = true;
 
+    let cancelled = false;
     const container = hostRef.current;
-    const width = Math.max(1024, Math.floor(window.innerWidth - 64));
-    const height = Math.max(768, Math.floor(window.innerHeight - 160));
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const tunnel = new Guacamole.WebSocketTunnel(
-      `${proto}//${window.location.host}/api/v1/sessions/${id}/guac?width=${width}&height=${height}`,
-    );
-    const client = new Guacamole.Client(tunnel);
-    clientRef.current = client;
-    const display = client.getDisplay();
-    const el = display.getElement() as HTMLElement;
-    el.style.position = "relative";
-    el.style.transformOrigin = "0 0";
-    container.innerHTML = "";
-    container.appendChild(el);
+    let cleanup: (() => void) | undefined;
 
-    const fit = () => {
-      const dw = display.getWidth() || width;
-      const dh = display.getHeight() || height;
-      if (!dw || !dh) return;
-      const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
-      display.scale(scale > 0 ? scale : 1);
-    };
-
-    client.onerror = (statusObj: { message?: string; code?: number }) => {
-      setError(statusObj?.message || `Guacamole error ${statusObj?.code ?? ""}`);
-      setStatus("ошибка");
-    };
-    client.onstatechange = (state: number) => {
-      if (state === 3) {
-        setStatus("сессия активна");
-        fit();
-      }
-      if (state === 5) setStatus("сессия завершена");
-    };
-    display.onresize = () => fit();
-
-    const sink = new Guacamole.InputSink();
-    const sinkEl = sink.getElement() as HTMLElement;
-    sinkEl.style.position = "fixed";
-    sinkEl.style.left = "-1000px";
-    document.body.appendChild(sinkEl);
-    const keyboard = new Guacamole.Keyboard(document);
-    keyboardRef.current = keyboard;
-    keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym);
-    keyboard.onkeyup = (keysym: number) => client.sendKeyEvent(0, keysym);
-
-    const mouse = new Guacamole.Mouse(el);
-    const sendMouse = (state: unknown) => {
-      const s = display.getScale() || 1;
-      const st = state as {
-        x: number;
-        y: number;
-        left: boolean;
-        middle: boolean;
-        right: boolean;
-        up: boolean;
-        down: boolean;
-      };
-      client.sendMouseState({
-        ...st,
-        x: Math.round(st.x / s),
-        y: Math.round(st.y / s),
-      });
-    };
-    mouse.onmousedown = sendMouse;
-    mouse.onmouseup = sendMouse;
-    mouse.onmousemove = sendMouse;
-
-    const onWinResize = () => {
-      fit();
+    void (async () => {
+      let width = 0;
+      let height = 0;
       try {
-        client.sendSize(
-          Math.max(800, Math.floor(container.clientWidth)),
-          Math.max(600, Math.floor(container.clientHeight)),
-        );
+        const sess = await api.getSession(id);
+        if (sess.rdp_width && sess.rdp_height) {
+          width = sess.rdp_width;
+          height = sess.rdp_height;
+        }
       } catch {
-        /* ignore */
+        /* use auto below */
       }
-    };
-    window.addEventListener("resize", onWinResize);
+      if (cancelled || !hostRef.current) return;
+      if (width <= 0 || height <= 0) {
+        const auto = autoRdpSize();
+        width = auto.width;
+        height = auto.height;
+      }
 
-    client.connect();
-    container.tabIndex = 0;
-    container.focus();
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const tunnel = new Guacamole.WebSocketTunnel(
+        `${proto}//${window.location.host}/api/v1/sessions/${id}/guac?width=${width}&height=${height}`,
+      );
+      const client = new Guacamole.Client(tunnel);
+      clientRef.current = client;
+      const display = client.getDisplay();
+      const el = display.getElement() as HTMLElement;
+      el.style.position = "relative";
+      el.style.transformOrigin = "0 0";
+      container.innerHTML = "";
+      container.appendChild(el);
+
+      const fit = () => {
+        const dw = display.getWidth() || width;
+        const dh = display.getHeight() || height;
+        if (!dw || !dh) return;
+        const scale = Math.min(container.clientWidth / dw, container.clientHeight / dh, 1);
+        display.scale(scale > 0 ? scale : 1);
+      };
+
+      client.onerror = (statusObj: { message?: string; code?: number }) => {
+        setError(statusObj?.message || `Guacamole error ${statusObj?.code ?? ""}`);
+        setStatus("ошибка");
+      };
+      client.onstatechange = (state: number) => {
+        if (state === 3) {
+          setStatus("сессия активна");
+          fit();
+        }
+        if (state === 5) setStatus("сессия завершена");
+      };
+      display.onresize = () => fit();
+
+      const sink = new Guacamole.InputSink();
+      const sinkEl = sink.getElement() as HTMLElement;
+      sinkEl.style.position = "fixed";
+      sinkEl.style.left = "-1000px";
+      document.body.appendChild(sinkEl);
+      const keyboard = new Guacamole.Keyboard(document);
+      keyboardRef.current = keyboard;
+      keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym);
+      keyboard.onkeyup = (keysym: number) => client.sendKeyEvent(0, keysym);
+
+      const mouse = new Guacamole.Mouse(el);
+      const sendMouse = (state: unknown) => {
+        const s = display.getScale() || 1;
+        const st = state as {
+          x: number;
+          y: number;
+          left: boolean;
+          middle: boolean;
+          right: boolean;
+          up: boolean;
+          down: boolean;
+        };
+        client.sendMouseState({
+          ...st,
+          x: Math.round(st.x / s),
+          y: Math.round(st.y / s),
+        });
+      };
+      mouse.onmousedown = sendMouse;
+      mouse.onmouseup = sendMouse;
+      mouse.onmousemove = sendMouse;
+
+      const onWinResize = () => {
+        fit();
+        try {
+          client.sendSize(
+            Math.max(800, Math.floor(container.clientWidth)),
+            Math.max(600, Math.floor(container.clientHeight)),
+          );
+        } catch {
+          /* ignore */
+        }
+      };
+      window.addEventListener("resize", onWinResize);
+
+      client.connect();
+      container.tabIndex = 0;
+      container.focus();
+
+      cleanup = () => {
+        window.removeEventListener("resize", onWinResize);
+        try {
+          client.disconnect();
+        } catch {
+          /* ignore */
+        }
+        clientRef.current = null;
+        if (keyboardRef.current) {
+          keyboardRef.current.onkeydown = null;
+          keyboardRef.current.onkeyup = null;
+        }
+        keyboardRef.current = null;
+        sinkEl.remove();
+        startedRef.current = false;
+      };
+    })();
 
     return () => {
-      window.removeEventListener("resize", onWinResize);
-      try {
-        client.disconnect();
-      } catch {
-        /* ignore */
-      }
-      clientRef.current = null;
-      if (keyboardRef.current) {
-        keyboardRef.current.onkeydown = null;
-        keyboardRef.current.onkeyup = null;
-      }
-      keyboardRef.current = null;
-      sinkEl.remove();
-      startedRef.current = false;
+      cancelled = true;
+      cleanup?.();
     };
   }, [id]);
 

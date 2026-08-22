@@ -1675,7 +1675,14 @@ export const api = {
   createSession: (
     asset_id: string,
     account_id: string,
-    opts?: { ticket_id?: string; reason?: string; db_privilege?: string; step_up_token?: string },
+    opts?: {
+      ticket_id?: string;
+      reason?: string;
+      db_privilege?: string;
+      step_up_token?: string;
+      rdp_width?: number;
+      rdp_height?: number;
+    },
   ) =>
     request<PamSession>("/api/v1/admin/sessions", {
       method: "POST",
@@ -1686,6 +1693,8 @@ export const api = {
         reason: opts?.reason || undefined,
         db_privilege: opts?.db_privilege || undefined,
         step_up_token: opts?.step_up_token || undefined,
+        ...(opts?.rdp_width !== undefined ? { rdp_width: opts.rdp_width } : {}),
+        ...(opts?.rdp_height !== undefined ? { rdp_height: opts.rdp_height } : {}),
       }),
     }),
   endSession: (id: string) =>
@@ -2442,6 +2451,8 @@ export type PamSession = {
   rdp_file?: string;
   rdp_proxy?: boolean;
   rdp_filename?: string;
+  rdp_width?: number;
+  rdp_height?: number;
   kubeconfig?: string;
   k8s_addr?: string;
   k8s_token?: string;

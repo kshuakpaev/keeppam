@@ -4,6 +4,7 @@ import { api, ApiError, hasPerm, type AccessBinding, type AccessPolicy, type App
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
+import { rdpResolutionById, loadRdpResolutionId, RDP_RESOLUTIONS, saveRdpResolutionId } from "../rdpResolution";
 import { StepUpDialog } from "./StepUpDialog";
 
 const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
@@ -51,6 +52,21 @@ const emptyAclForm = {
   access_policy_id: "",
   max_risk: "0",
   risk_action: "deny",
+};
+
+const emptyAccForm = {
+  username: "",
+  auth_method: "password",
+  secret: "",
+  description: "",
+  token_request_enabled: false,
+  k8s_sa_namespace: "",
+  k8s_sa_name: "",
+  token_ttl_seconds: 900,
+  k8s_impersonate: false,
+  k8s_impersonate_prefix: "keeppam:",
+  k8s_bind_user: false,
+  ad_user_dn: "",
 };
 
 export function AssetEditPage() {
@@ -111,20 +127,8 @@ export function AssetEditPage() {
     tn3270_codepage: "cp037",
     tn3270_terminal_type: "",
   });
-  const [accForm, setAccForm] = useState({
-    username: "",
-    auth_method: "password",
-    secret: "",
-    description: "",
-    token_request_enabled: false,
-    k8s_sa_namespace: "",
-    k8s_sa_name: "",
-    token_ttl_seconds: 900,
-    k8s_impersonate: false,
-    k8s_impersonate_prefix: "keeppam:",
-    k8s_bind_user: false,
-    ad_user_dn: "",
-  });
+  const [accForm, setAccForm] = useState({ ...emptyAccForm });
+  const [accEditId, setAccEditId] = useState<string | null>(null);
   const [aclForm, setAclForm] = useState({ ...emptyAclForm });
   const [aclEditId, setAclEditId] = useState<string | null>(null);
   const [aclEditExpires, setAclEditExpires] = useState<string | null>(null);
@@ -134,6 +138,7 @@ export function AssetEditPage() {
   const [connectTicket, setConnectTicket] = useState("");
   const [connectReason, setConnectReason] = useState("");
   const [dbPrivilege, setDbPrivilege] = useState<"readonly" | "readwrite">("readonly");
+  const [rdpResolutionId, setRdpResolutionId] = useState(loadRdpResolutionId);
   const [appForm, setAppForm] = useState({
     auth_mode: "vault_password",
     login_url: "",
@@ -271,6 +276,15 @@ export function AssetEditPage() {
         db_privilege:
           asset.protocol === "postgres" || asset.protocol === "mysql" ? dbPrivilege : undefined,
         step_up_token: stepUpToken,
+        ...(asset.protocol === "rdp"
+          ? (() => {
+              const preset = rdpResolutionById(rdpResolutionId);
+              return {
+                rdp_width: preset.width > 0 ? preset.width : 0,
+                rdp_height: preset.height > 0 ? preset.height : 0,
+              };
+            })()
+          : {}),
       });
       setStepUp(null);
       if (sess.waiting_supervisor) {
@@ -522,12 +536,37 @@ export function AssetEditPage() {
     }
   }
 
-  async function onAddAccount(e: FormEvent) {
+  function startEditAccount(acc: AssetAccount) {
+    setAccEditId(acc.id);
+    setAccForm({
+      username: acc.username,
+      auth_method: acc.auth_method,
+      secret: "",
+      description: acc.description || "",
+      token_request_enabled: !!acc.token_request_enabled,
+      k8s_sa_namespace: acc.k8s_sa_namespace || "",
+      k8s_sa_name: acc.k8s_sa_name || "",
+      token_ttl_seconds: acc.token_ttl_seconds || 900,
+      k8s_impersonate: !!acc.k8s_impersonate,
+      k8s_impersonate_prefix: acc.k8s_impersonate_prefix || "keeppam:",
+      k8s_bind_user: !!acc.k8s_bind_user,
+      ad_user_dn: acc.ad_user_dn || "",
+    });
+    setError("");
+    setMsg("");
+  }
+
+  function cancelAccForm() {
+    setAccEditId(null);
+    setAccForm({ ...emptyAccForm });
+  }
+
+  async function onSaveAccount(e: FormEvent) {
     e.preventDefault();
     if (!id || !canWrite) return;
     setError("");
     try {
-      await api.createAccount(id, {
+      const body = {
         username: accForm.username,
         auth_method: accForm.auth_method,
         secret: accForm.secret || undefined,
@@ -540,22 +579,16 @@ export function AssetEditPage() {
         k8s_impersonate_prefix: accForm.k8s_impersonate_prefix,
         k8s_bind_user: accForm.k8s_bind_user,
         ad_user_dn: accForm.ad_user_dn.trim() || undefined,
-      });
-      setAccForm({
-        username: "",
-        auth_method: "password",
-        secret: "",
-        description: "",
-        token_request_enabled: false,
-        k8s_sa_namespace: "",
-        k8s_sa_name: "",
-        token_ttl_seconds: 900,
-        k8s_impersonate: false,
-        k8s_impersonate_prefix: "keeppam:",
-        k8s_bind_user: false,
-        ad_user_dn: "",
-      });
-      setMsg(t("assets.accountAdded"));
+      };
+      if (accEditId) {
+        await api.updateAccount(id, accEditId, body);
+        setMsg(t("assets.accountUpdated"));
+        cancelAccForm();
+      } else {
+        await api.createAccount(id, body);
+        cancelAccForm();
+        setMsg(t("assets.accountAdded"));
+      }
       await load();
     } catch (err) {
       setError(te(err, "common.error"));
@@ -564,9 +597,14 @@ export function AssetEditPage() {
 
   async function onDeleteAccount(acc: AssetAccount) {
     if (!id || !canWrite) return;
+    if (acc.checked_out) {
+      setError(t("assets.deleteAccountCheckedOut"));
+      return;
+    }
     if (!confirm(t("assets.deleteAccountConfirm", { name: acc.username }))) return;
     try {
       await api.deleteAccount(id, acc.id);
+      if (accEditId === acc.id) cancelAccForm();
       setMsg(t("assets.accountDeleted"));
       await load();
     } catch (err) {
@@ -1566,6 +1604,28 @@ export function AssetEditPage() {
             </p>
           </>
         )}
+        {asset.protocol === "rdp" && (
+          <>
+            <label>{t("assets.rdpResolution")}</label>
+            <select
+              value={rdpResolutionId}
+              onChange={(e) => {
+                setRdpResolutionId(e.target.value);
+                saveRdpResolutionId(e.target.value);
+              }}
+              style={{ maxWidth: 320, marginBottom: "0.75rem" }}
+            >
+              {RDP_RESOLUTIONS.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              {t("assets.rdpResolutionHint")}
+            </p>
+          </>
+        )}
         <p className="muted">
           {t("assets.checkoutHint")}
         </p>
@@ -1916,6 +1976,9 @@ export function AssetEditPage() {
                       )}
                     {canWrite && (
                       <>
+                        <button className="btn secondary" type="button" onClick={() => startEditAccount(acc)}>
+                          {t("assets.editAccount")}
+                        </button>
                         <button className="btn secondary" type="button" onClick={() => void onToggleAccount(acc)}>
                           {acc.status === "active" ? t("assets.disable") : t("assets.enable")}
                         </button>
@@ -1940,8 +2003,8 @@ export function AssetEditPage() {
       </div>
 
       {canWrite && (
-        <form className="card" onSubmit={onAddAccount} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-          <h2>{t("assets.addAccount")}</h2>
+        <form className="card" onSubmit={onSaveAccount} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
+          <h2>{accEditId ? t("assets.editAccount") : t("assets.addAccount")}</h2>
           <label>{t("assets.loginOnTarget")}</label>
           <input
             value={accForm.username}
@@ -1967,6 +2030,7 @@ export function AssetEditPage() {
                 : accForm.auth_method === "sa_token"
                   ? "ServiceAccount token"
                   : t("assets.password")}
+            {accEditId ? ` (${t("assets.secretKeepHint")})` : ""}
           </label>
           {accForm.auth_method === "kubeconfig" || accForm.auth_method === "sa_token" ? (
             <textarea
@@ -2089,9 +2153,16 @@ export function AssetEditPage() {
               )}
             </>
           )}
-          <button className="btn" type="submit">
-            {t("common.create")}
-          </button>
+          <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+            <button className="btn" type="submit">
+              {accEditId ? t("common.save") : t("common.create")}
+            </button>
+            {accEditId && (
+              <button className="btn secondary" type="button" onClick={cancelAccForm}>
+                {t("common.cancel")}
+              </button>
+            )}
+          </div>
         </form>
       )}
 

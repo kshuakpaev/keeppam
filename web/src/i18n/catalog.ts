@@ -298,6 +298,11 @@ export const catalog = {
   "assets.rotateInterval": { ru: "Интервал авторотации (часы, 0 = выкл):", en: "Auto-rotate interval (hours, 0 = off):" },
   "assets.connectOpen": { ru: "Открыть {proto}", en: "Open {proto}" },
   "assets.connectK8s": { ru: "Подключить kubectl", en: "Connect kubectl" },
+  "assets.rdpResolution": { ru: "Разрешение RDP", en: "RDP resolution" },
+  "assets.rdpResolutionHint": {
+    ru: "Для браузерной сессии и файла .rdp. «По размеру окна» — под текущее окно браузера.",
+    en: "For browser session and .rdp file. Window size follows the browser viewport when set to auto.",
+  },
   "assets.connectApp": { ru: "Получить доступ", en: "Get access" },
   "assets.connectProxy": { ru: "Proxy-сессия", en: "Proxy session" },
   "assets.rotate": { ru: "Ротировать", en: "Rotate" },
@@ -374,8 +379,18 @@ export const catalog = {
   "assets.aclGranted": { ru: "Доступ выдан", en: "Access granted" },
   "assets.aclRevoked": { ru: "Доступ отозван", en: "Access revoked" },
   "assets.accountAdded": { ru: "Учётная запись добавлена", en: "Account added" },
+  "assets.accountUpdated": { ru: "Учётная запись обновлена", en: "Account updated" },
   "assets.accountDeleted": { ru: "Учётная запись удалена", en: "Account deleted" },
+  "assets.editAccount": { ru: "Редактировать учётную запись", en: "Edit account" },
+  "assets.secretKeepHint": {
+    ru: "Оставьте пустым, чтобы не менять сохранённый секрет",
+    en: "Leave blank to keep the stored secret",
+  },
   "assets.deleteAccountConfirm": { ru: "Удалить учётную запись {name}?", en: "Delete account {name}?" },
+  "assets.deleteAccountCheckedOut": {
+    ru: "Сначала верните секрет (check-in) — учётная запись занята checkout",
+    en: "Check in the secret first — account is checked out",
+  },
   "assets.policyOpt": { ru: "Access Policy (опц.)", en: "Access Policy (opt.)" },
   "assets.aclInherit": {
     ru: "Пустые поля ниже наследуются из политики. См. JEA → Policy.",

@@ -24,6 +24,7 @@ import (
 	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshcmd"
 	"github.com/keeppam/auth/internal/sshproxy"
@@ -58,6 +59,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Reason      string `json:"reason"`
 		DBPrivilege string `json:"db_privilege"`
 		StepUpToken string `json:"step_up_token"`
+		RDPWidth    int    `json:"rdp_width"`
+		RDPHeight   int    `json:"rdp_height"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -203,6 +206,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := s.policy.Freeze(r.Context(), ev, usedBreakGlass, bypassAdmin)
 	snap.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
+	rdpW, rdpH := body.RDPWidth, body.RDPHeight
+	if creds.Asset.Protocol == "rdp" {
+		rdpW, rdpH = rdpgw.NormalizeSize(body.RDPWidth, body.RDPHeight)
+		if body.RDPWidth <= 0 || body.RDPHeight <= 0 {
+			rdpW, rdpH = 0, 0
+		}
+	} else {
+		rdpW, rdpH = 0, 0
+	}
 	created, err := s.sessionsvc.Create(r.Context(), sess.UserID, sessionsvc.CreateInput{
 		AssetID: assetID, AccountID: accountID, Protocol: creds.Asset.Protocol, ClientIP: s.clientIP(r),
 		TicketID: body.TicketID, Reason: body.Reason, DBPrivilege: body.DBPrivilege,
@@ -210,7 +222,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Isolated: httpsIsolated, BreakGlass: usedBreakGlass,
 		RiskScore: ev.RiskScore, RiskFactors: ev.RiskFactors, Labels: labels,
 		AccessPolicyID: ev.AccessPolicyID, ClientCountry: s.policy.ClientCountry(s.clientIP(r)),
-		PolicySnapshot: snapPtr(snap),
+		PolicySnapshot: snapPtr(snap), RDPWidth: rdpW, RDPHeight: rdpH,
 	}, r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -225,6 +237,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"break_glass": created.BreakGlass, "k8s_namespaces": created.K8sNamespaces,
 		"require_supervisor": created.RequireSupervisor, "waiting_supervisor": created.WaitingSupervisor,
 		"supervisor_group_id": created.SupervisorGroupID, "supervisor_group_name": created.SupervisorGroupName,
+		"rdp_width": created.RDPWidth, "rdp_height": created.RDPHeight,
 	}
 	if created.WaitingSupervisor && s.notify != nil {
 		s.notify.OnSupervisorWait(r.Context(), created)

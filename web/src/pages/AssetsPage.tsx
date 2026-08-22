@@ -1,17 +1,42 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type Asset } from "../api";
+import {
+  connectButtonLabel,
+  connectableAccounts,
+  startAssetSession,
+} from "../assetConnect";
+import { api, ApiError, hasPerm, type Asset, type AssetAccount } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
+import {
+  loadRdpResolutionId,
+  rdpResolutionById,
+  RDP_RESOLUTIONS,
+  saveRdpResolutionId,
+} from "../rdpResolution";
+import { useSessionTabs } from "../sessionTabs";
+import { StepUpDialog } from "./StepUpDialog";
 
 const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 
+function connectKey(assetId: string, accountId: string) {
+  return `${assetId}:${accountId}`;
+}
+
 export function AssetsPage() {
   const { user } = useAuth();
   const { t, te } = useI18n();
+  const { openTab } = useSessionTabs();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [stepUp, setStepUp] = useState<{
+    err: ApiError;
+    retry: (token: string) => Promise<void>;
+  } | null>(null);
+  const [rdpResolutionId, setRdpResolutionId] = useState(loadRdpResolutionId);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -27,6 +52,17 @@ export function AssetsPage() {
 
   const canWrite = hasPerm(user, "assets.write");
   const canRead = hasPerm(user, "assets.read");
+  const canConnect = hasPerm(user, "sessions.connect");
+  const hasRdpAssets = assets.some((a) => a.protocol === "rdp" && a.status === "active");
+
+  function rdpSizeForConnect(protocol: string) {
+    if (protocol !== "rdp") return {};
+    const preset = rdpResolutionById(rdpResolutionId);
+    return {
+      rdp_width: preset.width > 0 ? preset.width : 0,
+      rdp_height: preset.height > 0 ? preset.height : 0,
+    };
+  }
 
   async function load() {
     try {
@@ -40,6 +76,37 @@ export function AssetsPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  async function onConnect(asset: Asset, acc: AssetAccount, stepUpToken?: string) {
+    setError("");
+    setMsg("");
+    const key = connectKey(asset.id, acc.id);
+    setConnecting(key);
+    try {
+      const res = await startAssetSession(asset, acc, {
+        step_up_token: stepUpToken,
+        supervisorDenied: t("assets.supervisorDenied"),
+        supervisorTimeout: t("assets.supervisorTimeout"),
+        ...rdpSizeForConnect(asset.protocol),
+      });
+      setStepUp(null);
+      if (res.msg) setMsg(res.msg);
+      openTab({
+        id: res.sessionId,
+        kind: res.kind,
+        title: res.title,
+        protocol: res.protocol,
+      });
+    } catch (err) {
+      if (!stepUpToken && ApiError.isStepUp(err)) {
+        setStepUp({ err, retry: (tok) => onConnect(asset, acc, tok) });
+        return;
+      }
+      setError(te(err, "assets.connectError"));
+    } finally {
+      setConnecting(null);
+    }
+  }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -91,6 +158,28 @@ export function AssetsPage() {
         )}
       </div>
       {error && <p className="error">{error}</p>}
+      {msg && <p className="muted">{msg}</p>}
+      {canConnect && hasRdpAssets && (
+        <div className="card" style={{ marginBottom: "1rem", maxWidth: 360 }}>
+          <label>{t("assets.rdpResolution")}</label>
+          <select
+            value={rdpResolutionId}
+            onChange={(e) => {
+              setRdpResolutionId(e.target.value);
+              saveRdpResolutionId(e.target.value);
+            }}
+          >
+            {RDP_RESOLUTIONS.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+          <p className="muted" style={{ marginTop: "0.35rem", marginBottom: 0 }}>
+            {t("assets.rdpResolutionHint")}
+          </p>
+        </div>
+      )}
       {showCreate && (
         <form className="card" onSubmit={onCreate} style={{ marginBottom: "1rem", maxWidth: 560 }}>
           <h2>{t("assets.new")}</h2>
@@ -227,27 +316,51 @@ export function AssetsPage() {
             </tr>
           </thead>
           <tbody>
-            {assets.map((a) => (
-              <tr key={a.id}>
-                <td>{canRead ? <Link to={`/assets/${a.id}`}>{a.name}</Link> : a.name}</td>
-                <td className="mono">
-                  {a.address}:{a.port}
-                </td>
-                <td className="mono">{a.protocol}</td>
-                <td className="mono">{a.asset_type}</td>
-                <td>
-                  <span className={`badge ${a.status}`}>{a.status}</span>
-                </td>
-                <td className="mono">{(a.tags || []).join(", ") || "—"}</td>
-                <td>
-                  {canRead && (
-                    <Link className="btn secondary" to={`/assets/${a.id}`}>
-                      {t("common.open")}
-                    </Link>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {assets.map((a) => {
+              const accounts = connectableAccounts(a);
+              const multi = accounts.length > 1;
+              return (
+                <tr key={a.id}>
+                  <td>{canRead ? <Link to={`/assets/${a.id}`}>{a.name}</Link> : a.name}</td>
+                  <td className="mono">
+                    {a.address}:{a.port}
+                  </td>
+                  <td className="mono">{a.protocol}</td>
+                  <td className="mono">{a.asset_type}</td>
+                  <td>
+                    <span className={`badge ${a.status}`}>{a.status}</span>
+                  </td>
+                  <td className="mono">{(a.tags || []).join(", ") || "—"}</td>
+                  <td>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
+                      {canConnect &&
+                        accounts.map((acc) => {
+                          const key = connectKey(a.id, acc.id);
+                          return (
+                            <button
+                              key={acc.id}
+                              className="btn"
+                              type="button"
+                              disabled={connecting === key}
+                              onClick={() => void onConnect(a, acc)}
+                              title={acc.username}
+                            >
+                              {connecting === key
+                                ? "…"
+                                : connectButtonLabel(a.protocol, t, acc, multi)}
+                            </button>
+                          );
+                        })}
+                      {canRead && (
+                        <Link className="btn secondary" to={`/assets/${a.id}`}>
+                          {t("common.open")}
+                        </Link>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {assets.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
@@ -258,6 +371,13 @@ export function AssetsPage() {
           </tbody>
         </table>
       </div>
+      {stepUp && (
+        <StepUpDialog
+          err={stepUp.err}
+          onCancel={() => setStepUp(null)}
+          onDone={(token: string) => void stepUp.retry(token)}
+        />
+      )}
     </div>
   );
 }

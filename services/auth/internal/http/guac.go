@@ -20,6 +20,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -82,11 +83,11 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 
 	width, _ := strconv.Atoi(r.URL.Query().Get("width"))
 	height, _ := strconv.Atoi(r.URL.Query().Get("height"))
-	if width <= 0 {
-		width = 1280
-	}
-	if height <= 0 {
-		height = 800
+	if row.RDPWidth > 0 && row.RDPHeight > 0 {
+		width = row.RDPWidth
+		height = row.RDPHeight
+	} else {
+		width, height = rdpgw.NormalizeSize(width, height)
 	}
 
 	guacProto := row.Protocol

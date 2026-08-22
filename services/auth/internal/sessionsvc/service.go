@@ -59,6 +59,8 @@ type Session struct {
 	ArchiveSHA256        string           `json:"archive_sha256,omitempty"`
 	ArchiveBackend       string           `json:"archive_backend,omitempty"`
 	ArchivedAt           *time.Time       `json:"archived_at,omitempty"`
+	RDPWidth             int              `json:"rdp_width,omitempty"`
+	RDPHeight            int              `json:"rdp_height,omitempty"`
 	// Joined fields for UI
 	Username        string `json:"username,omitempty"`
 	AssetName       string `json:"asset_name,omitempty"`
@@ -138,6 +140,8 @@ type CreateInput struct {
 	AccessPolicyID   *uuid.UUID
 	ClientCountry    string
 	PolicySnapshot   *policy.Snapshot
+	RDPWidth         int
+	RDPHeight        int
 }
 
 type ListFilter struct {
@@ -214,11 +218,12 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 			FROM assets WHERE id=$1`, in.AssetID).Scan(&needSup, &supGroup)
 	}
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at, require_supervisor, supervisor_group_id)
-		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+		INSERT INTO sessions (id, user_id, asset_id, account_id, protocol, status, client_ip, recording_path, ticket_id, reason, db_privilege, database_name, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id, k8s_namespaces, break_glass, risk_score, risk_factors, labels, access_policy_id, client_country, policy_snapshot, created_at, require_supervisor, supervisor_group_id, rdp_width, rdp_height)
+		VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
 		id, userID, in.AssetID, in.AccountID, in.Protocol, in.ClientIP, recPath,
 		strings.TrimSpace(in.TicketID), strings.TrimSpace(in.Reason), dbPriv, dbName, in.SQLPolicyPackID, in.HTTPPolicyPackID, in.AppObjectPackID, ns, in.BreakGlass,
-		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now, needSup, supGroup)
+		in.RiskScore, factors, labels, in.AccessPolicyID, strings.TrimSpace(in.ClientCountry), marshalSnapshot(in.PolicySnapshot), now, needSup, supGroup,
+		nullRDPSize(in.RDPWidth), nullRDPSize(in.RDPHeight))
 	if err != nil {
 		return Session{}, err
 	}
@@ -471,7 +476,8 @@ const sessionSelect = `
 			s.supervisor_id, COALESCE(su.username,''), s.supervisor_approved_at,
 			u.username, a.name, aa.username, a.address,
 			(s.recording_path <> '' AND (s.status IN ('ended','failed','active') OR COALESCE(s.archived, FALSE))),
-			COALESCE(s.archived, FALSE), COALESCE(s.archive_sha256,''), COALESCE(s.archive_backend,''), s.archived_at
+			COALESCE(s.archived, FALSE), COALESCE(s.archive_sha256,''), COALESCE(s.archive_backend,''), s.archived_at,
+			COALESCE(s.rdp_width, 0), COALESCE(s.rdp_height, 0)
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN assets a ON a.id = s.asset_id
@@ -620,6 +626,7 @@ func scanSession(row scannable) (Session, error) {
 		&s.SupervisorID, &s.SupervisorUsername, &s.SupervisorApprovedAt,
 		&s.Username, &s.AssetName, &s.AccountUsername, &s.AssetAddress, &s.HasRecording,
 		&s.Archived, &s.ArchiveSHA256, &s.ArchiveBackend, &s.ArchivedAt,
+		&s.RDPWidth, &s.RDPHeight,
 	)
 	if err != nil {
 		return s, err
@@ -650,6 +657,13 @@ func marshalSnapshot(sn *policy.Snapshot) any {
 		return nil
 	}
 	return b
+}
+
+func nullRDPSize(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }
 
 func IsNotFound(err error) bool { return err == pgx.ErrNoRows }

@@ -3,12 +3,14 @@ package assets
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"golang.org/x/crypto/ssh"
 
@@ -274,7 +276,17 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 		a.Tags = tags
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	acctMap, err := s.listAllAccountsByAsset(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Accounts = acctMap[out[i].ID]
+	}
+	return out, nil
 }
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
@@ -757,13 +769,49 @@ func (s *Service) DeleteAccount(ctx context.Context, actorID, accountID uuid.UUI
 	if err != nil {
 		return err
 	}
+	if acc.CheckedOut {
+		return fmt.Errorf("account is checked out; check in before delete")
+	}
 	_, err = s.db.Pool.Exec(ctx, `DELETE FROM asset_accounts WHERE id=$1`, accountID)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return fmt.Errorf("account has dependent records and cannot be deleted")
+		}
 		return err
 	}
 	return s.aud.Record(ctx, &actorID, "asset.account.deleted", "asset_account", accountID.String(), ip, ua, map[string]any{
 		"asset_id": acc.AssetID.String(), "username": acc.Username,
 	})
+}
+
+func (s *Service) listAllAccountsByAsset(ctx context.Context) (map[uuid.UUID][]Account, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
+			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
+			a.checkout_user_id, COALESCE(u.username,''), a.checkout_at, a.checkout_expires_at, COALESCE(a.checkout_reason,''),
+			COALESCE(a.rotate_after_session,false), COALESCE(a.rotate_on_checkin,false),
+			COALESCE(a.rotate_interval_hours,0), a.next_rotate_at, COALESCE(a.dual_control_checkout,false),
+			COALESCE(a.token_request_enabled,false), COALESCE(a.k8s_sa_namespace,''), COALESCE(a.k8s_sa_name,''),
+			COALESCE(a.token_ttl_seconds,900), COALESCE(a.k8s_impersonate,false), COALESCE(a.k8s_impersonate_prefix,'keeppam:'),
+			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
+		FROM asset_accounts a
+		LEFT JOIN users u ON u.id=a.checkout_user_id
+		ORDER BY a.asset_id, a.username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[uuid.UUID][]Account)
+	for rows.Next() {
+		acc, err := scanAccountRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		s.expireCheckoutIfNeeded(ctx, &acc)
+		out[acc.AssetID] = append(out[acc.AssetID], acc)
+	}
+	return out, rows.Err()
 }
 
 func (s *Service) listAccounts(ctx context.Context, assetID uuid.UUID) ([]Account, error) {

@@ -12,8 +12,18 @@ import {
   type SSHSettings,
   type SAMLIdP,
   type ArchiveSettings,
+  type EIDASSettings,
+  type UEBAMLSettings,
 } from "../api";
 import { useAuth } from "../auth";
+
+const emptyEidas: EIDASSettings = { mode: "off", profile: "eidas", require_b_lta: true };
+const emptyUebaMl: UEBAMLSettings = {
+  mode: "off",
+  peer_group: true,
+  ml_threshold: 65,
+  live_interval_s: 60,
+};
 
 const emptyArchive: ArchiveSettings = {
   enabled: false,
@@ -264,8 +274,8 @@ export function ConfigPage() {
             has_api_token: false,
             last_error: "",
           })),
-          api.getEIDASSettings().catch(() => ({ mode: "off", profile: "eidas", require_b_lta: true })),
-          api.getUEBAMLSettings().catch(() => ({ mode: "off", peer_group: true, ml_threshold: 65, live_interval_s: 60 })),
+          api.getEIDASSettings().catch(() => emptyEidas),
+          api.getUEBAMLSettings().catch(() => emptyUebaMl),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
           api.getArchiveSettings().catch(() => emptyArchive),
