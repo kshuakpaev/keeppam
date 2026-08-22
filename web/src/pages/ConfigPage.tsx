@@ -188,6 +188,15 @@ export function ConfigPage() {
     { name: string; segment: string; probe_url: string; enabled: boolean; token: string; has_token?: boolean }[]
   >([]);
   const [firewallStatus, setFirewallStatus] = useState<FirewallStatus | null>(null);
+  const [nacForm, setNacForm] = useState({
+    mode: "off",
+    api_url: "",
+    vendor: "generic",
+    timeout_ms: 3000,
+    has_api_token: false,
+    last_error: "",
+  });
+  const [nacToken, setNacToken] = useState("");
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
@@ -218,7 +227,7 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, fw, fws, nt, idps, ar] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nac, nt, idps, ar] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
@@ -226,6 +235,7 @@ export function ConfigPage() {
           api.getITSMSettings(),
           api.getFirewallSettings(),
           api.getFirewallStatus().catch(() => null),
+          api.getNACSettings().catch(() => ({ mode: "off", vendor: "generic", timeout_ms: 3000 })),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
           api.getArchiveSettings().catch(() => emptyArchive),
@@ -260,6 +270,14 @@ export function ConfigPage() {
           })),
         );
         setFirewallStatus(fws);
+        setNacForm({
+          mode: nac.mode || "off",
+          api_url: nac.api_url || "",
+          vendor: nac.vendor || "generic",
+          timeout_ms: nac.timeout_ms || 3000,
+          has_api_token: !!nac.has_api_token,
+          last_error: nac.last_error || "",
+        });
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
       } catch (err) {
@@ -370,6 +388,36 @@ export function ConfigPage() {
       setMsg("Firewall PAM сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения Firewall PAM");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveNAC(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const saved = await api.putNACSettings({
+        mode: nacForm.mode,
+        api_url: nacForm.api_url.trim(),
+        vendor: nacForm.vendor,
+        timeout_ms: Number(nacForm.timeout_ms) || 3000,
+        ...(nacToken.trim() ? { api_token: nacToken.trim() } : {}),
+      });
+      setNacForm({
+        mode: saved.mode || "off",
+        api_url: saved.api_url || "",
+        vendor: saved.vendor || "generic",
+        timeout_ms: saved.timeout_ms || 3000,
+        has_api_token: !!saved.has_api_token,
+        last_error: saved.last_error || "",
+      });
+      setNacToken("");
+      setMsg("NAC client сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения NAC");
     } finally {
       setBusy(false);
     }
@@ -1858,6 +1906,63 @@ export function ConfigPage() {
             )}
           </div>
         )}
+      </form>
+
+      <form className="card" onSubmit={onSaveNAC} style={{ maxWidth: 640 }}>
+        <h2>NAC client</h2>
+        <p className="muted">
+          Posture check перед подключением и notify start/end сессии во внешний NAC (generic REST или Cisco ISE path).
+          Заголовок клиента: <span className="mono">X-KeepPAM-Client-MAC</span>. Mock:{" "}
+          <span className="mono">cmd/nac-mock</span> (:8110), IP *.66 → deny.
+        </p>
+        <label>Режим</label>
+        <select value={nacForm.mode} onChange={(e) => setNacForm({ ...nacForm, mode: e.target.value })}>
+          <option value="off">выкл.</option>
+          <option value="audit">audit</option>
+          <option value="enforce">enforce</option>
+        </select>
+        <label>API URL (база NAC)</label>
+        <input
+          value={nacForm.api_url}
+          onChange={(e) => setNacForm({ ...nacForm, api_url: e.target.value })}
+          placeholder="http://nac-mock:8110"
+        />
+        <label>Vendor</label>
+        <select value={nacForm.vendor} onChange={(e) => setNacForm({ ...nacForm, vendor: e.target.value })}>
+          <option value="generic">generic (/keeppam/posture)</option>
+          <option value="cisco_ise">cisco_ise</option>
+        </select>
+        <label>Timeout (ms)</label>
+        <input
+          type="number"
+          min={500}
+          max={30000}
+          value={nacForm.timeout_ms}
+          onChange={(e) => setNacForm({ ...nacForm, timeout_ms: Number(e.target.value) })}
+        />
+        <label>API token {nacForm.has_api_token ? "(задан)" : ""}</label>
+        <input
+          type="password"
+          value={nacToken}
+          onChange={(e) => setNacToken(e.target.value)}
+          placeholder="Bearer — пусто = не менять"
+        />
+        {nacForm.last_error ? <p className="error">Последняя ошибка: {nacForm.last_error}</p> : null}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api.testNACSettings().then((r) => setMsg(`NAC test: allowed=${r.result.allowed}`)).catch((err) => setError(String(err)))
+            }
+          >
+            Test posture
+          </button>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить
+          </button>
+        </div>
       </form>
 
       <form className="card" onSubmit={onSaveITSM} style={{ maxWidth: 640 }}>

@@ -1,0 +1,76 @@
+# KeepPAM: NAC client (SOW-NAC)
+
+KeepPAM как **клиент** внешнего NAC — posture check и уведомления о PAM-сессиях. Не NAC-контроллер и не VLAN manager (`docs/firewall-pam.txt`).
+
+## Настройки
+
+Config → **NAC client** (`nac_settings`, миграция `100`):
+
+| Поле | Смысл |
+|------|--------|
+| `mode` | `off` / `audit` / `enforce` |
+| `api_url` | База HTTP(S) NAC |
+| `api_token` | Bearer (шифруется) |
+| `vendor` | `generic` или `cisco_ise` (path prefix) |
+| `timeout_ms` | 500…30000 |
+
+## API NAC (generic)
+
+`POST {api_url}/keeppam/posture`
+
+```json
+{
+  "event": "pre_connect | session_start | session_end | test",
+  "client_ip": "10.0.0.5",
+  "client_mac": "aa:bb:cc:dd:ee:ff",
+  "devices": ["TLS", "WEBAUTHN"],
+  "user_id": "...",
+  "username": "alice",
+  "asset_id": "...",
+  "asset_name": "db-prod",
+  "protocol": "ssh",
+  "session_id": "..."
+}
+```
+
+Ответ:
+
+```json
+{ "allowed": true, "vlan": "vlan10", "policy": "pam-users", "reason": "" }
+```
+
+Cisco ISE: path `/ers/config/keeppam/posture` (subset; полный ERS — out of scope).
+
+## Поведение
+
+| mode | pre_connect | session start/end |
+|------|-------------|-------------------|
+| `off` | skip | skip |
+| `audit` | deny → событие audit, сессия **разрешена** | notify + `session_events` type `nac` |
+| `enforce` | deny → HTTP 403 connect | notify |
+
+Break-glass и admin bypass (`users.write`) пропускают pre_connect.
+
+Заголовок клиента: `X-KeepPAM-Client-MAC` (optional).
+
+## Acceptance (DoD)
+
+1. Запустить mock: `go run ./cmd/nac-mock` (порт 8110).
+2. Config: mode=enforce, api_url=`http://127.0.0.1:8110`.
+3. Connect с client IP, оканчивающимся на `.66` → 403 «nac posture denied».
+4. mode=audit, тот же IP → connect OK, audit `session.nac.denied`.
+5. Успешная сессия → события `nac` с `session_start` / `session_end`.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| REST client + mock | Полноценный NAC / 802.1X supplicant |
+| Pre-connect + session notify | VLAN push / CoA на switch |
+| Generic + ISE path prefix | Forescout/ClearPass OEM binary |
+
+## Связанные документы
+
+- `docs/firewall-pam.txt` — perimeter pam_only
+- `docs/radius-eap.txt` — 802.1X IdP (RADIUS)
+- `docs/sow-backlog.txt` — SOW-NAC

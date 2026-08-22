@@ -25,7 +25,7 @@
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | **Закрыт** — drive/clipboard ingest; см. `docs/rdp-file-capture.txt` |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
 | **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | **Закрыт** — keyword classifier + audit/mask/deny; см. `docs/nlp-dlp.txt` |
-| **SOW-NAC** | NAC-клиент | Сетевой контроль | Вне PAM-ядра |
+| **SOW-NAC** | NAC-клиент | Сетевой контроль | **Закрыт** — posture REST client; см. `docs/nac-client.txt` |
 | **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | PAdES B-B уже опция |
 | **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | Сейчас heuristics + notify |
 | **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | Сейчас SSH+AD LDAP |
@@ -71,6 +71,12 @@
 - `nlp_dlp_action` audit/mask/deny; те же каналы что PII DLP.
 - Acceptance: audit hit на «salary»; deny на CONFIDENTIAL/NDA.
 - **Статус:** закрыт (on-prem, без ML-моделей).
+
+### SOW-NAC
+- REST NAC client: pre_connect posture + session_start/end notify.
+- Modes audit/enforce; mock `cmd/nac-mock` для acceptance.
+- Acceptance: enforce блокирует IP *.66; audit логирует без блокировки.
+- **Статус:** закрыт (не VLAN controller; CoA out of scope).
 
 ---
 

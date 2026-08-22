@@ -36,6 +36,7 @@ import (
 	"github.com/keeppam/auth/internal/itsm"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/license"
+	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
@@ -86,6 +87,7 @@ type Server struct {
 	scim       *scim.Service
 	castidx    *castindex.Service
 	firewall   *firewall.Service
+	nac        *nac.Service
 	archive    *recarch.Service
 	files      *filexfer.Service
 	health     *health.State
@@ -94,13 +96,13 @@ type Server struct {
 	license    license.File
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
 	lic, err := license.Load(cfg.LicenseFile)
 	if err != nil {
 		lic = license.DefaultFile()
 		lic.Source = "error:" + err.Error()
 	}
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -220,6 +222,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Put("/settings/ssh", s.handlePutSSHSettings)
 				r.With(s.requirePerm("settings.write")).Get("/settings/firewall", s.handleGetFirewallSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/firewall", s.handlePutFirewallSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/nac", s.handleGetNACSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/nac", s.handlePutNACSettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/nac/test", s.handleNACTest)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/status", s.handleFirewallStatus)
 				r.With(s.requirePerm("settings.write")).Post("/firewall/probe", s.handleFirewallProbe)
 				r.With(s.requirePerm("settings.write")).Put("/firewall/probe-agents", s.handlePutFirewallProbeAgents)

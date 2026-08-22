@@ -424,6 +424,18 @@ export type FirewallProbeAgent = {
   last_error?: string;
 };
 
+export type NACSettings = {
+  mode?: string;
+  api_url?: string;
+  api_token?: string;
+  has_api_token?: boolean;
+  vendor?: string;
+  timeout_ms?: number;
+  last_check_at?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
 export type FirewallSettings = {
   pam_gateway_cidrs: string[];
   probe_url?: string;
@@ -995,6 +1007,17 @@ export const api = {
       { method: "PUT", body: JSON.stringify(body) },
     ),
   pushFirewallAWX: () => request<FirewallSettings>("/api/v1/admin/firewall/push", { method: "POST" }),
+  getNACSettings: () => request<NACSettings>("/api/v1/admin/settings/nac"),
+  putNACSettings: (body: Partial<NACSettings>) =>
+    request<NACSettings>("/api/v1/admin/settings/nac", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testNACSettings: () =>
+    request<{ result: { allowed: boolean; vlan?: string; policy?: string; reason?: string } }>(
+      "/api/v1/admin/settings/nac/test",
+      { method: "POST" },
+    ),
   downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
     const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(await res.text());

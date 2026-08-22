@@ -84,4 +84,4 @@ Port-forward на pam-only актив на сервисный порт — от�
 
 ## Вне scope
 
-NAC-клиент, VLAN controller, ephemeral assets, prod HA firewall controller.
+NAC-клиент — см. `docs/nac-client.txt` (SOW-NAC). VLAN controller, ephemeral assets, prod HA firewall controller.

@@ -21,6 +21,7 @@ import (
 	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -93,6 +94,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	check := policy.AccessCheck{
 		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: false, Now: time.Now(),
 		TicketID: body.TicketID, Reason: body.Reason, ClientIP: s.clientIP(r),
+		ClientDevices: s.clientDevices(r),
 		StepUpVerified: s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken),
 	}
 	ev, err := s.policy.Evaluate(r.Context(), check)
@@ -129,6 +131,37 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if s.itsm != nil && !usedBreakGlass && !bypassAdmin {
 		if err := s.itsm.Enforce(r.Context(), "connect", body.TicketID); err != nil {
 			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
+	if s.nac != nil && !usedBreakGlass && !bypassAdmin {
+		nacResp, auditOnly, deny, err := s.nac.CheckPreConnect(r.Context(), nac.ConnectInput{
+			UserID: sess.UserID, Username: sess.Username, AssetID: assetID,
+			AssetName: creds.Asset.Name, Protocol: creds.Asset.Protocol,
+			ClientIP: s.clientIP(r), ClientMAC: strings.TrimSpace(r.Header.Get("X-KeepPAM-Client-MAC")),
+			ClientDevices: s.clientDevices(r),
+		})
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "nac check failed")
+			return
+		}
+		if auditOnly || deny {
+			payload := map[string]any{
+				"via": "pre_connect", "allowed": nacResp.Allowed, "audit_only": auditOnly,
+			}
+			if nacResp.Reason != "" {
+				payload["reason"] = nacResp.Reason
+			}
+			if nacResp.VLAN != "" {
+				payload["vlan"] = nacResp.VLAN
+			}
+			if nacResp.Policy != "" {
+				payload["policy"] = nacResp.Policy
+			}
+			_ = s.audit.Record(r.Context(), &sess.UserID, "session.nac.denied", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), payload)
+		}
+		if deny {
+			writeErr(w, http.StatusForbidden, "nac posture denied: "+nacResp.Reason)
 			return
 		}
 	}

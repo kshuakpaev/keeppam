@@ -40,6 +40,7 @@ import (
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/migrate"
+	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
@@ -265,6 +266,7 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	nacSvc := nac.New(db, auditSvc, env, sessSvc)
 	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
 	castIdx.SetUEBAHook(func(ctx context.Context, row sessionsvc.Session, payload map[string]any) {
@@ -312,7 +314,10 @@ func main() {
 	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, resolveDir)
 	assetsSvc.SetLDAPPasswordChanger(adJit)
 	hdxClient := hdx.NewClient(cfg.CitrixHDXPluginURL)
-	sessSvc.SetStartHook(adJit.OnSessionStart)
+	sessSvc.SetStartHook(func(ctx context.Context, id uuid.UUID) {
+		adJit.OnSessionStart(ctx, id)
+		nacSvc.OnSessionStart(ctx, id)
+	})
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
@@ -331,6 +336,7 @@ func main() {
 			}
 		}
 		adJit.OnSessionEnd(ctx, id)
+		nacSvc.OnSessionEnd(ctx, id)
 		if protocol == "rdp" && rdpBroker != nil {
 			rdpBroker.Stop(id)
 			if filesSvc != nil {
@@ -503,7 +509,7 @@ func main() {
 			rdpBroker = rdpBrokerInit
 			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
