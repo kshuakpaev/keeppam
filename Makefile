@@ -1,4 +1,4 @@
-.PHONY: up down logs tidy api-run smoke acceptance-smoke web-build api-build sbom geoip-mmdb pack install demo-seed
+.PHONY: up down logs tidy api-run smoke acceptance-smoke geo-drill web-build api-build sbom geoip-mmdb pack install demo-seed
 
 web-build:
 
@@ -41,6 +41,9 @@ smoke:
 
 acceptance-smoke:
 	./scripts/kp-acceptance-smoke.sh
+
+geo-drill:
+	./scripts/geo-drill.sh
 
 pack:
 	./scripts/keeppam-pack.sh

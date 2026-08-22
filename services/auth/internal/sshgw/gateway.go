@@ -63,6 +63,8 @@ type Gateway struct {
 	targetsMu sync.RWMutex
 	targets   []firewall.Target
 	targetsAt time.Time
+
+	sessFence func() error
 }
 
 const maxEgressForwards = 8
@@ -93,6 +95,12 @@ func New(
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
 		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc, ops: opsSvc,
 		firewall: firewallSvc, files: filesSvc,
+	}
+}
+
+func (g *Gateway) SetSessionFence(fn func() error) {
+	if g != nil {
+		g.sessFence = fn
 	}
 }
 
@@ -165,6 +173,13 @@ func (g *Gateway) ListenAndServe() error {
 			}
 			slog.Error("ssh accept", "err", err)
 			continue
+		}
+		if g.sessFence != nil {
+			if err := g.sessFence(); err != nil {
+				_ = tcp.Close()
+				slog.Warn("ssh fenced", "err", err)
+				continue
+			}
 		}
 		g.connWG.Add(1)
 		go func() {

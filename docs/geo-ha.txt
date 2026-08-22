@@ -1,0 +1,48 @@
+# KeepPAM: SOW-GEO-HA — multi-site async geo
+
+HA внутри сайта: `docs/ha.txt`. Geo — два+ ЦОД.
+
+## Фазы
+
+| Фаза | Содержание | Статус |
+|------|------------|--------|
+| **1** | Site identity, standby fence, lag probe | **есть** |
+| **2** | Recordings sync + promote helpers | **есть** |
+| **3** | Cutover playbook + drill | **есть** |
+| **4** | Witness / split-brain fencing | **есть** |
+
+## Быстрый старт
+
+```bash
+# Site A
+KEEPPAM_SITE_ID=site-a
+KEEPPAM_SITE_ROLE=primary
+KEEPPAM_SITE_PEER_URL=https://site-b/geoz
+
+# Site B standby + witness peer auto
+KEEPPAM_SITE_ID=site-b
+KEEPPAM_SITE_ROLE=standby
+```
+
+Witness: **`docs/geo-ha-witness.txt`**
+
+## Скрипты
+
+| Script | Purpose |
+|--------|---------|
+| `geo-recordings-sync.sh` | rsync recordings |
+| `geo-promote.sh` | PG promote + role flip |
+| `geo-cutover.sh` | verify DNS/VIP |
+| `geo-drill.sh` | acceptance drill |
+
+## API
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /geoz` | public site postcard |
+| `GET /admin/geo/status` | lag + witness |
+| `GET /admin/geo/witness` | split-brain status |
+| `GET /admin/geo/drill` | acceptance |
+| `GET /admin/geo/promote/plan` | cutover checklist |
+
+SOW-GEO-HA по KeepPAM **закрыт** (фазы 1–4). Patroni между ЦОД — вне scope.

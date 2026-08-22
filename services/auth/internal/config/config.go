@@ -87,6 +87,19 @@ type Config struct {
 	RDPProxyCertFile       string
 	RDPProxyKeyFile        string
 	LicenseFile            string // path to license.json (T-52); empty → default max_assets=100
+	SiteID                 string // SOW-GEO-HA site identity
+	SiteRole               string // primary | standby | standalone
+	SitePeerURL            string // optional peer /livez
+	SiteReplicaDSN         string // optional PG DSN for lag probe
+	SiteMaxLagSeconds      int    // 0 = don't fail readyz on lag
+	GeoRecordingsSync      string // off | s3 | rsync (auto if unset)
+	GeoRsyncTarget         string // rsync dest for primary→standby
+	GeoRsyncSource         string // override source; default RecordingsDir
+	GeoPublicURL           string // public URL for cutover drill (/geoz)
+	GeoWitnessMode         string // off | peer | redis | http | auto
+	GeoWitnessRedisURL     string // shared witness Redis (optional; default app redis)
+	GeoWitnessHTTPURL      string // HTTP witness service
+	GeoWitnessLeaseSeconds int
 }
 
 func Load() (Config, error) {
@@ -164,6 +177,19 @@ func Load() (Config, error) {
 		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
 		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
 		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
+		SiteID:                 env("KEEPPAM_SITE_ID", ""),
+		SiteRole:               geoNormalizeRole(env("KEEPPAM_SITE_ROLE", "")),
+		SitePeerURL:            env("KEEPPAM_SITE_PEER_URL", ""),
+		SiteReplicaDSN:         env("KEEPPAM_SITE_REPLICA_DSN", ""),
+		SiteMaxLagSeconds:      intEnv("KEEPPAM_SITE_MAX_LAG_SECONDS", 0),
+		GeoRecordingsSync:      strings.ToLower(env("KEEPPAM_GEO_RECORDINGS_SYNC", "")),
+		GeoRsyncTarget:         env("KEEPPAM_GEO_RSYNC_TARGET", ""),
+		GeoRsyncSource:         env("KEEPPAM_GEO_RSYNC_SOURCE", ""),
+		GeoPublicURL:           env("KEEPPAM_GEO_PUBLIC_URL", env("KEEPPAM_PUBLIC_URL", "")),
+		GeoWitnessMode:         strings.ToLower(env("KEEPPAM_GEO_WITNESS_MODE", "")),
+		GeoWitnessRedisURL:     env("KEEPPAM_GEO_WITNESS_REDIS_URL", ""),
+		GeoWitnessHTTPURL:      env("KEEPPAM_GEO_WITNESS_HTTP_URL", ""),
+		GeoWitnessLeaseSeconds: intEnv("KEEPPAM_GEO_WITNESS_LEASE_SECONDS", 30),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
@@ -310,4 +336,18 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func geoNormalizeRole(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "primary", "standby", "standalone":
+		return s
+	case "dr", "secondary":
+		return "standby"
+	case "":
+		return "standalone"
+	default:
+		return "standalone"
+	}
 }

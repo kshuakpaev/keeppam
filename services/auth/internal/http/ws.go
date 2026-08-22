@@ -46,6 +46,9 @@ type wsClientMsg struct {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if s.fenceStandbySessions(w, r) {
+		return
+	}
 	sess := mustSess(r)
 	var body struct {
 		AssetID     string `json:"asset_id"`

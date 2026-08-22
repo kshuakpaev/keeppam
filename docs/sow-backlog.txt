@@ -19,7 +19,7 @@
 | ID | Модуль | Зачем в тендере | Зависимости / риск |
 |----|--------|-----------------|-------------------|
 | **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | **фазы 1–4 в коде** (`docs/citrix-hdx.txt`); пиксельный decode — OEM |
-| **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | Сейчас HA 2+2/3+2 в одном сайте |
+| **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | **фазы 1–4 в коде** — SOW закрыт |
 | **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | Нет в password-sync A |
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | Сейчас PAP + x509 map |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | DLP-политика; не metadata-only |
@@ -46,6 +46,7 @@
 - Два сайта; async репликация метаданных (+ политика RPO/RGO).
 - Failover runbook; split-brain fencing согласован с PG.
 - Acceptance: kill site A — login/JIT на site B в SLA.
+- **Статус:** фазы 1–4 закрыты (witness/split-brain); см. `docs/geo-ha.txt`.
 
 ### SOW-ORACLE
 - Rotate/sync пароля Oracle УЗ из KeepPAM vault.
