@@ -32,12 +32,43 @@ func TestSplitEOREscapedFF(t *testing.T) {
 	}
 }
 
-func TestExtractScreenText(t *testing.T) {
-	// EW + WCC + SBA + SF + "ABC"
+func TestExtractScreenTextLatin(t *testing.T) {
 	stream := []byte{0xF5, 0xC3, 0x11, 0x40, 0x40, 0x1D, 0x60}
 	stream = append(stream, EncodeEBCDIC("ABC")...)
-	got := ExtractScreenText(stream)
+	got := ExtractScreenText(stream, CP037)
 	if got != "ABC" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestExtractScreenTextDBCS_GE(t *testing.T) {
+	// EW + WCC + SBA + SF + GE + カ (cp930 0x4283)
+	stream := []byte{0xF5, 0xC3, 0x11, 0x40, 0x40, 0x1D, 0x60, 0x08, 0x42, 0x83}
+	got := ExtractScreenText(stream, CP930)
+	if got != "カ" {
+		t.Fatalf("got %q want カ", got)
+	}
+}
+
+func TestDecodeBytesDBCSPair(t *testing.T) {
+	got := DecodeBytes([]byte{0x42, 0x83}, CP930)
+	if got != "カ" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDefaultTermType(t *testing.T) {
+	if DefaultTermType(CP933) != "IBM-3278-5" {
+		t.Fatal("kr term")
+	}
+	if DefaultTermType(CP939) != "IBM-3279-4" {
+		t.Fatal("jp term")
+	}
+}
+
+func TestResolveTermTypeOverride(t *testing.T) {
+	got := ResolveTermType("IBM-3278-4", CP930)
+	if got != "IBM-3278-4" {
+		t.Fatalf("got %s", got)
 	}
 }

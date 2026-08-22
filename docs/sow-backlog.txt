@@ -29,7 +29,7 @@
 | **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | **Закрыт** — QES/КЭП OID + PKCS#11; см. `docs/eidas-qualified.txt` |
 | **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | **Закрыт** — peer + ML score + live; см. `docs/ueba-ml.txt` |
 | **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | **Закрыт** — WinRM + SAM SSH fallback; см. `docs/winrm-discovery.txt` |
-| **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | MVP wire есть |
+| **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | **Закрыт** — codepage + DBCS forensic; см. `docs/tn3270-dbcs.txt` |
 | **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
 
 ---
@@ -102,6 +102,12 @@
 - Import кандидата → vault account без секрета.
 - Acceptance: RDP asset + WinRM → Administrator в кандидатах; WinRM down + SSH :22 → SAM fallback.
 - **Статус:** закрыт (`winrm_accounts`, migration 103); см. `docs/winrm-discovery.txt`.
+
+### SOW-TN3270-DBCS
+- Asset `tn3270_codepage` (cp930/cp939/cp933) + TERMINAL-TYPE к mainframe.
+- DBCS-aware `ExtractScreenText` (GE, SO/SI, DBCS pairs) для forensic UTF-8.
+- Acceptance: cp930 asset → GE カ в screen_text; unit `TestExtractScreenTextDBCS_GE`.
+- **Статус:** закрыт (migration 104); см. `docs/tn3270-dbcs.txt`.
 
 ---
 

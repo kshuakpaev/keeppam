@@ -20,10 +20,14 @@ type BridgeOpts struct {
 	RecordingPath string
 	SessionID     uuid.UUID
 	Sessions      *sessionsvc.Service
+	Codepage      Codepage
 }
 
 // Bridge transparently relays TN3270 EOR frames between client and host.
 func Bridge(ctx context.Context, client, host net.Conn, opts BridgeOpts) error {
+	if opts.Codepage == "" {
+		opts.Codepage = CP037
+	}
 	rec, err := openRecorder(opts.RecordingPath)
 	if err != nil {
 		return err
@@ -81,13 +85,14 @@ func pipeDir(ctx context.Context, src, dst net.Conn, dir string, rec *recorder, 
 			frames, rest := SplitEOR(pending)
 			pending = rest
 			for _, fr := range frames {
-				text := ExtractScreenText(fr)
+				text := ExtractScreenText(fr, opts.Codepage)
 				rec.write(dir, len(fr), text)
 				if text != "" && opts.Sessions != nil && opts.SessionID != uuid.Nil {
 					_ = opts.Sessions.AddEvent(context.Background(), opts.SessionID, "screen_text", map[string]any{
-						"dir":  dir,
-						"text": text,
-						"proto": "tn3270",
+						"dir":       dir,
+						"text":      text,
+						"proto":     "tn3270",
+						"codepage":  string(NormalizeCodepage(string(opts.Codepage))),
 					})
 				}
 			}

@@ -17,12 +17,12 @@ const (
 )
 
 // LoginScreen sends a simple Erase/Write login form and reads AID+fields.
-// Returns sessionUUID and token strings entered by the user.
-func LoginScreen(c net.Conn, banner string) (user, pass string, err error) {
+func LoginScreen(c net.Conn, banner string, cp Codepage) (user, pass string, err error) {
 	if banner == "" {
 		banner = "KeepPAM TN3270"
 	}
-	payload := buildLoginScreen(banner)
+	cp = NormalizeCodepage(string(cp))
+	payload := buildLoginScreen(banner, cp)
 	if _, err = c.Write(FrameEOR(payload)); err != nil {
 		return "", "", err
 	}
@@ -38,7 +38,7 @@ func LoginScreen(c net.Conn, banner string) (user, pass string, err error) {
 			frames, rest := SplitEOR(pending)
 			pending = rest
 			for _, fr := range frames {
-				user, pass, ok := parseLoginResponse(fr)
+				user, pass, ok := parseLoginResponse(fr, cp)
 				if ok {
 					return user, pass, nil
 				}
@@ -53,30 +53,30 @@ func LoginScreen(c net.Conn, banner string) (user, pass string, err error) {
 	}
 }
 
-func buildLoginScreen(banner string) []byte {
+func buildLoginScreen(banner string, cp Codepage) []byte {
 	// Erase/Write + WCC (reset MDT, keyboard restore)
 	out := []byte{0xF5, 0xC3}
-	out = append(out, putText(0, banner)...)
-	out = append(out, putText(80, "Session UUID:")...)
+	out = append(out, putText(0, banner, cp)...)
+	out = append(out, putText(80, "Session UUID:", cp)...)
 	out = append(out, sba(81+14)...)
 	out = append(out, 0x1D, attrUnprot)
 	out = append(out, bytes.Repeat([]byte{0x00}, 40)...) // field room
-	out = append(out, putText(160, "Wire token:")...)
+	out = append(out, putText(160, "Wire token:", cp)...)
 	out = append(out, sba(161+12)...)
 	out = append(out, 0x1D, attrHidden)
 	out = append(out, bytes.Repeat([]byte{0x00}, 48)...)
-	out = append(out, putText(240, "Press Enter after filling fields.")...)
+	out = append(out, putText(240, "Press Enter after filling fields.", cp)...)
 	// IC to first field
 	out = append(out, sba(81+14)...)
 	out = append(out, 0x13) // Insert Cursor
 	return out
 }
 
-func putText(pos int, s string) []byte {
+func putText(pos int, s string, cp Codepage) []byte {
 	var out []byte
 	out = append(out, sba(pos)...)
 	out = append(out, 0x1D, attrProt)
-	out = append(out, EncodeEBCDIC(s)...)
+	out = append(out, EncodeString(s, cp)...)
 	return out
 }
 
@@ -90,7 +90,7 @@ func sba(pos int) []byte {
 	return []byte{0x11, byte(0x40 | ((pos >> 6) & 0x3F)), byte(0x40 | (pos & 0x3F))}
 }
 
-func parseLoginResponse(fr []byte) (user, pass string, ok bool) {
+func parseLoginResponse(fr []byte, cp Codepage) (user, pass string, ok bool) {
 	if len(fr) < 1 {
 		return "", "", false
 	}
@@ -108,7 +108,7 @@ func parseLoginResponse(fr []byte) (user, pass string, ok bool) {
 			for i < len(fr) && fr[i] != 0x11 && fr[i] != 0x1D {
 				i++
 			}
-			fields = append(fields, strings.TrimSpace(DecodeEBCDIC(fr[start:i])))
+			fields = append(fields, strings.TrimSpace(DecodeBytes(fr[start:i], cp)))
 			continue
 		}
 		i++

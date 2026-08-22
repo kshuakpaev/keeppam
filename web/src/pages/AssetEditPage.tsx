@@ -108,6 +108,8 @@ export function AssetEditPage() {
     citrix_storefront_url: "",
     citrix_sta_urls: "",
     citrix_transport: "socks",
+    tn3270_codepage: "cp037",
+    tn3270_terminal_type: "",
   });
   const [accForm, setAccForm] = useState({
     username: "",
@@ -187,6 +189,8 @@ export function AssetEditPage() {
         citrix_storefront_url: a.citrix_storefront_url || "",
         citrix_sta_urls: a.citrix_sta_urls || "",
         citrix_transport: a.citrix_transport || "socks",
+        tn3270_codepage: a.tn3270_codepage || "cp037",
+        tn3270_terminal_type: a.tn3270_terminal_type || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -484,6 +488,8 @@ export function AssetEditPage() {
         citrix_storefront_url: form.citrix_storefront_url || "",
         citrix_sta_urls: form.citrix_sta_urls || "",
         citrix_transport: form.citrix_transport || "socks",
+        tn3270_codepage: form.tn3270_codepage || "cp037",
+        tn3270_terminal_type: form.tn3270_terminal_type || "",
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1292,6 +1298,37 @@ export function AssetEditPage() {
               disabled={!canWrite}
               placeholder="optional"
             />
+          </>
+        )}
+        {form.protocol === "tn3270" && (
+          <>
+            <label>TN3270 EBCDIC codepage</label>
+            <select
+              value={form.tn3270_codepage || "cp037"}
+              onChange={(e) => setForm({ ...form, tn3270_codepage: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="cp037">cp037 (Latin / US)</option>
+              <option value="cp930">cp930 (Japanese Katakana/Kanji)</option>
+              <option value="cp939">cp939 (Japanese Latin/Kanji)</option>
+              <option value="cp933">cp933 (Korean Hangul)</option>
+            </select>
+            <label>TN3270 TERMINAL-TYPE (override)</label>
+            <select
+              value={form.tn3270_terminal_type || ""}
+              onChange={(e) => setForm({ ...form, tn3270_terminal_type: e.target.value })}
+              disabled={!canWrite}
+            >
+              <option value="">— auto from codepage —</option>
+              <option value="IBM-3278-2">IBM-3278-2 (24×80 SBCS)</option>
+              <option value="IBM-3278-4">IBM-3278-4 (JP DBCS)</option>
+              <option value="IBM-3279-4">IBM-3279-4 (JP DBCS color)</option>
+              <option value="IBM-3278-5">IBM-3278-5 (KR DBCS)</option>
+            </select>
+            <p className="muted" style={{ marginTop: 0 }}>
+              SOW-TN3270-DBCS: forensic decode GE/DBCS pairs; wire bridge unchanged. См.{" "}
+              <code>docs/tn3270-dbcs.txt</code>.
+            </p>
           </>
         )}
         {form.protocol === "citrix" && (

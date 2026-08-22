@@ -265,6 +265,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_addr"] = s.cfg.TN3270Addr
 			out["wire_user"] = created.ID.String()
 			out["wire_hint"] = "x3270/c3270 → PAM wire_addr; on KeepPAM login screen: Session UUID + wire_token"
+			if cp := creds.Asset.Tn3270Codepage; cp != "" && cp != "cp037" {
+				out["tn3270_codepage"] = cp
+				if tt := creds.Asset.Tn3270TerminalType; tt != "" {
+					out["tn3270_terminal_type"] = tt
+				}
+				out["wire_hint"] = out["wire_hint"].(string) + "; asset DBCS codepage=" + cp
+			}
 		}
 	}
 	if !created.WaitingSupervisor && created.Protocol == "citrix" {

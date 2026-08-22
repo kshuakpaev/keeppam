@@ -100,7 +100,7 @@ func (g *Gateway) handleConn(client net.Conn) {
 		slog.Debug("tn3270 negotiate client", "err", err)
 		return
 	}
-	user, pass, err := tn3270.LoginScreen(client, "KeepPAM TN3270 gateway")
+	user, pass, err := tn3270.LoginScreen(client, "KeepPAM TN3270 gateway", tn3270.CP037)
 	if err != nil {
 		slog.Debug("tn3270 login", "err", err)
 		return
@@ -145,7 +145,10 @@ func (g *Gateway) handleConn(client net.Conn) {
 	}
 	defer up.Close()
 
-	if err := tn3270.NegotiateClient(up, "IBM-3278-2"); err != nil {
+	cp := tn3270.NormalizeCodepage(creds.Asset.Tn3270Codepage)
+	termType := tn3270.ResolveTermType(creds.Asset.Tn3270TerminalType, cp)
+
+	if err := tn3270.NegotiateClient(up, termType); err != nil {
 		_ = sendMsg(client, "HOST NEGOTIATE FAILED")
 		_ = g.sessions.MarkEnded(ctx, sessionID, err.Error())
 		return
@@ -154,6 +157,7 @@ func (g *Gateway) handleConn(client net.Conn) {
 	_ = g.sessions.MarkActive(ctx, sessionID)
 	_ = g.audit.Record(ctx, &row.UserID, "session.started", "session", sessionID.String(), clientIP(client), "", map[string]any{
 		"asset": creds.Asset.Name, "account": creds.Account.Username, "via": "tn3270-wire",
+		"tn3270_codepage": string(cp), "tn3270_term": termType,
 	})
 
 	hbStop := make(chan struct{})
@@ -169,6 +173,7 @@ func (g *Gateway) handleConn(client net.Conn) {
 		RecordingPath: row.RecordingPath,
 		SessionID:     sessionID,
 		Sessions:      g.sessions,
+		Codepage:      cp,
 	})
 
 	_ = g.sessions.MarkEnded(ctx, sessionID, "")
