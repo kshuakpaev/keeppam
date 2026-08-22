@@ -30,7 +30,7 @@
 | **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | **Закрыт** — peer + ML score + live; см. `docs/ueba-ml.txt` |
 | **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | **Закрыт** — WinRM + SAM SSH fallback; см. `docs/winrm-discovery.txt` |
 | **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | **Закрыт** — codepage + DBCS forensic; см. `docs/tn3270-dbcs.txt` |
-| **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
+| **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | **Runbook** — контракт/SLA; см. `docs/support-12m.txt` |
 
 ---
 
@@ -108,6 +108,12 @@
 - DBCS-aware `ExtractScreenText` (GE, SO/SI, DBCS pairs) для forensic UTF-8.
 - Acceptance: cp930 asset → GE カ в screen_text; unit `TestExtractScreenTextDBCS_GE`.
 - **Статус:** закрыт (migration 104); см. `docs/tn3270-dbcs.txt`.
+
+### SOW-SUPPORT-12M
+- 12 мес техподдержки производителя; безлимит пользователей портала; cap активов — `license.json`.
+- Runbook: классы P1–P4, эскалация, quarterly advisory, продление.
+- Acceptance: контракт + license + обучение + проверочный тикет (не код).
+- **Статус:** runbook; см. `docs/support-12m.txt`.
 
 ---
 
