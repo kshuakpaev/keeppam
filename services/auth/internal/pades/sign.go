@@ -19,14 +19,18 @@ const (
 
 // Signer is an RSA cert+key used for PAdES-B-B/B-T/B-LT/B-LTA.
 type Signer struct {
-	Cert     *x509.Certificate
-	Key      *rsa.PrivateKey
-	Chain    []*x509.Certificate
-	TSAURL   string
-	LTV      bool
-	LTVDir   string
-	LTVFetch bool
-	LTA      bool
+	Cert       *x509.Certificate
+	Key        *rsa.PrivateKey
+	Chain      []*x509.Certificate
+	TSAURL     string
+	LTV        bool
+	LTVDir     string
+	LTVFetch   bool
+	LTA        bool
+	Qualified  bool
+	RegProfile string // eidas | fstec
+	PKCS11     bool
+	SignHash   SignHashFunc
 }
 
 // LTVEnabled is B-LT: TSA + DSS validation data.
@@ -55,6 +59,14 @@ func (s *Signer) Profile() string {
 
 // SignatureLabel is a human-readable profile for the PDF body.
 func (s *Signer) SignatureLabel() string {
+	base := s.profileLabel()
+	if s != nil && s.Qualified {
+		return base + " · " + QualifiedLabel(s.RegProfile)
+	}
+	return base
+}
+
+func (s *Signer) profileLabel() string {
 	switch s.Profile() {
 	case "B-LTA":
 		return "PAdES-B-LTA (CAdES + DSS + archive document timestamp)"
@@ -75,6 +87,15 @@ func (s *Signer) CN() string {
 		return s.Cert.Subject.CommonName
 	}
 	return s.Cert.Subject.String()
+}
+
+// Clone returns a shallow copy (for per-request PKCS#11 overlay).
+func (s *Signer) Clone() *Signer {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	return &cp
 }
 
 func Load(certFile, keyFile string) (*Signer, error) {
@@ -170,6 +191,9 @@ func signWithReserve(pdf []byte, s *Signer, at time.Time, reserve int) ([]byte, 
 	hexZeros := strings.Repeat("0", reserve*2)
 	name := pdfLiteral(s.CN())
 	reason := pdfLiteral("KeepPAM compliance report PAdES-" + s.Profile())
+	if s.Qualified {
+		reason = pdfLiteral("KeepPAM compliance report PAdES-" + s.Profile() + " QES")
+	}
 	m := at.Format("D:20060102150405Z")
 	sigBody := fmt.Sprintf(
 		"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /%s /ByteRange [0 0000000000 0000000000 0000000000] /Contents <%s> /M (%s) /Name (%s) /Reason (%s) >>\n",

@@ -197,6 +197,20 @@ export function ConfigPage() {
     last_error: "",
   });
   const [nacToken, setNacToken] = useState("");
+  const [eidasForm, setEidasForm] = useState({
+    mode: "off",
+    profile: "eidas",
+    require_b_lta: true,
+    pkcs11_enabled: false,
+    pkcs11_module: "",
+    pkcs11_label: "",
+    has_pkcs11_pin: false,
+    cert_cn: "",
+    cert_qualified: false,
+    pades_profile: "",
+    last_error: "",
+  });
+  const [eidasPin, setEidasPin] = useState("");
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
@@ -227,7 +241,7 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, fw, fws, nac, nt, idps, ar] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nac, eidas, nt, idps, ar] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
@@ -235,7 +249,15 @@ export function ConfigPage() {
           api.getITSMSettings(),
           api.getFirewallSettings(),
           api.getFirewallStatus().catch(() => null),
-          api.getNACSettings().catch(() => ({ mode: "off", vendor: "generic", timeout_ms: 3000 })),
+          api.getNACSettings().catch(() => ({
+            mode: "off",
+            api_url: "",
+            vendor: "generic",
+            timeout_ms: 3000,
+            has_api_token: false,
+            last_error: "",
+          })),
+          api.getEIDASSettings().catch(() => ({ mode: "off", profile: "eidas", require_b_lta: true })),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
           api.getArchiveSettings().catch(() => emptyArchive),
@@ -277,6 +299,19 @@ export function ConfigPage() {
           timeout_ms: nac.timeout_ms || 3000,
           has_api_token: !!nac.has_api_token,
           last_error: nac.last_error || "",
+        });
+        setEidasForm({
+          mode: eidas.mode || "off",
+          profile: eidas.profile || "eidas",
+          require_b_lta: eidas.require_b_lta !== false,
+          pkcs11_enabled: !!eidas.pkcs11_enabled,
+          pkcs11_module: eidas.pkcs11_module || "",
+          pkcs11_label: eidas.pkcs11_label || "",
+          has_pkcs11_pin: !!eidas.has_pkcs11_pin,
+          cert_cn: eidas.cert_cn || "",
+          cert_qualified: !!eidas.cert_qualified,
+          pades_profile: eidas.pades_profile || "",
+          last_error: eidas.last_error || "",
         });
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
@@ -418,6 +453,43 @@ export function ConfigPage() {
       setMsg("NAC client сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения NAC");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveEIDAS(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const saved = await api.putEIDASSettings({
+        mode: eidasForm.mode,
+        profile: eidasForm.profile,
+        require_b_lta: eidasForm.require_b_lta,
+        pkcs11_enabled: eidasForm.pkcs11_enabled,
+        pkcs11_module: eidasForm.pkcs11_module.trim(),
+        pkcs11_label: eidasForm.pkcs11_label.trim(),
+        ...(eidasPin.trim() ? { pkcs11_pin: eidasPin.trim() } : {}),
+      });
+      setEidasForm({
+        mode: saved.mode || "off",
+        profile: saved.profile || "eidas",
+        require_b_lta: saved.require_b_lta !== false,
+        pkcs11_enabled: !!saved.pkcs11_enabled,
+        pkcs11_module: saved.pkcs11_module || "",
+        pkcs11_label: saved.pkcs11_label || "",
+        has_pkcs11_pin: !!saved.has_pkcs11_pin,
+        cert_cn: saved.cert_cn || "",
+        cert_qualified: !!saved.cert_qualified,
+        pades_profile: saved.pades_profile || "",
+        last_error: saved.last_error || "",
+      });
+      setEidasPin("");
+      setMsg("Qualified PDF (eIDAS) сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения eIDAS");
     } finally {
       setBusy(false);
     }
@@ -1958,6 +2030,93 @@ export function ConfigPage() {
             }
           >
             Test posture
+          </button>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить
+          </button>
+        </div>
+      </form>
+
+      <form className="card" onSubmit={onSaveEIDAS} style={{ maxWidth: 640 }}>
+        <h2>Qualified PDF (eIDAS / ФСТЭК)</h2>
+        <p className="muted">
+          Поверх PAdES B-LTA: проверка policy OID квалифицированного сертификата, опционально PKCS#11 HSM (
+          <span className="mono">KEEPPAM_PDF_PKCS11_HELPER</span>). Сертификат — env{" "}
+          <span className="mono">KEEPPAM_PDF_CERT_FILE</span>.
+        </p>
+        <label>Режим</label>
+        <select value={eidasForm.mode} onChange={(e) => setEidasForm({ ...eidasForm, mode: e.target.value })}>
+          <option value="off">выкл. (PAdES only)</option>
+          <option value="advanced">advanced (B-LTA без QES gate)</option>
+          <option value="qualified">qualified (QES/КЭП + B-LTA)</option>
+        </select>
+        <label>Профиль</label>
+        <select value={eidasForm.profile} onChange={(e) => setEidasForm({ ...eidasForm, profile: e.target.value })}>
+          <option value="eidas">eIDAS (EU QES OID)</option>
+          <option value="fstec">ФСТЭК (КЭП OID)</option>
+        </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={eidasForm.require_b_lta}
+            onChange={(e) => setEidasForm({ ...eidasForm, require_b_lta: e.target.checked })}
+          />{" "}
+          Требовать PAdES-B-LTA
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={eidasForm.pkcs11_enabled}
+            onChange={(e) => setEidasForm({ ...eidasForm, pkcs11_enabled: e.target.checked })}
+          />{" "}
+          PKCS#11 для ключа подписи PDF
+        </label>
+        {eidasForm.pkcs11_enabled ? (
+          <>
+            <label>PKCS#11 module (.so)</label>
+            <input
+              value={eidasForm.pkcs11_module}
+              onChange={(e) => setEidasForm({ ...eidasForm, pkcs11_module: e.target.value })}
+              placeholder="/usr/lib64/..."
+            />
+            <label>Object label</label>
+            <input
+              value={eidasForm.pkcs11_label}
+              onChange={(e) => setEidasForm({ ...eidasForm, pkcs11_label: e.target.value })}
+            />
+            <label>PKCS#11 PIN {eidasForm.has_pkcs11_pin ? "(задан)" : ""}</label>
+            <input
+              type="password"
+              value={eidasPin}
+              onChange={(e) => setEidasPin(e.target.value)}
+              placeholder="пусто = не менять"
+            />
+          </>
+        ) : null}
+        {eidasForm.cert_cn ? (
+          <p className="muted">
+            Сертификат: {eidasForm.cert_cn} · PAdES-{eidasForm.pades_profile || "—"} · QES/КЭП:{" "}
+            {eidasForm.cert_qualified ? "да" : "нет"}
+          </p>
+        ) : null}
+        {eidasForm.last_error ? <p className="error">Последняя проверка: {eidasForm.last_error}</p> : null}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api
+                .testEIDASSettings()
+                .then((r) =>
+                  setMsg(
+                    `eIDAS test: ready=${r.result.ready} qualified=${r.result.cert_qualified} ${r.result.detail || ""}`,
+                  ),
+                )
+                .catch((err) => setError(String(err)))
+            }
+          >
+            Test cert
           </button>
           <button className="btn" type="submit" disabled={busy}>
             Сохранить

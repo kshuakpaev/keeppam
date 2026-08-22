@@ -436,6 +436,23 @@ export type NACSettings = {
   updated_at?: string;
 };
 
+export type EIDASSettings = {
+  mode?: string;
+  profile?: string;
+  require_b_lta?: boolean;
+  pkcs11_enabled?: boolean;
+  pkcs11_module?: string;
+  pkcs11_label?: string;
+  pkcs11_pin?: string;
+  has_pkcs11_pin?: boolean;
+  cert_cn?: string;
+  cert_qualified?: boolean;
+  pades_profile?: string;
+  last_check_at?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
 export type FirewallSettings = {
   pam_gateway_cidrs: string[];
   probe_url?: string;
@@ -1018,6 +1035,25 @@ export const api = {
       "/api/v1/admin/settings/nac/test",
       { method: "POST" },
     ),
+  getEIDASSettings: () => request<EIDASSettings>("/api/v1/admin/settings/eidas"),
+  putEIDASSettings: (body: Partial<EIDASSettings>) =>
+    request<EIDASSettings>("/api/v1/admin/settings/eidas", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testEIDASSettings: () =>
+    request<{
+      result: {
+        mode: string;
+        profile: string;
+        cert_cn?: string;
+        cert_qualified?: boolean;
+        pades_profile?: string;
+        pkcs11?: boolean;
+        detail?: string;
+        ready?: boolean;
+      };
+    }>("/api/v1/admin/settings/eidas/test", { method: "POST" }),
   downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
     const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(await res.text());
@@ -2579,6 +2615,9 @@ export type ComplianceStatus = {
   pdf_signed?: boolean;
   pdf_signer?: string;
   pdf_pades?: string;
+  pdf_qualified?: boolean;
+  pdf_eidas_mode?: string;
+  pdf_eidas_profile?: string;
 };
 
 export type ComplianceReport = {

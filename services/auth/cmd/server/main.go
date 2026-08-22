@@ -29,6 +29,7 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/eidas"
 	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
@@ -278,20 +279,31 @@ func main() {
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
 	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
+	var pdfSigner *pades.Signer
 	if cfg.PDFCertFile != "" {
-		sig, err := pades.Load(cfg.PDFCertFile, cfg.PDFKeyFile)
+		var err error
+		if cfg.PDFKeyFile != "" {
+			pdfSigner, err = pades.Load(cfg.PDFCertFile, cfg.PDFKeyFile)
+		} else {
+			pdfSigner, err = pades.LoadCertOnly(cfg.PDFCertFile)
+			if err == nil {
+				err = pades.AttachPKCS11Helper(pdfSigner, cfg.PDFPKCS11Helper, cfg.PDFPKCS11Module, os.Getenv("KEEPPAM_PDF_PKCS11_LABEL"), os.Getenv("KEEPPAM_PDF_PKCS11_PIN"))
+			}
+		}
 		if err != nil {
 			slog.Error("pades signer", "err", err)
 			os.Exit(1)
 		}
-		sig.TSAURL = cfg.PDFTSAURL
-		sig.LTV = cfg.PDFLTV
-		sig.LTVDir = cfg.PDFLTVDir
-		sig.LTVFetch = cfg.PDFLTVFetch
-		sig.LTA = cfg.PDFLTA
-		complianceSvc.SetPDFSigner(sig)
-		slog.Info("pades signer", "cn", sig.CN(), "profile", sig.Profile(), "tsa", cfg.PDFTSAURL != "", "ltv", cfg.PDFLTV, "lta", cfg.PDFLTA)
+		pdfSigner.TSAURL = cfg.PDFTSAURL
+		pdfSigner.LTV = cfg.PDFLTV
+		pdfSigner.LTVDir = cfg.PDFLTVDir
+		pdfSigner.LTVFetch = cfg.PDFLTVFetch
+		pdfSigner.LTA = cfg.PDFLTA
+		complianceSvc.SetPDFSigner(pdfSigner)
+		slog.Info("pades signer", "cn", pdfSigner.CN(), "profile", pdfSigner.Profile(), "tsa", cfg.PDFTSAURL != "", "ltv", cfg.PDFLTV, "lta", cfg.PDFLTA, "pkcs11", pdfSigner.PKCS11)
 	}
+	eidasSvc := eidas.New(db, auditSvc, env, cfg, pdfSigner)
+	complianceSvc.SetEidas(eidasSvc)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
@@ -509,7 +521,7 @@ func main() {
 			rdpBroker = rdpBrokerInit
 			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {

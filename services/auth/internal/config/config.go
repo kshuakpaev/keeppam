@@ -81,6 +81,8 @@ type Config struct {
 	PDFLTVDir              string
 	PDFLTVFetch            bool
 	PDFLTA                 bool
+	PDFPKCS11Helper        string
+	PDFPKCS11Module        string
 	DrainTimeout           time.Duration
 	RDPPublicHost          string // hostname in .rdp for native mstsc; empty/off = disabled
 	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
@@ -171,6 +173,8 @@ func Load() (Config, error) {
 		PDFLTVDir:              strings.TrimSpace(env("KEEPPAM_PDF_LTV_DIR", "")),
 		PDFLTVFetch:            boolEnv("KEEPPAM_PDF_LTV_FETCH", true),
 		PDFLTA:                 boolEnv("KEEPPAM_PDF_LTA", false),
+		PDFPKCS11Helper:        strings.TrimSpace(env("KEEPPAM_PDF_PKCS11_HELPER", "")),
+		PDFPKCS11Module:        strings.TrimSpace(env("KEEPPAM_PDF_PKCS11_MODULE", "")),
 		DrainTimeout:           durationEnv("KEEPPAM_DRAIN_TIMEOUT", 90*time.Second),
 		RDPPublicHost:          env("KEEPPAM_RDP_PUBLIC_HOST", ""),
 		RDPProxyBin:            env("KEEPPAM_RDP_PROXY_BIN", ""),
@@ -236,8 +240,14 @@ func Load() (Config, error) {
 	if cfg.TLSRequireClientCert && cfg.TLSClientCAFile == "" && cfg.SPIFFEBundleFile == "" {
 		return Config{}, fmt.Errorf("KEEPPAM_TLS_CLIENT_CA_FILE or KEEPPAM_SPIFFE_BUNDLE_FILE required when KEEPPAM_TLS_REQUIRE_CLIENT_CERT=true")
 	}
-	if (cfg.PDFCertFile == "") != (cfg.PDFKeyFile == "") {
-		return Config{}, fmt.Errorf("KEEPPAM_PDF_CERT_FILE and KEEPPAM_PDF_KEY_FILE must both be set")
+	if cfg.PDFCertFile == "" && cfg.PDFKeyFile != "" {
+		return Config{}, fmt.Errorf("KEEPPAM_PDF_CERT_FILE required with KEEPPAM_PDF_KEY_FILE")
+	}
+	if cfg.PDFCertFile != "" && cfg.PDFKeyFile == "" && cfg.PDFPKCS11Helper == "" {
+		return Config{}, fmt.Errorf("KEEPPAM_PDF_KEY_FILE or KEEPPAM_PDF_PKCS11_HELPER required with KEEPPAM_PDF_CERT_FILE")
+	}
+	if cfg.PDFCertFile != "" && cfg.PDFKeyFile != "" && cfg.PDFPKCS11Helper != "" {
+		return Config{}, fmt.Errorf("set KEEPPAM_PDF_KEY_FILE or KEEPPAM_PDF_PKCS11_HELPER, not both")
 	}
 	if cfg.PDFLTV && cfg.PDFTSAURL == "" {
 		return Config{}, fmt.Errorf("KEEPPAM_PDF_LTV requires KEEPPAM_PDF_TSA_URL")

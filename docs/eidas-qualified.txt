@@ -1,0 +1,69 @@
+# KeepPAM: Qualified PDF (SOW-EIDAS)
+
+Расширение PAdES (`docs/pades.txt`) для **eIDAS QES** и **ФСТЭК КЭП**: проверка policy OID сертификата, gate на export compliance-PDF, опциональный PKCS#11 HSM для ключа подписи.
+
+Не заменяет аккредитованный trust service provider — оператор подключает свой QES/КЭП и TSA.
+
+## Настройки
+
+Config → **Qualified PDF (eIDAS / ФСТЭК)** (`eidas_settings`, миграция `101`):
+
+| Поле | Смысл |
+|------|--------|
+| `mode` | `off` / `advanced` / `qualified` |
+| `profile` | `eidas` (EU QES OID) / `fstec` (КЭП 1.2.643.100.113.1) |
+| `require_b_lta` | Требовать PAdES-B-LTA (default true в qualified) |
+| `pkcs11_enabled` | Подпись через HSM helper |
+| `pkcs11_module` / `pkcs11_label` / `pkcs11_pin` | PKCS#11 object |
+
+## Env (сертификат и PAdES)
+
+| Переменная | Смысл |
+|------------|--------|
+| `KEEPPAM_PDF_CERT_FILE` | PEM leaf (+ chain) |
+| `KEEPPAM_PDF_KEY_FILE` | PEM RSA key **или** |
+| `KEEPPAM_PDF_PKCS11_HELPER` | CGO-free helper (stdin: b64 digest → stdout: b64 sig) |
+| `KEEPPAM_PDF_PKCS11_MODULE` | default module для helper |
+| `KEEPPAM_PDF_PKCS11_LABEL` / `PIN` | env fallback если не в UI |
+| `KEEPPAM_PDF_TSA_URL` + `LTV` + `LTA` | B-LTA для qualified |
+
+Demo helper (lab): `go run ./cmd/pkcs11-pdf-sign` с `KEEPPAM_PDF_KEY_FILE`.
+
+## Режимы
+
+| mode | Поведение |
+|------|-----------|
+| `off` | Только базовый PAdES по env |
+| `advanced` | B-LTA gate без проверки QES OID |
+| `qualified` | Export PDF только при QES/КЭП OID + B-LTA; Reason/notes с QES label |
+
+## API
+
+- `GET/PUT /api/v1/admin/settings/eidas`
+- `POST /api/v1/admin/settings/eidas/test` → `{ result: { ready, cert_qualified, pades_profile, detail } }`
+
+Compliance status: `pdf_eidas_mode`, `pdf_eidas_profile`, `pdf_qualified`. Control `eidas_pdf`.
+
+## Acceptance (DoD)
+
+1. PAdES env: cert+key, TSA, `KEEPPAM_PDF_LTV=true`, `KEEPPAM_PDF_LTA=true`.
+2. Lab cert с QES OID (unit test `eidas.DemoQualifiedCert` или CA заказчика).
+3. Config: mode=`qualified`, profile=`eidas` → **Test cert** → `ready=true`, `cert_qualified=true`.
+4. Compliance → PDF export OK, подпись с QES в label.
+5. mode=`qualified` + cert без QES OID → export 400 / test `ready=false`.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| OID validation eIDAS/FSTEC | Полный QTSP / cloud signing |
+| PKCS#11 helper path | In-process miekg/pkcs11 (CGO) |
+| Gate на compliance PDF | Подпись CSV/JSON, ECDSA/GOST keys |
+| PAdES B-LTA + QES metadata | Юридическая квалификация без CA заказчика |
+
+## Связанные документы
+
+- `docs/pades.txt` — baseline PAdES
+- `docs/compliance-report.txt` — export PDF
+- `docs/pkcs11.txt` — data key HSM (отдельно от PDF key)
+- `docs/sow-backlog.txt` — SOW-EIDAS

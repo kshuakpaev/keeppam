@@ -299,7 +299,13 @@ export function CompliancePage() {
           Кто имел доступ, согласовал, подключался, SQL и команды SSH (stdin), скачивания, изменения и отзывы. Не OCR
           RDP.
           {status?.pdf_signed
-            ? ` PDF подписывается PAdES-${status.pdf_pades || "B-B"} (${status.pdf_signer || "сертификат"}).`
+            ? ` PDF подписывается PAdES-${status.pdf_pades || "B-B"} (${status.pdf_signer || "сертификат"})${
+                status.pdf_qualified
+                  ? ` · qualified ${status.pdf_eidas_profile || "eIDAS"}`
+                  : status.pdf_eidas_mode && status.pdf_eidas_mode !== "off"
+                    ? ` · eIDAS mode=${status.pdf_eidas_mode}`
+                    : ""
+              }.`
             : " PDF без подписи, пока не задан KEEPPAM_PDF_CERT_FILE."}
         </p>
         <form
