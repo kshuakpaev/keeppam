@@ -32,6 +32,7 @@ import (
 	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
+	"github.com/keeppam/auth/internal/geo"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/health"
 	httpapi "github.com/keeppam/auth/internal/http"
@@ -188,6 +189,19 @@ func main() {
 		}
 		if err := sessions.Redis().Ping(ctx).Err(); err != nil {
 			return fmt.Errorf("redis: %w", err)
+		}
+		gcfg := geo.Config{
+			SiteID: cfg.SiteID, Role: cfg.SiteRole, PeerURL: cfg.SitePeerURL,
+			ReplicaDSN: cfg.SiteReplicaDSN, MaxLagSeconds: cfg.SiteMaxLagSeconds,
+		}
+		if gcfg.IsStandby() && (gcfg.MaxLagSeconds > 0 || gcfg.ReplicaDSN != "") {
+			st := geo.Probe(ctx, gcfg)
+			if st.ReplicaProbe == "error" {
+				return fmt.Errorf("geo replica: %s", st.ReplicaError)
+			}
+			if st.LagOK != nil && !*st.LagOK {
+				return fmt.Errorf("geo lag %.1fs exceeds max %ds", *st.LagSeconds, gcfg.MaxLagSeconds)
+			}
 		}
 		return nil
 	})
@@ -577,6 +591,9 @@ func main() {
 	var sshGw *sshgw.Gateway
 	if runSSH {
 		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
+		sshGw.SetSessionFence(func() error {
+			return geo.FenceError(geo.Config{SiteID: cfg.SiteID, Role: cfg.SiteRole})
+		})
 		go func() {
 			slog.Info("ssh worker starting", "addr", cfg.SSHAddr, "mode", cfg.Mode, "recordings", recStore.Backend())
 			if err := sshGw.ListenAndServe(); err != nil {

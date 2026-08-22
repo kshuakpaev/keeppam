@@ -51,6 +51,7 @@
 - [ ] Нет исходящих подключений к вендору в штатном режиме
 - [ ] Документация: `docs/kp.txt`, `docs/prod-infra.txt`, `docs/ha.txt`, admin quick start
 - [ ] HA 2+2: kill одного api — login жив; stop одного worker — SSH на другом жива
+- [ ] (SOW-GEO-HA) `GET /geoz` role; standby → session create 503; lag в `admin/geo/status` (`docs/geo-ha.txt`)
 - [ ] Offline update: `docs/offline-update.txt` — load с USB, `--pull never`, rollback
 - [ ] (T-03) После install/upgrade runtime-образы — `keeppam-*` (`docs/runtime-brand.txt`); `NOTICE` в бандле
 - [ ] Demo 45 мин по `docs/demo-45min.txt` (JIT SSH, RDP или SQL, forensic, PDF)

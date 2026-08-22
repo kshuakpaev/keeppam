@@ -87,6 +87,11 @@ type Config struct {
 	RDPProxyCertFile       string
 	RDPProxyKeyFile        string
 	LicenseFile            string // path to license.json (T-52); empty → default max_assets=100
+	SiteID                 string // SOW-GEO-HA site identity
+	SiteRole               string // primary | standby | standalone
+	SitePeerURL            string // optional peer /livez
+	SiteReplicaDSN         string // optional PG DSN for lag probe
+	SiteMaxLagSeconds      int    // 0 = don't fail readyz on lag
 }
 
 func Load() (Config, error) {
@@ -164,6 +169,11 @@ func Load() (Config, error) {
 		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
 		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
 		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
+		SiteID:                 env("KEEPPAM_SITE_ID", ""),
+		SiteRole:               geoNormalizeRole(env("KEEPPAM_SITE_ROLE", "")),
+		SitePeerURL:            env("KEEPPAM_SITE_PEER_URL", ""),
+		SiteReplicaDSN:         env("KEEPPAM_SITE_REPLICA_DSN", ""),
+		SiteMaxLagSeconds:      intEnv("KEEPPAM_SITE_MAX_LAG_SECONDS", 0),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
@@ -310,4 +320,18 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func geoNormalizeRole(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "primary", "standby", "standalone":
+		return s
+	case "dr", "secondary":
+		return "standby"
+	case "":
+		return "standalone"
+	default:
+		return "standalone"
+	}
 }

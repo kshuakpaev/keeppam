@@ -1,0 +1,49 @@
+# Overlay: geo standby site (SOW-GEO-HA phase 1).
+# Site B runs API/workers against a streaming PG replica and fences session writes.
+#
+# Prerequisites: site A postgres reachable as PGHOST (see postgres service below).
+#
+#   export KEEPPAM_GEO_PRIMARY_HOST=10.0.1.10
+#   docker compose -f docker-compose.yml -f compose.geo-standby.yml up -d
+#
+# Not automatic failover — promote PG then flip KEEPPAM_SITE_ROLE=primary (docs/geo-ha.txt).
+
+services:
+  postgres:
+    # Replaced by streaming replica of site A primary.
+    image: postgres:16-alpine
+    environment:
+      PGHOST: ${KEEPPAM_GEO_PRIMARY_HOST:?set KEEPPAM_GEO_PRIMARY_HOST to site-A postgres}
+      PGPORT: "5432"
+      PGUSER: keeppam
+      PGPASSWORD: keeppam
+      POSTGRES_PASSWORD: keeppam
+      POSTGRES_USER: keeppam
+      POSTGRES_DB: keeppam
+    volumes:
+      - pgdata_geo:/var/lib/postgresql/data
+      - ./ha/postgres-replica.sh:/replica.sh:ro
+    entrypoint: ["/bin/sh", "/replica.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keeppam -d keeppam"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    environment:
+      KEEPPAM_SITE_ID: ${KEEPPAM_SITE_ID:-site-b}
+      KEEPPAM_SITE_ROLE: standby
+      KEEPPAM_SITE_REPLICA_DSN: postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable
+      KEEPPAM_SITE_MAX_LAG_SECONDS: ${KEEPPAM_SITE_MAX_LAG_SECONDS:-120}
+      KEEPPAM_SITE_PEER_URL: ${KEEPPAM_SITE_PEER_URL:-}
+
+  session-worker:
+    environment:
+      KEEPPAM_SITE_ID: ${KEEPPAM_SITE_ID:-site-b}
+      KEEPPAM_SITE_ROLE: standby
+      KEEPPAM_SITE_REPLICA_DSN: postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable
+      KEEPPAM_SITE_MAX_LAG_SECONDS: ${KEEPPAM_SITE_MAX_LAG_SECONDS:-120}
+
+volumes:
+  pgdata_geo:

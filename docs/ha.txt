@@ -84,7 +84,7 @@ docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
 
 ## Multi-site
 
-Два DC с async PG + object storage recordings — SOW / P5. В этом срезе: fencing = один writer PG; reconcile паролей после restore сети.
+Два DC с async PG + fencing — **SOW-GEO-HA** (`docs/geo-ha.txt`). Внутри сайта: fencing = один writer PG.
 
 ## Чего нет
 
