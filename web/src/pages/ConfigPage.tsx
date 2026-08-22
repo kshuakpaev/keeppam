@@ -60,6 +60,13 @@ const empty: AuthSettings = {
   radius_auto_provision: true,
   radius_skip_mfa: false,
   radius_default_role: "operator",
+  radius_auth_method: "pap",
+  radius_eap_ca_pem: "",
+  radius_eap_anonymous_user: "anonymous",
+  radius_eap_insecure_tls: false,
+  radius_radsec: false,
+  radius_radsec_ca_pem: "",
+  radius_radsec_client_pem: "",
   saml_idp_metadata_url: "",
   saml_idp_entity_id: "",
   saml_idp_sso_url: "",
@@ -1306,10 +1313,11 @@ export function ConfigPage() {
           <>
             <h2>RADIUS</h2>
             <p className="muted">
-              PAP Access-Request (UDP 1812). EAP/RadSec не в этом срезе. Filter-Id{" "}
+              PAP (UDP 1812), EAP-TTLS (inner PAP), PEAP (MSCHAPv2) или RadSec (TLS :2083). Filter-Id / Class{" "}
               <span className="mono">admin|operator|auditor|security</span> (или{" "}
               <span className="mono">keeppam-admin</span>) задаёт роль при первом входе. См.{" "}
-              <span className="mono">docs/radius-auth.txt</span>.
+              <span className="mono">docs/radius-auth.txt</span>,{" "}
+              <span className="mono">docs/radius-eap.txt</span>.
             </p>
             <label>Сервер (host или host:port)</label>
             <input
@@ -1339,6 +1347,64 @@ export function ConfigPage() {
               value={form.radius_timeout_sec}
               onChange={(e) => setForm({ ...form, radius_timeout_sec: Number(e.target.value) || 5 })}
             />
+            <label>Auth method</label>
+            <select
+              value={form.radius_auth_method || "pap"}
+              onChange={(e) => setForm({ ...form, radius_auth_method: e.target.value })}
+            >
+              <option value="pap">PAP (UDP)</option>
+              <option value="eap-ttls">EAP-TTLS (inner PAP)</option>
+              <option value="peap">PEAP (MSCHAPv2)</option>
+            </select>
+            {(form.radius_auth_method === "eap-ttls" || form.radius_auth_method === "peap") && (
+              <>
+                <label>EAP tunnel CA (PEM)</label>
+                <textarea
+                  rows={4}
+                  value={form.radius_eap_ca_pem || ""}
+                  onChange={(e) => setForm({ ...form, radius_eap_ca_pem: e.target.value })}
+                  placeholder="-----BEGIN CERTIFICATE-----"
+                  required
+                />
+                <label>EAP anonymous username</label>
+                <input
+                  value={form.radius_eap_anonymous_user || "anonymous"}
+                  onChange={(e) => setForm({ ...form, radius_eap_anonymous_user: e.target.value })}
+                />
+                <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.radius_eap_insecure_tls}
+                    onChange={(e) => setForm({ ...form, radius_eap_insecure_tls: e.target.checked })}
+                  />
+                  EAP: не проверять hostname сертификата
+                </label>
+              </>
+            )}
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.radius_radsec}
+                onChange={(e) => setForm({ ...form, radius_radsec: e.target.checked })}
+              />
+              RadSec (RADIUS/TLS, порт 2083)
+            </label>
+            {form.radius_radsec && (
+              <>
+                <label>RadSec CA (PEM)</label>
+                <textarea
+                  rows={4}
+                  value={form.radius_radsec_ca_pem || ""}
+                  onChange={(e) => setForm({ ...form, radius_radsec_ca_pem: e.target.value })}
+                />
+                <label>RadSec client cert + key (PEM)</label>
+                <textarea
+                  rows={6}
+                  value={form.radius_radsec_client_pem || ""}
+                  onChange={(e) => setForm({ ...form, radius_radsec_client_pem: e.target.value })}
+                />
+              </>
+            )}
             <label>Роль по умолчанию</label>
             <input
               value={form.radius_default_role}

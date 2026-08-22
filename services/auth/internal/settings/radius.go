@@ -66,34 +66,24 @@ func (s *Service) AuthenticateRADIUS(ctx context.Context, cfg AuthSettings, secr
 		return RADIUSIdentity{}, fmt.Errorf("radius is not configured")
 	}
 
-	packet := radius.New(radius.CodeAccessRequest, []byte(secret))
-	_ = rfc2865.UserName_SetString(packet, username)
-	if err := rfc2865.UserPassword_SetString(packet, password); err != nil {
-		return RADIUSIdentity{}, fmt.Errorf("radius pap: %w", err)
+	method := normalizeRadiusAuthMethod(cfg.RADIUSAuthMethod)
+	var roleAttr string
+	switch {
+	case method == RadiusAuthPAP && !cfg.RADIUSRadsec:
+		roleAttr, err = s.authenticateRadiusPAP(ctx, cfg, secret, username, password)
+	default:
+		roleAttr, err = s.authenticateRadiusExtended(ctx, cfg, secret, username, password, method)
 	}
-	nas := strings.TrimSpace(cfg.RADIUSNASID)
-	if nas == "" {
-		nas = "keeppam"
-	}
-	_ = rfc2865.NASIdentifier_SetString(packet, nas)
-	_ = rfc2865.ServiceType_Set(packet, rfc2865.ServiceType_Value_LoginUser)
-
-	exCtx, cancel := context.WithTimeout(ctx, clampRADIUSTimeout(cfg.RADIUSTimeoutSec))
-	defer cancel()
-	resp, err := radius.Exchange(exCtx, packet, addr)
 	if err != nil {
-		return RADIUSIdentity{}, fmt.Errorf("radius: %w", err)
-	}
-	if resp.Code != radius.CodeAccessAccept {
-		return RADIUSIdentity{}, fmt.Errorf("invalid credentials")
+		return RADIUSIdentity{}, err
 	}
 
 	role := strings.TrimSpace(cfg.RADIUSDefaultRole)
 	if role == "" {
 		role = "operator"
 	}
-	if fid := rfc2865.FilterID_GetString(resp); fid != "" {
-		role = radiusRoleFromFilter(fid, role)
+	if roleAttr != "" {
+		role = radiusRoleFromFilter(roleAttr, role)
 	}
 	email := username
 	if !strings.Contains(email, "@") {
@@ -107,6 +97,48 @@ func (s *Service) AuthenticateRADIUS(ctx context.Context, cfg AuthSettings, secr
 	}, nil
 }
 
+func (s *Service) authenticateRadiusPAP(ctx context.Context, cfg AuthSettings, secret, username, password string) (string, error) {
+	addr := radiusAddr(cfg.RADIUSHost)
+	packet := radius.New(radius.CodeAccessRequest, []byte(secret))
+	_ = rfc2865.UserName_SetString(packet, username)
+	if err := rfc2865.UserPassword_SetString(packet, password); err != nil {
+		return "", fmt.Errorf("radius pap: %w", err)
+	}
+	nas := strings.TrimSpace(cfg.RADIUSNASID)
+	if nas == "" {
+		nas = "keeppam"
+	}
+	_ = rfc2865.NASIdentifier_SetString(packet, nas)
+	_ = rfc2865.ServiceType_Set(packet, rfc2865.ServiceType_Value_LoginUser)
+
+	exCtx, cancel := context.WithTimeout(ctx, clampRADIUSTimeout(cfg.RADIUSTimeoutSec))
+	defer cancel()
+	resp, err := radius.Exchange(exCtx, packet, addr)
+	if err != nil {
+		return "", fmt.Errorf("radius: %w", err)
+	}
+	if resp.Code != radius.CodeAccessAccept {
+		return "", fmt.Errorf("invalid credentials")
+	}
+	if fid := rfc2865.FilterID_GetString(resp); fid != "" {
+		return fid, nil
+	}
+	if cls := rfc2865.Class_GetString(resp); cls != "" {
+		return cls, nil
+	}
+	return "", nil
+}
+
 func RADIUSReady(cfg AuthSettings) bool {
-	return cfg.Mode == "radius" && radiusAddr(cfg.RADIUSHost) != "" && cfg.HasRADIUSSecret
+	if cfg.Mode != "radius" || radiusAddr(cfg.RADIUSHost) == "" || !cfg.HasRADIUSSecret {
+		return false
+	}
+	switch normalizeRadiusAuthMethod(cfg.RADIUSAuthMethod) {
+	case RadiusAuthEapTTLS, RadiusAuthPEAP:
+		return strings.TrimSpace(cfg.RADIUSEAPCAPEM) != ""
+	}
+	if cfg.RADIUSRadsec {
+		return strings.TrimSpace(cfg.RADIUSRadsecCAPEM) != "" && strings.TrimSpace(cfg.RADIUSRadsecClientPEM) != ""
+	}
+	return true
 }

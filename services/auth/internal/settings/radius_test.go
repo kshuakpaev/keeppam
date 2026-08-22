@@ -82,4 +82,22 @@ func TestRADIUSReady(t *testing.T) {
 	if !RADIUSReady(AuthSettings{Mode: "radius", RADIUSHost: "127.0.0.1:1812", HasRADIUSSecret: true}) {
 		t.Fatal("should be ready")
 	}
+	if RADIUSReady(AuthSettings{Mode: "radius", RADIUSHost: "127.0.0.1:1812", HasRADIUSSecret: true, RADIUSAuthMethod: RadiusAuthEapTTLS}) {
+		t.Fatal("eap needs ca")
+	}
+	if !RADIUSReady(AuthSettings{Mode: "radius", RADIUSHost: "127.0.0.1:1812", HasRADIUSSecret: true, RADIUSAuthMethod: RadiusAuthPEAP, RADIUSEAPCAPEM: "-----BEGIN CERTIFICATE-----\n"}) {
+		t.Fatal("eap with ca should be ready")
+	}
+}
+
+func TestNormalizeRadiusAuthMethod(t *testing.T) {
+	if got := normalizeRadiusAuthMethod(""); got != RadiusAuthPAP {
+		t.Fatalf("default %q", got)
+	}
+	if got := normalizeRadiusAuthMethod("PEAP"); got != RadiusAuthPEAP {
+		t.Fatalf("peap %q", got)
+	}
+	if got := normalizeRadiusAuthMethod("ttls"); got != RadiusAuthEapTTLS {
+		t.Fatalf("ttls %q", got)
+	}
 }

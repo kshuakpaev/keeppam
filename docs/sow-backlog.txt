@@ -21,7 +21,7 @@
 | **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | **фазы 1–4 в коде** (`docs/citrix-hdx.txt`); пиксельный decode — OEM |
 | **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | **фазы 1–4 в коде** — SOW закрыт |
 | **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | **Закрыт** — thin rotate + sqlplus fallback; см. `docs/oracle-pwdsync.txt` |
-| **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | Сейчас PAP + x509 map |
+| **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | **Закрыт** — EAP-TTLS/PEAP + RadSec; см. `docs/radius-eap.txt` |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | DLP-политика; не metadata-only |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
 | **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | Не OCR-index |
@@ -58,6 +58,7 @@
 - EAP-TTLS или PEAP (указать в SOW); опционально RadSec.
 - Map Filter-Id/групп → роль как у PAP.
 - Acceptance: тестовый FreeRADIUS EAP → portal login.
+- **Статус:** закрыт (EAP-TTLS inner PAP, PEAP MSCHAPv2, optional RadSec).
 
 ### SOW-RDP-FILE
 - Файл из RDP clipboard/drive redirection в storage + replay download (как SCP capture).

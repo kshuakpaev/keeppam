@@ -1,0 +1,72 @@
+# KeepPAM: RADIUS EAP / RadSec (SOW-RADIUS-EAP)
+
+Расширение `docs/radius-auth.txt`: вход администраторов через EAP-TTLS, PEAP и опционально RadSec.
+
+## Методы auth
+
+| `radius_auth_method` | Транспорт | Внутри туннеля |
+|----------------------|-----------|----------------|
+| `pap` (default) | UDP :1812 или RadSec | User-Password |
+| `eap-ttls` | UDP или RadSec | TLS → inner PAP |
+| `peap` | UDP или RadSec | TLS → MSCHAPv2 |
+
+## Настройка (Config → Авторизация → RADIUS)
+
+| Поле | Когда нужно |
+|------|-------------|
+| host / secret | всегда (secret для UDP; RadSec использует literal `radsec` на wire) |
+| `radius_auth_method` | `pap` / `eap-ttls` / `peap` |
+| `radius_eap_ca_pem` | EAP-TTLS или PEAP — CA для проверки cert RADIUS-сервера |
+| `radius_eap_anonymous_user` | outer EAP identity (default `anonymous`) |
+| `radius_eap_insecure_tls` | пропустить проверку hostname (lab only) |
+| `radius_radsec` | TCP/TLS :2083 вместо UDP |
+| `radius_radsec_ca_pem` + `radius_radsec_client_pem` | RadSec mTLS (cert+key в одном PEM) |
+
+## Filter-Id / Class → роль
+
+Как у PAP: в Access-Accept атрибут **Filter-Id** или **Class**:
+
+`admin` / `operator` / `auditor` / `security`, префикс `keeppam-` поддерживается.
+
+## FreeRADIUS (acceptance)
+
+Пример `eap-ttls` + inner PAP (`mods-enabled/eap`, `inner-tunnel`):
+
+```text
+# users
+alice Cleartext-Password := "Secret1"
+    Filter-Id := "keeppam-operator"
+```
+
+Клиент KeepPAM: method **EAP-TTLS**, CA = CA FreeRADIUS, login `alice` / `Secret1` → portal Accept.
+
+Для **PEAP** — MSCHAPv2 на сервере; KeepPAM шлёт PEAP/MSCHAPv2.
+
+Тест standalone (вне KeepPAM):
+
+```bash
+eapol_test -c peap.conf -s sharedsecret -a radius.example
+```
+
+## RadSec
+
+- Host без порта → `:2083`
+- Shared secret на wire: `radsec` (RFC 6614)
+- Требуется client cert на NAS (KeepPAM) + CA сервера
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| EAP-TTLS/PAP, PEAP/MSCHAPv2 | EAP-TLS client cert only |
+| RadSec TCP/TLS | RADIUS accounting, CoA |
+| Filter-Id + Class → role | 802.1X WiFi supplicant |
+
+## Миграция
+
+`097_radius_eap.sql`
+
+## Связанные документы
+
+- `docs/radius-auth.txt` — базовый PAP
+- `docs/sow-backlog.txt` — SOW-RADIUS-EAP

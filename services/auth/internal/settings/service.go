@@ -56,6 +56,13 @@ type AuthSettings struct {
 	RADIUSAutoProvision bool   `json:"radius_auto_provision"`
 	RADIUSSkipMFA       bool   `json:"radius_skip_mfa"`
 	RADIUSDefaultRole   string `json:"radius_default_role"`
+	RADIUSAuthMethod    string `json:"radius_auth_method"`
+	RADIUSEAPCAPEM      string `json:"radius_eap_ca_pem"`
+	RADIUSEAPAnonymous  string `json:"radius_eap_anonymous_user"`
+	RADIUSEAPInsecureTLS bool  `json:"radius_eap_insecure_tls"`
+	RADIUSRadsec        bool   `json:"radius_radsec"`
+	RADIUSRadsecCAPEM   string `json:"radius_radsec_ca_pem"`
+	RADIUSRadsecClientPEM string `json:"radius_radsec_client_pem"`
 
 	SAMLIdPMetadataURL  string            `json:"saml_idp_metadata_url"`
 	SAMLIdPEntityID     string            `json:"saml_idp_entity_id"`
@@ -124,6 +131,9 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			COALESCE(radius_host,''), COALESCE(radius_nas_id,'keeppam'), COALESCE(radius_timeout_sec,5),
 			radius_secret_enc,
 			COALESCE(radius_auto_provision, TRUE), COALESCE(radius_skip_mfa, FALSE), COALESCE(radius_default_role, 'operator'),
+			COALESCE(radius_auth_method, 'pap'), COALESCE(radius_eap_ca_pem, ''), COALESCE(radius_eap_anonymous_user, 'anonymous'),
+			COALESCE(radius_eap_insecure_tls, FALSE), COALESCE(radius_radsec, FALSE),
+			COALESCE(radius_radsec_ca_pem, ''), COALESCE(radius_radsec_client_pem, ''),
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -140,6 +150,8 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.SCIMEnabled, &scimEnc, &out.SCIMDefaultRole,
 		&out.RADIUSHost, &out.RADIUSNASID, &out.RADIUSTimeoutSec, &radiusSec,
 		&out.RADIUSAutoProvision, &out.RADIUSSkipMFA, &out.RADIUSDefaultRole,
+		&out.RADIUSAuthMethod, &out.RADIUSEAPCAPEM, &out.RADIUSEAPAnonymous,
+		&out.RADIUSEAPInsecureTLS, &out.RADIUSRadsec, &out.RADIUSRadsecCAPEM, &out.RADIUSRadsecClientPEM,
 		&updatedAt,
 	)
 	if err != nil {
@@ -325,12 +337,30 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 	if in.RADIUSDefaultRole == "" {
 		in.RADIUSDefaultRole = "operator"
 	}
+	in.RADIUSAuthMethod = normalizeRadiusAuthMethod(in.RADIUSAuthMethod)
+	if in.RADIUSEAPAnonymous == "" {
+		in.RADIUSEAPAnonymous = "anonymous"
+	}
 	if mode == "radius" {
 		if strings.TrimSpace(in.RADIUSHost) == "" {
 			return AuthSettings{}, fmt.Errorf("radius_host required")
 		}
 		if len(radiusSec) == 0 {
 			return AuthSettings{}, fmt.Errorf("radius_secret required")
+		}
+		switch in.RADIUSAuthMethod {
+		case RadiusAuthEapTTLS, RadiusAuthPEAP:
+			if strings.TrimSpace(in.RADIUSEAPCAPEM) == "" {
+				return AuthSettings{}, fmt.Errorf("radius_eap_ca_pem required for %s", in.RADIUSAuthMethod)
+			}
+		case RadiusAuthPAP:
+		default:
+			return AuthSettings{}, fmt.Errorf("radius_auth_method must be pap, eap-ttls, or peap")
+		}
+		if in.RADIUSRadsec {
+			if strings.TrimSpace(in.RADIUSRadsecCAPEM) == "" || strings.TrimSpace(in.RADIUSRadsecClientPEM) == "" {
+				return AuthSettings{}, fmt.Errorf("radius_radsec_ca_pem and radius_radsec_client_pem required when radsec enabled")
+			}
 		}
 	}
 	if in.SAMLAttrUsername == "" {
@@ -400,7 +430,9 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			scim_enabled=$38, scim_token_enc=$39, scim_default_role=$40,
 			radius_host=$41, radius_nas_id=$42, radius_timeout_sec=$43, radius_secret_enc=$44,
 			radius_auto_provision=$45, radius_skip_mfa=$46, radius_default_role=$47,
-			updated_at=NOW(), updated_by=$48
+			radius_auth_method=$48, radius_eap_ca_pem=$49, radius_eap_anonymous_user=$50,
+			radius_eap_insecure_tls=$51, radius_radsec=$52, radius_radsec_ca_pem=$53, radius_radsec_client_pem=$54,
+			updated_at=NOW(), updated_by=$55
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -416,6 +448,8 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		in.SCIMEnabled, scimEnc, in.SCIMDefaultRole,
 		strings.TrimSpace(in.RADIUSHost), strings.TrimSpace(in.RADIUSNASID), in.RADIUSTimeoutSec, radiusSec,
 		in.RADIUSAutoProvision, in.RADIUSSkipMFA, strings.TrimSpace(in.RADIUSDefaultRole),
+		in.RADIUSAuthMethod, strings.TrimSpace(in.RADIUSEAPCAPEM), strings.TrimSpace(in.RADIUSEAPAnonymous),
+		in.RADIUSEAPInsecureTLS, in.RADIUSRadsec, strings.TrimSpace(in.RADIUSRadsecCAPEM), strings.TrimSpace(in.RADIUSRadsecClientPEM),
 		actorID,
 	)
 	if err != nil {

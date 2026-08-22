@@ -340,6 +340,13 @@ export type AuthSettings = {
   radius_auto_provision: boolean;
   radius_skip_mfa: boolean;
   radius_default_role: string;
+  radius_auth_method?: string;
+  radius_eap_ca_pem?: string;
+  radius_eap_anonymous_user?: string;
+  radius_eap_insecure_tls?: boolean;
+  radius_radsec?: boolean;
+  radius_radsec_ca_pem?: string;
+  radius_radsec_client_pem?: string;
   saml_idp_metadata_url: string;
   saml_idp_entity_id: string;
   saml_idp_sso_url: string;

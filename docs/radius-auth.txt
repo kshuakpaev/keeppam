@@ -1,6 +1,6 @@
 # KeepPAM: вход администраторов по RADIUS (T-48)
 
-Режим **RADIUS** в Config → Авторизация. PAP `Access-Request` на UDP (default порт 1812). Не EAP, не RadSec.
+Режим **RADIUS** в Config → Авторизация. По умолчанию PAP `Access-Request` на UDP (порт 1812). EAP/RadSec — см. `docs/radius-eap.txt`.
 
 Это **IdP пароля** для консоли (и SSH-шлюза, если включён тот же режим), не второй фактор. Локальный TOTP остаётся, пока не включён «Не требовать локальный MFA».
 
@@ -32,4 +32,4 @@ x509 client cert → user: `docs/x509-auth.txt` (`POST /auth/login/cert`, пол
 
 ## Вне scope
 
-EAP-TTLS/PEAP, RADIUS accounting, CoA, RadSec.
+RADIUS accounting, CoA. EAP-TLS (только client cert) — см. `docs/x509-auth.txt`.
