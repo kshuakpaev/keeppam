@@ -32,6 +32,18 @@ func (s *Service) evaluateMouseUEBA(ctx context.Context, row sessionsvc.Session,
 	}
 	mean, std := ueba.MeanStd(vels)
 	z := ueba.ZScore(tim.MedianVel, mean, std)
+	if s.uebaml != nil && s.uebaml.Enabled(ctx) {
+		if ml, extras := s.uebaml.ScorePostSession(ctx, row, 0, z); len(extras) > 0 {
+			for _, f := range extras {
+				score, factors, err := s.sess.AppendRisk(ctx, row.ID, uebamlMLPoints(f), f)
+				if err == nil {
+					_ = s.sess.AddEvent(ctx, row.ID, "ueba", map[string]any{
+						"factor": f, "ml_score": ml, "source": "uebaml", "risk_score": score, "risk_factors": factors,
+					})
+				}
+			}
+		}
+	}
 	if !ueba.FastMouse(tim.MedianVel, tim.NMoves, tim.Samples, len(vels), mean, std, z) {
 		return
 	}

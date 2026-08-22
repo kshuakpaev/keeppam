@@ -52,6 +52,7 @@ import (
 	"github.com/keeppam/auth/internal/siem"
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/store"
+	"github.com/keeppam/auth/internal/uebaml"
 	"github.com/keeppam/auth/internal/users"
 )
 
@@ -90,6 +91,7 @@ type Server struct {
 	firewall   *firewall.Service
 	nac        *nac.Service
 	eidas      *eidas.Service
+	uebaml     *uebaml.Service
 	archive    *recarch.Service
 	files      *filexfer.Service
 	health     *health.State
@@ -98,13 +100,13 @@ type Server struct {
 	license    license.File
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, uebamlSvc *uebaml.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
 	lic, err := license.Load(cfg.LicenseFile)
 	if err != nil {
 		lic = license.DefaultFile()
 		lic.Source = "error:" + err.Error()
 	}
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, uebaml: uebamlSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -230,6 +232,9 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Get("/settings/eidas", s.handleGetEIDASSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/eidas", s.handlePutEIDASSettings)
 				r.With(s.requirePerm("settings.write")).Post("/settings/eidas/test", s.handleEIDASTest)
+				r.With(s.requirePerm("settings.write")).Get("/settings/ueba-ml", s.handleGetUEBAMLSettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/ueba-ml", s.handlePutUEBAMLSettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/ueba-ml/test", s.handleUEBAMLTest)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/status", s.handleFirewallStatus)
 				r.With(s.requirePerm("settings.write")).Post("/firewall/probe", s.handleFirewallProbe)
 				r.With(s.requirePerm("settings.write")).Put("/firewall/probe-agents", s.handlePutFirewallProbeAgents)

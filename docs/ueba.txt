@@ -45,6 +45,6 @@
 
 `GET .../analytics/overview` → anomaly `ueba_keystroke_fast` / `ueba_mouse_fast`. Карточка **Аналитика**.
 
-## Вне scope
+## Вне scope (базовый UEBA)
 
-ML / peer-group, live mid-session scoring, полный классификатор поведения.
+Peer-group / ML / live mid-session — модуль **SOW-UEBA-ML** (`docs/ueba-ml.txt`). Полный классификатор поведения.

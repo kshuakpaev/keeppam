@@ -55,6 +55,7 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
+	"github.com/keeppam/auth/internal/uebaml"
 	"github.com/keeppam/auth/internal/spiffe"
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
@@ -304,6 +305,8 @@ func main() {
 	}
 	eidasSvc := eidas.New(db, auditSvc, env, cfg, pdfSigner)
 	complianceSvc.SetEidas(eidasSvc)
+	uebamlSvc := uebaml.New(db, auditSvc, sessSvc, notifySvc)
+	castIdx.SetUEBAML(uebamlSvc)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
@@ -443,6 +446,7 @@ func main() {
 
 	go live.Listen(runCtx)
 	go auditSvc.RunSealer(runCtx)
+	go uebamlSvc.RunLive(runCtx)
 	if runHTTP {
 		go firewallSvc.RunProbeScheduler(runCtx)
 	}
@@ -521,7 +525,7 @@ func main() {
 			rdpBroker = rdpBrokerInit
 			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, uebamlSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {

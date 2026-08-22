@@ -211,6 +211,13 @@ export function ConfigPage() {
     last_error: "",
   });
   const [eidasPin, setEidasPin] = useState("");
+  const [uebaMlForm, setUebaMlForm] = useState({
+    mode: "off",
+    peer_group: true,
+    ml_threshold: 65,
+    live_interval_s: 60,
+    last_error: "",
+  });
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
@@ -241,7 +248,7 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, fw, fws, nac, eidas, nt, idps, ar] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nac, eidas, uebaMl, nt, idps, ar] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
@@ -258,6 +265,7 @@ export function ConfigPage() {
             last_error: "",
           })),
           api.getEIDASSettings().catch(() => ({ mode: "off", profile: "eidas", require_b_lta: true })),
+          api.getUEBAMLSettings().catch(() => ({ mode: "off", peer_group: true, ml_threshold: 65, live_interval_s: 60 })),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
           api.getArchiveSettings().catch(() => emptyArchive),
@@ -312,6 +320,13 @@ export function ConfigPage() {
           cert_qualified: !!eidas.cert_qualified,
           pades_profile: eidas.pades_profile || "",
           last_error: eidas.last_error || "",
+        });
+        setUebaMlForm({
+          mode: uebaMl.mode || "off",
+          peer_group: uebaMl.peer_group !== false,
+          ml_threshold: uebaMl.ml_threshold || 65,
+          live_interval_s: uebaMl.live_interval_s || 60,
+          last_error: uebaMl.last_error || "",
         });
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
@@ -490,6 +505,33 @@ export function ConfigPage() {
       setMsg("Qualified PDF (eIDAS) сохранён");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка сохранения eIDAS");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveUEBAML(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const saved = await api.putUEBAMLSettings({
+        mode: uebaMlForm.mode,
+        peer_group: uebaMlForm.peer_group,
+        ml_threshold: Number(uebaMlForm.ml_threshold) || 65,
+        live_interval_s: Number(uebaMlForm.live_interval_s) || 60,
+      });
+      setUebaMlForm({
+        mode: saved.mode || "off",
+        peer_group: saved.peer_group !== false,
+        ml_threshold: saved.ml_threshold || 65,
+        live_interval_s: saved.live_interval_s || 60,
+        last_error: saved.last_error || "",
+      });
+      setMsg("UEBA-ML сохранён");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка сохранения UEBA-ML");
     } finally {
       setBusy(false);
     }
@@ -2117,6 +2159,67 @@ export function ConfigPage() {
             }
           >
             Test cert
+          </button>
+          <button className="btn" type="submit" disabled={busy}>
+            Сохранить
+          </button>
+        </div>
+      </form>
+
+      <form className="card" onSubmit={onSaveUEBAML} style={{ maxWidth: 640 }}>
+        <h2>UEBA-ML (peer-group + live)</h2>
+        <p className="muted">
+          On-prem composite score поверх базового UEBA (`docs/ueba.txt`): сравнение с peer-group (
+          <span className="mono">user_groups</span>), ML-порог, live mid-session parse guac для RDP/VNC.
+        </p>
+        <label>Режим</label>
+        <select value={uebaMlForm.mode} onChange={(e) => setUebaMlForm({ ...uebaMlForm, mode: e.target.value })}>
+          <option value="off">выкл.</option>
+          <option value="audit">audit (connect + post-session)</option>
+          <option value="live">live (+ mid-session scan)</option>
+        </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={uebaMlForm.peer_group}
+            onChange={(e) => setUebaMlForm({ ...uebaMlForm, peer_group: e.target.checked })}
+          />{" "}
+          Peer-group baseline (доля peers с доступом к активу)
+        </label>
+        <label>ML threshold (0–100)</label>
+        <input
+          type="number"
+          min={30}
+          max={95}
+          value={uebaMlForm.ml_threshold}
+          onChange={(e) => setUebaMlForm({ ...uebaMlForm, ml_threshold: Number(e.target.value) })}
+        />
+        <label>Live interval (сек, mode=live)</label>
+        <input
+          type="number"
+          min={15}
+          max={600}
+          value={uebaMlForm.live_interval_s}
+          onChange={(e) => setUebaMlForm({ ...uebaMlForm, live_interval_s: Number(e.target.value) })}
+        />
+        {uebaMlForm.last_error ? <p className="error">Последний live-run: {uebaMlForm.last_error}</p> : null}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api
+                .testUEBAMLSettings()
+                .then((r) =>
+                  setMsg(
+                    `UEBA-ML test: score=${r.result.risk_score} ml=${(r.result.connect as { ml_score?: number })?.ml_score ?? "—"}`,
+                  ),
+                )
+                .catch((err) => setError(String(err)))
+            }
+          >
+            Test score
           </button>
           <button className="btn" type="submit" disabled={busy}>
             Сохранить

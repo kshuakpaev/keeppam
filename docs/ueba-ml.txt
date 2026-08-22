@@ -1,0 +1,64 @@
+# KeepPAM: UEBA-ML (SOW-UEBA-ML)
+
+Расширение базового UEBA (`docs/ueba.txt`): **peer-group baseline**, on-prem **composite ML score** (без внешних моделей), **live mid-session** scoring для RDP/VNC/https.
+
+## Настройки
+
+Config → **UEBA-ML** (`ueba_ml_settings`, миграция `102`):
+
+| Поле | Смысл |
+|------|--------|
+| `mode` | `off` / `audit` / `live` |
+| `peer_group` | Сравнение с largest `user_groups` membership |
+| `ml_threshold` | 30…95, default 65 — порог `ueba_ml_high` |
+| `live_interval_s` | 15…600, период live scan (mode=live) |
+
+## Факторы (дополнительно к базовому UEBA)
+
+| Фактор | Когда | Баллы |
+|--------|-------|-------|
+| `ueba_peer_outlier` | актив посещают &lt;10% peers (≥5 members) | +20 |
+| `ueba_ml_high` | composite ML score ≥ threshold | +25 |
+| `ueba_live_fast` | live guac parse: fast keystroke/mouse mid-session | +20 |
+
+Composite score — weighted sum features (new_asset, spread, failed_logins, peer rarity, off-hours, keystroke/mouse z). On-prem, без GPU/cloud ML.
+
+## Поведение
+
+| mode | connect | post-session | mid-session |
+|------|---------|--------------|-------------|
+| `off` | базовый UEBA only | базовый UEBA | — |
+| `audit` | peer + ML на connect | ML layer на guac index | — |
+| `live` | как audit | как audit | periodic guac tail parse active sessions |
+
+Live worker: background goroutine, сканирует `status=active` RDP/VNC/https/citrix с recording, один alert `ueba_live_fast` на сессию.
+
+Notify: те же каналы что T-51 (`OnUEBAAnomaly`) для live hits.
+
+## API
+
+- `GET/PUT /api/v1/admin/settings/ueba-ml`
+- `POST /api/v1/admin/settings/ueba-ml/test` — dry-run score для текущего user (+ optional asset_id)
+
+Analytics: anomaly code `ueba_ml` в overview.
+
+## Acceptance (DoD)
+
+1. Пользователи в одной `user_group` (≥5 members), один ходит на редкий актив.
+2. Config: mode=`audit`, peer_group=true → connect → audit `ueba_ml.connect`, factor `ueba_peer_outlier` или `ueba_ml_high`.
+3. mode=`live`, RDP с bot-like typing → mid-session event `ueba_live_fast` + notify.
+4. Аналитика → anomaly «UEBA-ML / peer-group».
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| Peer-group + weighted ML score | Deep learning / cloud UEBA SaaS |
+| Live guac partial parse | Live OCR / process ML |
+| On-prem, no extra deps | Per-tenant model training UI |
+
+## Связанные документы
+
+- `docs/ueba.txt` — baseline heuristics
+- `docs/abac-breakglass.txt` — risk factors на connect
+- `docs/sow-backlog.txt` — SOW-UEBA-ML

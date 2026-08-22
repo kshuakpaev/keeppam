@@ -128,6 +128,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, msg)
 		return
 	}
+	if s.uebaml != nil {
+		score, factors, mlRes, err := s.uebaml.EnhanceConnect(r.Context(), sess.UserID, assetID, ev.RiskScore, ev.RiskFactors)
+		if err == nil && mlRes.AddedScore > 0 {
+			ev.RiskScore = score
+			ev.RiskFactors = factors
+			_ = s.audit.Record(r.Context(), &sess.UserID, "ueba_ml.connect", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), map[string]any{
+				"ml_score": mlRes.MLScore, "threshold": mlRes.Threshold, "peer_group": mlRes.PeerGroup,
+				"peer_ratio": mlRes.PeerRatio, "added_score": mlRes.AddedScore, "factors": mlRes.AddedFactors,
+			})
+		}
+	}
 	if s.itsm != nil && !usedBreakGlass && !bypassAdmin {
 		if err := s.itsm.Enforce(r.Context(), "connect", body.TicketID); err != nil {
 			writeErr(w, http.StatusForbidden, err.Error())

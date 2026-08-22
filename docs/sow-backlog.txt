@@ -27,7 +27,7 @@
 | **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | **Закрыт** — keyword classifier + audit/mask/deny; см. `docs/nlp-dlp.txt` |
 | **SOW-NAC** | NAC-клиент | Сетевой контроль | **Закрыт** — posture REST client; см. `docs/nac-client.txt` |
 | **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | **Закрыт** — QES/КЭП OID + PKCS#11; см. `docs/eidas-qualified.txt` |
-| **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | Сейчас heuristics + notify |
+| **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | **Закрыт** — peer + ML score + live; см. `docs/ueba-ml.txt` |
 | **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | Сейчас SSH+AD LDAP |
 | **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | MVP wire есть |
 | **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
@@ -83,6 +83,12 @@
 - PAdES-B-LTA + optional PKCS#11 HSM для ключа подписи.
 - Acceptance: qualified cert + mode=qualified → PDF export с QES label; без OID → блок.
 - **Статус:** закрыт (on-prem OID check + helper; QTSP/OEM — партнёр).
+
+### SOW-UEBA-ML
+- Peer-group baseline (`user_groups`), composite ML score, live mid-session guac scan.
+- Factors: `ueba_peer_outlier`, `ueba_ml_high`, `ueba_live_fast`.
+- Acceptance: rare asset → peer outlier; live RDP bot typing → mid-session notify.
+- **Статус:** закрыт (weighted on-prem model, no external ML runtime).
 
 ---
 

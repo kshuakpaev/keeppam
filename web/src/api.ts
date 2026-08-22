@@ -453,6 +453,16 @@ export type EIDASSettings = {
   updated_at?: string;
 };
 
+export type UEBAMLSettings = {
+  mode?: string;
+  peer_group?: boolean;
+  ml_threshold?: number;
+  live_interval_s?: number;
+  last_run_at?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
 export type FirewallSettings = {
   pam_gateway_cidrs: string[];
   probe_url?: string;
@@ -1054,6 +1064,17 @@ export const api = {
         ready?: boolean;
       };
     }>("/api/v1/admin/settings/eidas/test", { method: "POST" }),
+  getUEBAMLSettings: () => request<UEBAMLSettings>("/api/v1/admin/settings/ueba-ml"),
+  putUEBAMLSettings: (body: Partial<UEBAMLSettings>) =>
+    request<UEBAMLSettings>("/api/v1/admin/settings/ueba-ml", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testUEBAMLSettings: (body?: { user_id?: string; asset_id?: string }) =>
+    request<{ result: { risk_score: number; risk_factors?: string[]; connect?: Record<string, unknown> } }>(
+      "/api/v1/admin/settings/ueba-ml/test",
+      { method: "POST", body: JSON.stringify(body || {}) },
+    ),
   downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
     const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(await res.text());
