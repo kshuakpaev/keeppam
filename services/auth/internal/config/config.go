@@ -95,6 +95,7 @@ type Config struct {
 	GeoRecordingsSync      string // off | s3 | rsync (auto if unset)
 	GeoRsyncTarget         string // rsync dest for primary→standby
 	GeoRsyncSource         string // override source; default RecordingsDir
+	GeoPublicURL           string // public URL for cutover drill (/geoz)
 }
 
 func Load() (Config, error) {
@@ -180,6 +181,7 @@ func Load() (Config, error) {
 		GeoRecordingsSync:      strings.ToLower(env("KEEPPAM_GEO_RECORDINGS_SYNC", "")),
 		GeoRsyncTarget:         env("KEEPPAM_GEO_RSYNC_TARGET", ""),
 		GeoRsyncSource:         env("KEEPPAM_GEO_RSYNC_SOURCE", ""),
+		GeoPublicURL:           env("KEEPPAM_GEO_PUBLIC_URL", env("KEEPPAM_PUBLIC_URL", "")),
 	}
 	cfg.WebAuthnOrigins = splitCSV(env("KEEPPAM_WEBAUTHN_ORIGINS", cfg.CORSOrigin))
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))

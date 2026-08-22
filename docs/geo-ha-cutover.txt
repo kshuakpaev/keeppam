@@ -1,0 +1,86 @@
+# KeepPAM SOW-GEO-HA: DNS/VIP cutover playbook (phase 3)
+
+Операторский runbook после promote PG и `KEEPPAM_SITE_ROLE=primary` на standby-сайте.
+
+## Предусловия
+
+- [ ] `GET /api/v1/admin/geo/promote/plan` — нет `block`
+- [ ] `./scripts/geo-promote.sh` выполнен (или `--pg-only` + `--role-only`)
+- [ ] Recordings: final rsync или S3 replication caught up
+- [ ] Site B edge/HAProxy поднят и `/readyz` = ready
+
+## Шаг 1 — VIP / DNS
+
+| Механизм | Действие |
+|----------|----------|
+| **DNS A/AAAA** | Снизить TTL заранее (300s). Переключить `pam.corp` → IP site B edge |
+| **GSLB/GeoDNS** | Disable pool site A; enable site B |
+| **Keepalived/VIP** | Перенести VIP на edge B (bare metal) |
+| **Cloud LB** | Target group: только site B backends |
+
+Lab (без DNS):
+
+```bash
+# /etc/hosts на клиенте
+10.0.2.10  pam.lab
+```
+
+## Шаг 2 — verify cutover
+
+```bash
+export KEEPPAM_GEO_PUBLIC_URL=https://pam.corp
+export KEEPPAM_GEO_EXPECT_SITE_ID=site-b
+export KEEPPAM_GEO_EXPECT_ROLE=primary
+./scripts/geo-cutover.sh
+```
+
+API (с session cookie):
+
+```bash
+curl -s -b cookies.txt "$API/api/v1/admin/geo/drill" | jq
+```
+
+На API задайте `KEEPPAM_GEO_PUBLIC_URL` = user-facing URL для автоматической проверки `cutover_public`.
+
+## Шаг 3 — acceptance smoke
+
+```bash
+API=https://pam.corp ./scripts/kp-acceptance-smoke.sh
+./scripts/geo-drill.sh
+```
+
+С session (запись в Compliance → DR):
+
+```bash
+curl -s -b cookies.txt -X POST "$API/api/v1/admin/geo/drill" \
+  -H 'Content-Type: application/json' \
+  -d '{"record":true,"notes":"geo cutover drill site-b"}'
+```
+
+## Шаг 4 — reverse traffic (failback)
+
+1. Re-sync PG (новый primary A или rebuild replica from B)
+2. Site A: `KEEPPAM_SITE_ROLE=primary`, B → `standby`
+3. DNS/VIP обратно на A
+4. `./scripts/geo-cutover.sh` с `EXPECT_SITE_ID=site-a`
+
+## Rollback (B не готов)
+
+1. DNS/VIP оставить на site A
+2. Не promote PG на B (или rebuild replica from A)
+3. Site B остаётся `standby`
+
+## Типичные ошибки
+
+| Симптом | Причина |
+|---------|---------|
+| login OK, session 503 | role=standby не flipped |
+| geoz site_id старый | DNS кэш / wrong VIP |
+| replay missing | recordings sync не завершён |
+| split-brain | оба site primary — немедленно fence один |
+
+## Связанные документы
+
+- `docs/geo-ha.txt` — фазы 1–3
+- `docs/dr-runbook.txt` — backup/restore
+- `docs/ha.txt` — intra-site 2+2

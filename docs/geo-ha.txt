@@ -9,21 +9,19 @@
 |------|------------|--------|
 | **1** | Site identity, standby write-fence, lag probe, compose overlay | **есть** |
 | **2** | Recordings sync (S3/rsync) + promote helpers | **есть** |
-| **3** | DNS/VIP cutover playbook + acceptance drill script | план |
+| **3** | DNS/VIP cutover playbook + acceptance drill | **есть** |
 | **4** | Split-brain fencing hardening / witness | план |
 
 ## Phase 1 — site role
 
 ```bash
-# Site A (primary)
 KEEPPAM_SITE_ID=site-a
 KEEPPAM_SITE_ROLE=primary
 KEEPPAM_SITE_PEER_URL=https://site-b.example/geoz
 
-# Site B (standby)
-KEEPPAM_SITE_ID=site-b
+# standby site B
 KEEPPAM_SITE_ROLE=standby
-KEEPPAM_SITE_REPLICA_DSN=postgres://keeppam:…@postgres:5432/keeppam
+KEEPPAM_SITE_REPLICA_DSN=postgres://…
 KEEPPAM_SITE_MAX_LAG_SECONDS=120
 ```
 
@@ -31,59 +29,41 @@ Compose site B: `docker compose -f docker-compose.yml -f compose.geo-standby.yml
 
 ## Phase 2 — recordings sync
 
-### Вариант A: shared S3 (рекомендуется)
+S3 shared bucket + replication, или rsync: `KEEPPAM_GEO_RSYNC_TARGET=…`  
+Скрипты: `geo-recordings-sync.sh`, `geo-promote.sh`
 
-Оба сайта:
+## Phase 3 — cutover & drill
 
-```bash
-KEEPPAM_RECORDINGS_BACKEND=s3
-KEEPPAM_S3_ENDPOINT=…
-KEEPPAM_S3_BUCKET=keeppam-geo
-KEEPPAM_S3_PREFIX=recordings/
-# bucket replication (MinIO/AWS CRR) — вне KeepPAM
-```
-
-Статус: `GET /api/v1/admin/geo/recordings` → `mode=s3`.
-
-### Вариант B: rsync (primary → standby)
-
-Site A:
+Playbook: **`docs/geo-ha-cutover.txt`**
 
 ```bash
-KEEPPAM_GEO_RSYNC_TARGET=backup@10.0.2.10:/var/keeppam/recordings
-# или KEEPPAM_GEO_RECORDINGS_SYNC=rsync
+./scripts/geo-drill.sh
+KEEPPAM_GEO_PUBLIC_URL=https://pam.corp KEEPPAM_GEO_EXPECT_SITE_ID=site-b ./scripts/geo-cutover.sh
 ```
 
-Push:
-
-```bash
-./scripts/geo-recordings-sync.sh
-# или POST /api/v1/admin/geo/recordings/sync (compliance.write, primary only)
-```
-
-## Promote (cutover)
-
-1. `GET /api/v1/admin/geo/promote/plan` — чеклист ok/warn/block
-2. Final rsync или дождаться S3 replication
-3. `./scripts/geo-promote.sh` (или `--pg-only` / `--role-only`)
-4. DNS/VIP → site B
-5. Smoke: login, JIT, SSH
-
-## API
+API:
 
 | Endpoint | Perm | Purpose |
 |----------|------|---------|
-| `GET /geoz` | — | site postcard |
-| `GET /admin/geo/status` | compliance.read | lag, role |
-| `GET /admin/geo/recordings` | compliance.read | inventory + sync mode |
-| `POST /admin/geo/recordings/sync` | compliance.write | rsync push (primary) |
-| `GET /admin/geo/promote/plan` | compliance.read | promote checklist |
+| `GET /admin/geo/drill` | compliance.read | acceptance checks |
+| `POST /admin/geo/drill` | compliance.write | drill + optional `{"record":true}` → DR |
+| `GET /geoz` | — | cutover verify (public URL) |
+
+Env: `KEEPPAM_GEO_PUBLIC_URL` (или `KEEPPAM_PUBLIC_URL`) для `cutover_public` в drill.
+
+## API (all phases)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /admin/geo/status` | lag, role |
+| `GET /admin/geo/recordings` | sync mode |
+| `POST /admin/geo/recordings/sync` | rsync push |
+| `GET /admin/geo/promote/plan` | promote checklist |
 
 ## Fencing (standby)
 
-- Session create → 503; SSH fenced
-- Admin read + promote plan OK
+Session create → 503; SSH fenced.
 
-## Out of scope
+## Out of scope phase 3
 
-Auto Patroni between DC; bi-directional active-active; phase 3 drill automation.
+Automated DNS update; phase 4 witness/split-brain hardening.
