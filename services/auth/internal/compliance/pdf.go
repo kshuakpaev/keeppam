@@ -122,8 +122,10 @@ func pdfNotes(signatureLabel string) []string {
 		"Non-ASCII in evidence is transliterated (Helvetica core font).",
 	}
 	switch {
+	case strings.Contains(signatureLabel, "qualified electronic signature"):
+		notes = append(notes, signatureLabel+". Validation depends on trust service and HSM policy configured by the operator.")
 	case strings.HasPrefix(signatureLabel, "PAdES-B-LTA"):
-		notes = append(notes, "This PDF is signed PAdES-B-LTA (CAdES + DSS + archive document timestamp). Not a qualified signature.")
+		notes = append(notes, "This PDF is signed PAdES-B-LTA (CAdES + DSS + archive document timestamp). Not a qualified signature unless QES label is present.")
 	case strings.HasPrefix(signatureLabel, "PAdES-B-LT"):
 		notes = append(notes, "This PDF is signed PAdES-B-LT (ETSI.CAdES.detached + RFC3161 + DSS). Not a qualified signature.")
 	case strings.HasPrefix(signatureLabel, "PAdES-B-T"):

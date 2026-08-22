@@ -55,6 +55,7 @@ type AccessResult struct {
 	MatchTags           []string
 	MatchMode           string
 	PIIAction           string
+	NlpDlpAction        string
 	FileTransfer        string
 }
 
@@ -318,7 +319,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			COALESCE(b.allowed_namespaces,'{}'), COALESCE(b.allowed_egress,'{}'),
 			b.command_policy_pack_id, b.sql_policy_pack_id, b.http_policy_pack_id, b.app_object_pack_id, r.name,
 			COALESCE(b.max_risk,0), COALESCE(b.risk_action,'deny'), COALESCE(b.pii_action,''),
-			COALESCE(b.file_transfer,''),
+			COALESCE(b.nlp_dlp_action,''), COALESCE(b.file_transfer,''),
 			b.access_policy_id,
 			p.time_start, p.time_end, COALESCE(p.days_of_week, 127),
 			COALESCE(p.required_tags,'{}'), COALESCE(p.require_ticket,false), COALESCE(p.require_reason,false),
@@ -326,7 +327,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			COALESCE(p.allowed_namespaces,'{}'), COALESCE(p.allowed_egress,'{}'),
 			p.command_policy_pack_id, p.sql_policy_pack_id, p.http_policy_pack_id, p.app_object_pack_id,
 			COALESCE(p.max_risk,0), COALESCE(p.risk_action,'deny'), COALESCE(p.pii_action,''),
-			COALESCE(p.file_transfer,'deny'),
+			COALESCE(p.nlp_dlp_action,''), COALESCE(p.file_transfer,'deny'),
 			b.asset_id, COALESCE(b.asset_match_tags,'{}'), COALESCE(b.asset_match_mode,'all'),
 			COALESCE(b.asset_match_name,''), COALESCE(b.asset_match_hostname,''),
 			COALESCE(b.asset_match_types,'{}'), COALESCE(b.asset_match_cidrs,'{}')
@@ -361,18 +362,18 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 		var reqTags, cidrs, countries, devices, namespaces, egress []string
 		var requireTicket, requireReason bool
 		var maxRisk int
-		var riskAction, piiAction, fileTransfer string
+		var riskAction, piiAction, nlpDlpAction, fileTransfer string
 		var pStart, pEnd *time.Time
 		var pDays, pMax int
 		var pTags, pCidrs, pCountries, pDevices, pNS, pEgress []string
 		var pTicket, pReason bool
 		var pCmd, pSQL, pHTTP, pApp *uuid.UUID
-		var pAction, pPII, pFT string
+		var pAction, pPII, pNLP, pFT string
 		var bindAsset *uuid.UUID
 		var matchTags, matchTypes, matchCIDRs []string
 		var matchMode, matchName, matchHost string
-		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &egress, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &piiAction, &fileTransfer, &polID,
-			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pEgress, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &pPII, &pFT, &bindAsset, &matchTags, &matchMode,
+		if err := rows.Scan(&bid, &uid, &rid, &gid, &tStart, &tEnd, &days, &expires, &reqTags, &requireTicket, &requireReason, &cidrs, &countries, &devices, &namespaces, &egress, &packID, &sqlPackID, &httpPackID, &appPackID, &roleName, &maxRisk, &riskAction, &piiAction, &nlpDlpAction, &fileTransfer, &polID,
+			&pStart, &pEnd, &pDays, &pTags, &pTicket, &pReason, &pCidrs, &pCountries, &pDevices, &pNS, &pEgress, &pCmd, &pSQL, &pHTTP, &pApp, &pMax, &pAction, &pPII, &pNLP, &pFT, &bindAsset, &matchTags, &matchMode,
 			&matchName, &matchHost, &matchTypes, &matchCIDRs); err != nil {
 			return AccessResult{}, err
 		}
@@ -387,19 +388,19 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			RequiredTags: reqTags, RequireTicket: requireTicket, RequireReason: requireReason,
 			AllowedCIDRs: cidrs, AllowedCountries: countries, AllowedDevices: devices, AllowedNamespaces: namespaces, AllowedEgress: egress,
 			CommandPolicyPackID: packID, SQLPolicyPackID: sqlPackID, HTTPPolicyPackID: httpPackID, AppObjectPackID: appPackID,
-			MaxRisk: maxRisk, RiskAction: riskAction, PIIAction: piiAction, FileTransfer: fileTransfer,
+			MaxRisk: maxRisk, RiskAction: riskAction, PIIAction: piiAction, NlpDlpAction: nlpDlpAction, FileTransfer: fileTransfer,
 		}, aclConstraints{
 			TimeStart: pStart, TimeEnd: pEnd, DaysOfWeek: pDays,
 			RequiredTags: pTags, RequireTicket: pTicket, RequireReason: pReason,
 			AllowedCIDRs: pCidrs, AllowedCountries: pCountries, AllowedDevices: pDevices, AllowedNamespaces: pNS, AllowedEgress: pEgress,
 			CommandPolicyPackID: pCmd, SQLPolicyPackID: pSQL, HTTPPolicyPackID: pHTTP, AppObjectPackID: pApp,
-			MaxRisk: pMax, RiskAction: pAction, PIIAction: pPII, FileTransfer: pFT,
+			MaxRisk: pMax, RiskAction: pAction, PIIAction: pPII, NlpDlpAction: pNLP, FileTransfer: pFT,
 		}, polID != nil)
 		tStart, tEnd, days = c.TimeStart, c.TimeEnd, c.DaysOfWeek
 		reqTags, requireTicket, requireReason = c.RequiredTags, c.RequireTicket, c.RequireReason
 		cidrs, countries, devices, namespaces, egress = c.AllowedCIDRs, c.AllowedCountries, c.AllowedDevices, c.AllowedNamespaces, c.AllowedEgress
 		packID, sqlPackID, httpPackID, appPackID = c.CommandPolicyPackID, c.SQLPolicyPackID, c.HTTPPolicyPackID, c.AppObjectPackID
-		maxRisk, riskAction, piiAction, fileTransfer = c.MaxRisk, c.RiskAction, c.PIIAction, c.FileTransfer
+		maxRisk, riskAction, piiAction, nlpDlpAction, fileTransfer = c.MaxRisk, c.RiskAction, c.PIIAction, c.NlpDlpAction, c.FileTransfer
 		match := matchWHO(in.UserID, uid, rid, gid, roleName, roleSet, groupSet)
 		if !match {
 			continue
@@ -441,7 +442,7 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 			AccessPolicyID:    polID,
 			AllowedNamespaces: normalizeNamespaces(namespaces),
 			AllowedEgress:     egress,
-			MaxRisk:           maxRisk, RiskAction: riskAction, PIIAction: piiAction,
+			MaxRisk:           maxRisk, RiskAction: riskAction, PIIAction: piiAction, NlpDlpAction: nlpDlpAction,
 			FileTransfer: EffectiveFileTransfer(fileTransfer),
 			TagACL:       bindAsset == nil, MatchTags: normalizeTags(matchTags), MatchMode: matchMode,
 		}

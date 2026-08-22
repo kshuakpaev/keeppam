@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, hasPerm, type DiscoveryCandidate, type DiscoveryJob } from "../api";
 import { useAuth } from "../auth";
 
-type ScanKind = "network" | "accounts" | "ad_accounts";
+type ScanKind = "network" | "accounts" | "ad_accounts" | "winrm_accounts";
 
 export function DiscoveryPage() {
   const { user } = useAuth();
@@ -73,6 +73,12 @@ export function DiscoveryPage() {
           target_asset_id: targetAssetId || undefined,
         });
         setMsg("AD privileged discovery запущен (LDAP)");
+      } else if (scanKind === "winrm_accounts") {
+        job = await api.createDiscoveryJob({
+          kind: "winrm_accounts",
+          ports: ports || "winrm,sam",
+        });
+        setMsg(`WinRM/SAM discovery запущен (${job.total_hosts} RDP-активов)`);
       } else {
         job = await api.createDiscoveryJob({ kind: "network", cidr, ports });
         setMsg(`Скан запущен: ${job.cidr}`);
@@ -109,6 +115,7 @@ export function DiscoveryPage() {
   const accountsMode =
     (active?.kind || "") === "accounts" ||
     (active?.kind || "") === "ad_accounts" ||
+    (active?.kind || "") === "winrm_accounts" ||
     candidates.some((c) => !!c.username);
 
   return (
@@ -116,7 +123,7 @@ export function DiscoveryPage() {
       <div className="toolbar">
         <div>
           <h1>Discovery</h1>
-          <p className="muted">Сеть (TCP), SSH passwd и привилегированные УЗ AD/LDAP</p>
+          <p className="muted">Сеть (TCP), SSH passwd, AD/LDAP и Windows local (WinRM/SAM)</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -130,6 +137,7 @@ export function DiscoveryPage() {
             <option value="network">Сеть (TCP / хосты)</option>
             <option value="accounts">Учётки (SSH account discovery)</option>
             <option value="ad_accounts">AD privileged (LDAP)</option>
+            <option value="winrm_accounts">Windows local (WinRM/SAM)</option>
           </select>
           {scanKind === "network" ? (
             <>
@@ -143,6 +151,16 @@ export function DiscoveryPage() {
               <label>Порты (через запятую)</label>
               <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="22,3389,5900" />
               <p className="muted">Лимит: 1024 хоста. 22→ssh, 3389→rdp, 5900→vnc.</p>
+            </>
+          ) : scanKind === "winrm_accounts" ? (
+            <>
+              <label>Режим (ports)</label>
+              <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="winrm,sam" />
+              <p className="muted">
+                Обходит активные RDP-активы с vault-секретом: WinRM 5985/5986 (
+                <span className="mono">Get-LocalUser</span>, Administrators), fallback SAM через SSH :22 (
+                <span className="mono">net user</span>). Импорт — учётка без секрета.
+              </p>
             </>
           ) : scanKind === "ad_accounts" ? (
             <>
@@ -191,7 +209,7 @@ export function DiscoveryPage() {
               <tr key={j.id}>
                 <td className="mono">{j.kind || "network"}</td>
                 <td className="mono">
-                  {j.kind === "accounts" || j.kind === "ad_accounts"
+                  {j.kind === "accounts" || j.kind === "ad_accounts" || j.kind === "winrm_accounts"
                     ? j.cidr
                     : `${j.cidr} · ${j.ports}`}
                 </td>
@@ -272,9 +290,11 @@ export function DiscoveryPage() {
                     <td className="muted mono" style={{ fontSize: "0.85rem" }}>
                       {c.protocol === "ldap" && c.details
                         ? `dn=${String(c.details.dn ?? "").slice(0, 48)}${String(c.details.dn ?? "").length > 48 ? "…" : ""} · ${(Array.isArray(c.details.reasons) ? c.details.reasons : []).join(",")}`
-                        : c.details
-                          ? `uid=${String(c.details.uid ?? "")} shell=${String(c.details.shell ?? "")}`
-                          : ""}
+                        : c.protocol === "winrm" && c.details
+                          ? `sid=${String(c.details.sid ?? "")} · ${String(c.details.source ?? "")}`
+                          : c.details
+                            ? `uid=${String(c.details.uid ?? "")} shell=${String(c.details.shell ?? "")}`
+                            : ""}
                     </td>
                     <td>
                       {c.imported_account_id ? (
@@ -323,7 +343,9 @@ export function DiscoveryPage() {
                     {active?.status === "running" || active?.status === "pending"
                       ? "Скан ещё идёт…"
                       : accountsMode
-                        ? "Учёток не найдено (нужны SSH-активы с секретом)"
+                        ? active?.kind === "winrm_accounts"
+                          ? "Учёток не найдено (нужны RDP-активы с секретом и WinRM или SSH :22)"
+                          : "Учёток не найдено (нужны SSH-активы с секретом)"
                         : "Открытых портов не найдено"}
                   </td>
                 </tr>

@@ -30,5 +30,5 @@ Discovery → «AD privileged (LDAP)» → Кандидаты (новые Domain
 
 ## Ограничения
 
-- Нет WinRM / локальных Windows SAM (только LDAP directory).
-- Нужен настроенный LDAP URL + user base DN + bind.
+- WinRM / локальный SAM — см. `docs/winrm-discovery.txt` (`kind=winrm_accounts`, SOW-WINRM-DISC).
+- AD discovery требует настроенный LDAP URL + user base DN + bind.

@@ -26,6 +26,7 @@ type aclConstraints struct {
 	MaxRisk             int
 	RiskAction          string
 	PIIAction           string
+	NlpDlpAction        string
 	FileTransfer        string
 }
 
@@ -86,6 +87,9 @@ func overlayConstraints(base aclConstraints, pol aclConstraints, hasPolicy bool)
 	}
 	if out.PIIAction == "" {
 		out.PIIAction = pol.PIIAction
+	}
+	if out.NlpDlpAction == "" {
+		out.NlpDlpAction = pol.NlpDlpAction
 	}
 	if out.FileTransfer == "" {
 		out.FileTransfer = pol.FileTransfer

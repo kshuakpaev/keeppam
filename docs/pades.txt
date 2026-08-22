@@ -33,6 +33,6 @@ Document timestamp — второй invisible Sig field, TSA imprint по ByteRa
 
 Аудит: `pades=B-B|B-T|B-LT|B-LTA`. Compliance UI показывает профиль из `pdf_pades`.
 
-## Вне scope
+## Вне scope (базовый PAdES)
 
-Qualified eIDAS, ECDSA, PKCS#11 для PDF-ключа, подпись CSV/JSON, визуальный штамп.
+ECDSA, CSV/JSON signing, визуальный штамп. Qualified eIDAS/ФСТЭК — модуль **SOW-EIDAS** (`docs/eidas-qualified.txt`).

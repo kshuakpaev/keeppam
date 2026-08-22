@@ -33,6 +33,14 @@ type Service struct {
 	store         recstore.Store
 	dataKeySource string
 	pdf           *pades.Signer
+	eidas         EidasGate
+}
+
+// EidasGate applies qualified PDF policy from SOW-EIDAS settings.
+type EidasGate interface {
+	BuildSigner(ctx context.Context) (*pades.Signer, error)
+	ApplySigner(ctx context.Context, sig *pades.Signer) error
+	StatusFields(ctx context.Context) (mode, profile string, qualified bool)
 }
 
 func New(db *store.DB, aud *audit.Service, recordingsDir string, store recstore.Store, dataKeySource string) *Service {
@@ -45,6 +53,12 @@ func New(db *store.DB, aud *audit.Service, recordingsDir string, store recstore.
 func (s *Service) SetPDFSigner(sig *pades.Signer) {
 	if s != nil {
 		s.pdf = sig
+	}
+}
+
+func (s *Service) SetEidas(g EidasGate) {
+	if s != nil {
+		s.eidas = g
 	}
 }
 
@@ -68,18 +82,34 @@ func (s *Service) PDFProfile() string {
 
 func (s *Service) WritePDF(w io.Writer, rep Report) error {
 	var buf bytes.Buffer
+	ctx := context.Background()
+	sig := s.pdf
+	if s.eidas != nil {
+		built, err := s.eidas.BuildSigner(ctx)
+		if err != nil {
+			return err
+		}
+		if built != nil {
+			sig = built
+		}
+	}
 	sigLabel := ""
-	if s.pdf != nil {
-		sigLabel = s.pdf.SignatureLabel()
+	if sig != nil {
+		if s.eidas != nil {
+			if err := s.eidas.ApplySigner(ctx, sig); err != nil {
+				return err
+			}
+		}
+		sigLabel = sig.SignatureLabel()
 	}
 	if err := writeReportPDF(&buf, rep, sigLabel); err != nil {
 		return err
 	}
-	if s.pdf == nil {
+	if sig == nil {
 		_, err := w.Write(buf.Bytes())
 		return err
 	}
-	out, err := pades.Sign(buf.Bytes(), s.pdf, time.Now().UTC())
+	out, err := pades.Sign(buf.Bytes(), sig, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -144,6 +174,9 @@ type Status struct {
 	PDFSigned      bool            `json:"pdf_signed"`
 	PDFSigner      string          `json:"pdf_signer,omitempty"`
 	PDFPAdES       string          `json:"pdf_pades,omitempty"`
+	PDFQualified   bool            `json:"pdf_qualified,omitempty"`
+	PDFEidasMode   string          `json:"pdf_eidas_mode,omitempty"`
+	PDFEidasProfile string         `json:"pdf_eidas_profile,omitempty"`
 }
 
 func (s *Service) GetRetention(ctx context.Context) (RetentionPolicy, error) {
@@ -353,6 +386,12 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Retention: ret, GeneratedAt: time.Now().UTC(), Controls: []ControlResult{}, LastPurgeStats: map[string]any{},
 		PDFSigned: s.PDFSigned(), PDFSigner: s.PDFSignerCN(), PDFPAdES: s.PDFProfile(),
 	}
+	if s.eidas != nil {
+		mode, profile, qualified := s.eidas.StatusFields(ctx)
+		st.PDFEidasMode = mode
+		st.PDFEidasProfile = profile
+		st.PDFQualified = qualified
+	}
 	var packID *string
 	var applied, lastPurge *time.Time
 	var stats []byte
@@ -388,6 +427,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	st.Controls = append(st.Controls, s.checkSBOM())
 	st.Controls = append(st.Controls, s.checkMemory())
 	st.Controls = append(st.Controls, s.checkPAdES())
+	st.Controls = append(st.Controls, s.checkEIDAS(ctx))
 	st.Controls = append(st.Controls, s.checkFirewallPAM(ctx))
 	return st, nil
 }
@@ -604,6 +644,32 @@ func (s *Service) checkPAdES() ControlResult {
 	}
 	return ControlResult{ID: "pades_pdf", Title: "PAdES PDF signature", Status: "pass",
 		Detail: "PAdES-" + s.pdf.Profile() + " · " + s.pdf.CN()}
+}
+
+func (s *Service) checkEIDAS(ctx context.Context) ControlResult {
+	if s.eidas == nil {
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+			Detail: "SOW-EIDAS module not wired"}
+	}
+	mode, profile, qualified := s.eidas.StatusFields(ctx)
+	switch mode {
+	case "off", "":
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+			Detail: "mode=off — advanced PAdES only (docs/pades.txt)"}
+	case "advanced":
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "pass",
+			Detail: "advanced · profile=" + profile + " · PAdES-" + s.PDFProfile()}
+	case "qualified":
+		if qualified {
+			return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "pass",
+				Detail: "qualified · " + profile + " · " + s.PDFSignerCN()}
+		}
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "fail",
+			Detail: "qualified mode but certificate/policy check failed"}
+	default:
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+			Detail: "unknown mode " + mode}
+	}
 }
 
 func (s *Service) checkFirewallPAM(ctx context.Context) ControlResult {

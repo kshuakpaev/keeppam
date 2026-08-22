@@ -1,0 +1,75 @@
+# KeepPAM: WinRM / SAM account discovery (SOW-WINRM-DISC)
+
+## Назначение
+
+Discovery локальных Windows-учёток на RDP-активах через WinRM (5985/5986) с fallback
+на SAM через SSH (`net user` / `net localgroup administrators`).
+
+## Job kind
+
+`winrm_accounts`
+
+## Цели
+
+- Активные assets с `protocol=rdp`
+- Есть vault-секрет хотя бы у одной учётки на активе
+- Опционально фильтр `asset_ids` (до 100 активов)
+
+## Режимы (поле `ports` job)
+
+| Значение | Поведение |
+|----------|-----------|
+| `winrm,sam` (default) | WinRM, затем SAM fallback |
+| `winrm` | Только WinRM |
+| `sam` | Только SSH SAM |
+
+## WinRM
+
+PowerShell на цели:
+
+- `Get-LocalUser` (+ enabled filter)
+- `Get-LocalGroupMember Administrators`
+- Fallback внутри скрипта: `net user` / `net localgroup`
+
+Порты: HTTP 5985, затем HTTPS 5986 (lab: skip verify).
+
+## SAM fallback (SSH)
+
+Если WinRM недоступен — SSH на asset (или :22 management, как rotate).
+
+## Кандидаты
+
+- `protocol=winrm`
+- `username` — локальное имя SAM
+- `privileged` — Administrator / SID *-500 / members of Administrators
+- `details`: `{sid, source, enabled}` где `source` = `winrm` | `sam_ssh`
+- `already_known` — username уже есть на `source_asset_id` (как SSH discovery)
+
+## Импорт
+
+Как SSH account discovery: `importAccountCandidate` → учётка без секрета на source asset.
+
+```
+POST /api/v1/admin/discovery/jobs
+{ "kind": "winrm_accounts", "ports": "winrm,sam" }
+```
+
+## UI
+
+Discovery → «Windows local (WinRM/SAM)» → Кандидаты → Импорт.
+
+## Миграция
+
+`103_winrm_discovery.sql` — kind `winrm_accounts` в CHECK.
+
+## Acceptance (SOW-WINRM-DISC)
+
+- [ ] Job на RDP-активах с секретом находит локальных privileged users
+- [ ] Fallback SAM через SSH при недоступном WinRM
+- [ ] Import кандидата создаёт vault account без секрета
+- [ ] UI: новый тип скана и колонки кандидатов
+
+## Связанные документы
+
+- `docs/account-discovery.txt`
+- `docs/sow-backlog.txt` — SOW-WINRM-DISC

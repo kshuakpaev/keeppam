@@ -19,6 +19,7 @@ const emptyPolicyForm = {
   allowed_namespaces: "",
   allowed_egress: "",
   pii_action: "",
+  nlp_dlp_action: "",
   file_transfer: "deny",
   ocr_lang: "rus+eng",
   ocr_interval_sec: "15",
@@ -28,6 +29,7 @@ const emptyPolicyForm = {
   rdp_printer: false,
   rdp_native: false,
   dlp_patterns: "",
+  dlp_classifiers: "",
   command_policy_pack_id: "",
   sql_policy_pack_id: "",
   http_policy_pack_id: "",
@@ -35,6 +37,42 @@ const emptyPolicyForm = {
   max_risk: "0",
   risk_action: "deny",
 };
+
+function formatDlpClassifiers(classifiers?: { name: string; keywords: string; min_hits?: number }[]): string {
+  if (!classifiers?.length) return "";
+  return classifiers
+    .map((c) => {
+      const hits = c.min_hits && c.min_hits > 1 ? ` min=${c.min_hits}` : "";
+      return `${c.name}${hits} ${c.keywords.replace(/\n/g, " | ")}`;
+    })
+    .join("\n");
+}
+
+function parseDlpClassifiers(text: string): { name: string; keywords: string; min_hits?: number }[] {
+  const out: { name: string; keywords: string; min_hits?: number }[] = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    let rest = t;
+    let minHits = 1;
+    const minIdx = rest.indexOf(" min=");
+    if (minIdx > 0) {
+      const tail = rest.slice(minIdx + 5).trim();
+      const sp = tail.indexOf(" ");
+      const num = sp > 0 ? tail.slice(0, sp) : tail;
+      minHits = Number(num) || 1;
+      rest = rest.slice(0, minIdx) + (sp > 0 ? " " + tail.slice(sp + 1) : "");
+    }
+    const sp = rest.indexOf(" ");
+    if (sp <= 0) continue;
+    out.push({
+      name: rest.slice(0, sp).trim(),
+      keywords: rest.slice(sp + 1).trim().replace(/\s*\|\s*/g, "\n"),
+      min_hits: minHits,
+    });
+  }
+  return out;
+}
 
 function parseDlpPatterns(text: string): { name: string; pattern: string }[] {
   const out: { name: string; pattern: string }[] = [];
@@ -577,6 +615,7 @@ export function JeaPage() {
       allowed_namespaces: (p.allowed_namespaces || []).join(", "),
       allowed_egress: (p.allowed_egress || []).join(", "),
       pii_action: p.pii_action || "",
+      nlp_dlp_action: p.nlp_dlp_action || "",
       file_transfer: p.file_transfer || "deny",
       ocr_lang: p.ocr_lang || "rus+eng",
       ocr_interval_sec: String(p.ocr_interval_sec || 15),
@@ -586,6 +625,7 @@ export function JeaPage() {
       rdp_printer: !!p.rdp_printer,
       rdp_native: !!p.rdp_native,
       dlp_patterns: formatDlpPatterns(p.dlp_patterns),
+      dlp_classifiers: formatDlpClassifiers(p.dlp_classifiers),
       command_policy_pack_id: p.command_policy_pack_id || "",
       sql_policy_pack_id: p.sql_policy_pack_id || "",
       http_policy_pack_id: p.http_policy_pack_id || "",
@@ -623,6 +663,7 @@ export function JeaPage() {
     if ((p.allowed_namespaces || []).length) bits.push("ns:" + p.allowed_namespaces.join(","));
     if ((p.allowed_egress || []).length) bits.push("egress:" + p.allowed_egress.join(","));
     if (p.pii_action) bits.push("pii:" + p.pii_action);
+    if (p.nlp_dlp_action) bits.push("nlp:" + p.nlp_dlp_action);
     if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
     if (p.ocr_lang) bits.push("ocr:" + p.ocr_lang + "/" + (p.ocr_interval_sec || 15) + "s");
     if (p.rdp_clipboard || p.rdp_drive || p.rdp_printer) {
@@ -634,6 +675,7 @@ export function JeaPage() {
     }
     if (p.rdp_native) bits.push("mstsc");
     if ((p.dlp_patterns || []).length) bits.push(`dlp:${(p.dlp_patterns || []).length}`);
+    if ((p.dlp_classifiers || []).length) bits.push(`nlp+:${(p.dlp_classifiers || []).length}`);
     if (p.require_ticket) bits.push("ticket");
     if (p.require_reason) bits.push("reason");
     if (p.command_policy_pack_name) bits.push(`ssh:${p.command_policy_pack_name}`);
@@ -664,6 +706,7 @@ export function JeaPage() {
         allowed_namespaces: splitCSV(policyForm.allowed_namespaces),
         allowed_egress: splitCSV(policyForm.allowed_egress),
         pii_action: policyForm.pii_action || "",
+        nlp_dlp_action: policyForm.nlp_dlp_action || "",
         file_transfer: policyForm.file_transfer || "deny",
         ocr_lang: policyForm.ocr_lang || "rus+eng",
         ocr_interval_sec: Number(policyForm.ocr_interval_sec) || 15,
@@ -673,6 +716,7 @@ export function JeaPage() {
         rdp_printer: !!policyForm.rdp_printer,
         rdp_native: !!policyForm.rdp_native,
         dlp_patterns: parseDlpPatterns(policyForm.dlp_patterns),
+        dlp_classifiers: parseDlpClassifiers(policyForm.dlp_classifiers),
         max_risk: Number(policyForm.max_risk) || 0,
         risk_action: policyForm.risk_action,
       };
@@ -1691,6 +1735,16 @@ export function JeaPage() {
                 <option value="mask">mask</option>
                 <option value="deny">deny</option>
               </select>
+              <label>NLP/DLP классификатор</label>
+              <select
+                value={policyForm.nlp_dlp_action}
+                onChange={(e) => setPolicyForm({ ...policyForm, nlp_dlp_action: e.target.value })}
+              >
+                <option value="">выкл.</option>
+                <option value="audit">audit</option>
+                <option value="mask">mask</option>
+                <option value="deny">deny</option>
+              </select>
               <label>SCP/SFTP</label>
               <select
                 value={policyForm.file_transfer}
@@ -1770,6 +1824,18 @@ export function JeaPage() {
               />
               <p className="muted" style={{ marginTop: "-0.5rem" }}>
                 Встроенные kind: email, pan, phone, snils. Свои regex + PII в SSH stdout, keystroke, OCR screen_text.
+              </p>
+              <label>NLP классификаторы (имя, min=N, ключевые слова)</label>
+              <textarea
+                rows={4}
+                value={policyForm.dlp_classifiers}
+                onChange={(e) => setPolicyForm({ ...policyForm, dlp_classifiers: e.target.value })}
+                placeholder={"trade_secret min=2 alpha|beta|roadmap\nhr_data salary bonus увольнение"}
+                spellCheck={false}
+              />
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>
+                Встроенные: nlp_credentials, nlp_financial, nlp_personal_id, nlp_health, nlp_legal, nlp_private_key.
+                SQL/HTTP/SSH stdout/keystroke/OCR — не live ML, on-prem keyword classifier.
               </p>
               <label>SSH JEA pack</label>
               <select

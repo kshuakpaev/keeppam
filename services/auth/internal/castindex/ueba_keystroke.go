@@ -9,6 +9,7 @@ import (
 	"github.com/keeppam/auth/internal/guacindex"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/ueba"
+	"github.com/keeppam/auth/internal/uebaml"
 )
 
 // UEBAHook is called when post-session keystroke timing looks anomalous.
@@ -17,6 +18,12 @@ type UEBAHook func(ctx context.Context, row sessionsvc.Session, payload map[stri
 func (s *Service) SetUEBAHook(h UEBAHook) {
 	if s != nil {
 		s.uebaHook = h
+	}
+}
+
+func (s *Service) SetUEBAML(sc UEBAMLScorer) {
+	if s != nil {
+		s.uebaml = sc
 	}
 }
 
@@ -42,6 +49,18 @@ func (s *Service) evaluateKeystrokeUEBA(ctx context.Context, row sessionsvc.Sess
 	}
 	mean, std := ueba.MeanStd(medians)
 	z := ueba.ZScore(tim.MedianMs, mean, std)
+	if s.uebaml != nil && s.uebaml.Enabled(ctx) {
+		if ml, extras := s.uebaml.ScorePostSession(ctx, row, z, 0); len(extras) > 0 {
+			for _, f := range extras {
+				score, factors, err := s.sess.AppendRisk(ctx, row.ID, uebamlMLPoints(f), f)
+				if err == nil {
+					_ = s.sess.AddEvent(ctx, row.ID, "ueba", map[string]any{
+						"factor": f, "ml_score": ml, "source": "uebaml", "risk_score": score, "risk_factors": factors,
+					})
+				}
+			}
+		}
+	}
 	if !ueba.FastTyping(tim.MedianMs, tim.NKeys, len(medians), mean, std, z) {
 		return
 	}
@@ -71,4 +90,13 @@ func (s *Service) evaluateKeystrokeUEBA(ctx context.Context, row sessionsvc.Sess
 
 func round1(v float64) float64 {
 	return math.Round(v*10) / 10
+}
+
+func uebamlMLPoints(f string) int {
+	switch f {
+	case uebaml.FactorMLHigh:
+		return uebaml.MLHighPoints
+	default:
+		return 15
+	}
 }

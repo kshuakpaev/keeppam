@@ -94,8 +94,11 @@ func cadesBES(data []byte, s *Signer, at time.Time) ([]byte, error) {
 }
 
 func buildCMS(data []byte, s *Signer, at time.Time) ([]byte, error) {
-	if s == nil || s.Cert == nil || s.Key == nil {
+	if s == nil || s.Cert == nil {
 		return nil, fmt.Errorf("pades: empty signer")
+	}
+	if s.Key == nil && s.SignHash == nil {
+		return nil, fmt.Errorf("pades: no signing key")
 	}
 	sum := sha256.Sum256(data)
 	attrs, err := signedAttributes(s.Cert, sum[:], at)
@@ -107,7 +110,12 @@ func buildCMS(data []byte, s *Signer, at time.Time) ([]byte, error) {
 		return nil, err
 	}
 	attrSum := sha256.Sum256(setDER)
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.Key, crypto.SHA256, attrSum[:])
+	var sig []byte
+	if s.SignHash != nil {
+		sig, err = s.SignHash(attrSum[:])
+	} else {
+		sig, err = rsa.SignPKCS1v15(rand.Reader, s.Key, crypto.SHA256, attrSum[:])
+	}
 	if err != nil {
 		return nil, err
 	}

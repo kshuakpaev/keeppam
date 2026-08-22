@@ -29,6 +29,7 @@ import (
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
+	"github.com/keeppam/auth/internal/eidas"
 	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
@@ -40,6 +41,7 @@ import (
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/migrate"
+	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
@@ -53,6 +55,7 @@ import (
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
+	"github.com/keeppam/auth/internal/uebaml"
 	"github.com/keeppam/auth/internal/spiffe"
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
@@ -265,6 +268,7 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	nacSvc := nac.New(db, auditSvc, env, sessSvc)
 	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
 	castIdx.SetUEBAHook(func(ctx context.Context, row sessionsvc.Session, payload map[string]any) {
@@ -276,20 +280,33 @@ func main() {
 	analyticsSvc := analytics.New(db)
 	appsSvc := appaccess.New(db, auditSvc, env, assetsSvc, policySvc, sessions.Redis())
 	complianceSvc := compliance.New(db, auditSvc, cfg.RecordingsDir, recStore, cfg.DataKeySource)
+	var pdfSigner *pades.Signer
 	if cfg.PDFCertFile != "" {
-		sig, err := pades.Load(cfg.PDFCertFile, cfg.PDFKeyFile)
+		var err error
+		if cfg.PDFKeyFile != "" {
+			pdfSigner, err = pades.Load(cfg.PDFCertFile, cfg.PDFKeyFile)
+		} else {
+			pdfSigner, err = pades.LoadCertOnly(cfg.PDFCertFile)
+			if err == nil {
+				err = pades.AttachPKCS11Helper(pdfSigner, cfg.PDFPKCS11Helper, cfg.PDFPKCS11Module, os.Getenv("KEEPPAM_PDF_PKCS11_LABEL"), os.Getenv("KEEPPAM_PDF_PKCS11_PIN"))
+			}
+		}
 		if err != nil {
 			slog.Error("pades signer", "err", err)
 			os.Exit(1)
 		}
-		sig.TSAURL = cfg.PDFTSAURL
-		sig.LTV = cfg.PDFLTV
-		sig.LTVDir = cfg.PDFLTVDir
-		sig.LTVFetch = cfg.PDFLTVFetch
-		sig.LTA = cfg.PDFLTA
-		complianceSvc.SetPDFSigner(sig)
-		slog.Info("pades signer", "cn", sig.CN(), "profile", sig.Profile(), "tsa", cfg.PDFTSAURL != "", "ltv", cfg.PDFLTV, "lta", cfg.PDFLTA)
+		pdfSigner.TSAURL = cfg.PDFTSAURL
+		pdfSigner.LTV = cfg.PDFLTV
+		pdfSigner.LTVDir = cfg.PDFLTVDir
+		pdfSigner.LTVFetch = cfg.PDFLTVFetch
+		pdfSigner.LTA = cfg.PDFLTA
+		complianceSvc.SetPDFSigner(pdfSigner)
+		slog.Info("pades signer", "cn", pdfSigner.CN(), "profile", pdfSigner.Profile(), "tsa", cfg.PDFTSAURL != "", "ltv", cfg.PDFLTV, "lta", cfg.PDFLTA, "pkcs11", pdfSigner.PKCS11)
 	}
+	eidasSvc := eidas.New(db, auditSvc, env, cfg, pdfSigner)
+	complianceSvc.SetEidas(eidasSvc)
+	uebamlSvc := uebaml.New(db, auditSvc, sessSvc, notifySvc)
+	castIdx.SetUEBAML(uebamlSvc)
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
@@ -312,7 +329,10 @@ func main() {
 	adJit := adjit.New(db, assetsSvc, sessSvc, auditSvc, resolveDir)
 	assetsSvc.SetLDAPPasswordChanger(adJit)
 	hdxClient := hdx.NewClient(cfg.CitrixHDXPluginURL)
-	sessSvc.SetStartHook(adJit.OnSessionStart)
+	sessSvc.SetStartHook(func(ctx context.Context, id uuid.UUID) {
+		adJit.OnSessionStart(ctx, id)
+		nacSvc.OnSessionStart(ctx, id)
+	})
 	sessSvc.SetEndHook(func(ctx context.Context, id uuid.UUID, protocol string) {
 		live.Fanout(ctx, id, "end", "")
 		live.Clear(ctx, id)
@@ -331,6 +351,7 @@ func main() {
 			}
 		}
 		adJit.OnSessionEnd(ctx, id)
+		nacSvc.OnSessionEnd(ctx, id)
 		if protocol == "rdp" && rdpBroker != nil {
 			rdpBroker.Stop(id)
 			if filesSvc != nil {
@@ -425,6 +446,7 @@ func main() {
 
 	go live.Listen(runCtx)
 	go auditSvc.RunSealer(runCtx)
+	go uebamlSvc.RunLive(runCtx)
 	if runHTTP {
 		go firewallSvc.RunProbeScheduler(runCtx)
 	}
@@ -503,7 +525,7 @@ func main() {
 			rdpBroker = rdpBrokerInit
 			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, uebamlSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {

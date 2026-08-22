@@ -227,6 +227,7 @@ export type AccessBinding = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
@@ -421,6 +422,45 @@ export type FirewallProbeAgent = {
   last_health_at?: string;
   last_health_ok?: boolean;
   last_error?: string;
+};
+
+export type NACSettings = {
+  mode?: string;
+  api_url?: string;
+  api_token?: string;
+  has_api_token?: boolean;
+  vendor?: string;
+  timeout_ms?: number;
+  last_check_at?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
+export type EIDASSettings = {
+  mode?: string;
+  profile?: string;
+  require_b_lta?: boolean;
+  pkcs11_enabled?: boolean;
+  pkcs11_module?: string;
+  pkcs11_label?: string;
+  pkcs11_pin?: string;
+  has_pkcs11_pin?: boolean;
+  cert_cn?: string;
+  cert_qualified?: boolean;
+  pades_profile?: string;
+  last_check_at?: string;
+  last_error?: string;
+  updated_at?: string;
+};
+
+export type UEBAMLSettings = {
+  mode?: string;
+  peer_group?: boolean;
+  ml_threshold?: number;
+  live_interval_s?: number;
+  last_run_at?: string;
+  last_error?: string;
+  updated_at?: string;
 };
 
 export type FirewallSettings = {
@@ -994,6 +1034,47 @@ export const api = {
       { method: "PUT", body: JSON.stringify(body) },
     ),
   pushFirewallAWX: () => request<FirewallSettings>("/api/v1/admin/firewall/push", { method: "POST" }),
+  getNACSettings: () => request<NACSettings>("/api/v1/admin/settings/nac"),
+  putNACSettings: (body: Partial<NACSettings>) =>
+    request<NACSettings>("/api/v1/admin/settings/nac", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testNACSettings: () =>
+    request<{ result: { allowed: boolean; vlan?: string; policy?: string; reason?: string } }>(
+      "/api/v1/admin/settings/nac/test",
+      { method: "POST" },
+    ),
+  getEIDASSettings: () => request<EIDASSettings>("/api/v1/admin/settings/eidas"),
+  putEIDASSettings: (body: Partial<EIDASSettings>) =>
+    request<EIDASSettings>("/api/v1/admin/settings/eidas", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testEIDASSettings: () =>
+    request<{
+      result: {
+        mode: string;
+        profile: string;
+        cert_cn?: string;
+        cert_qualified?: boolean;
+        pades_profile?: string;
+        pkcs11?: boolean;
+        detail?: string;
+        ready?: boolean;
+      };
+    }>("/api/v1/admin/settings/eidas/test", { method: "POST" }),
+  getUEBAMLSettings: () => request<UEBAMLSettings>("/api/v1/admin/settings/ueba-ml"),
+  putUEBAMLSettings: (body: Partial<UEBAMLSettings>) =>
+    request<UEBAMLSettings>("/api/v1/admin/settings/ueba-ml", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testUEBAMLSettings: (body?: { user_id?: string; asset_id?: string }) =>
+    request<{ result: { risk_score: number; risk_factors?: string[]; connect?: Record<string, unknown> } }>(
+      "/api/v1/admin/settings/ueba-ml/test",
+      { method: "POST", body: JSON.stringify(body || {}) },
+    ),
   downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
     const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(await res.text());
@@ -1476,6 +1557,7 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
@@ -1508,6 +1590,7 @@ export const api = {
       allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   command_policy_pack_id?: string | null;
       sql_policy_pack_id?: string | null;
@@ -2198,6 +2281,12 @@ export type DlpPattern = {
   pattern: string;
 };
 
+export type NlpClassifier = {
+  name: string;
+  keywords: string;
+  min_hits?: number;
+};
+
 export type AccessPolicy = {
   id: string;
   name: string;
@@ -2214,6 +2303,7 @@ export type AccessPolicy = {
   allowed_namespaces: string[];
   allowed_egress: string[];
   pii_action: string;
+  nlp_dlp_action?: string;
   file_transfer: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;
@@ -2223,6 +2313,7 @@ export type AccessPolicy = {
   rdp_printer?: boolean;
   rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
+  dlp_classifiers?: NlpClassifier[];
   command_policy_pack_id?: string;
   command_policy_pack_name?: string;
   sql_policy_pack_id?: string;
@@ -2252,6 +2343,7 @@ export type AccessPolicyInput = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;
@@ -2261,6 +2353,7 @@ export type AccessPolicyInput = {
   rdp_printer?: boolean;
   rdp_native?: boolean;
   dlp_patterns?: DlpPattern[];
+  dlp_classifiers?: NlpClassifier[];
   command_policy_pack_id?: string;
   sql_policy_pack_id?: string;
   http_policy_pack_id?: string;
@@ -2392,6 +2485,7 @@ export type PolicySnapshot = {
   allowed_namespaces?: string[];
   allowed_egress?: string[];
   pii_action?: string;
+  nlp_dlp_action?: string;
   file_transfer?: string;
   ocr_lang?: string;
   ocr_interval_sec?: number;
@@ -2542,6 +2636,9 @@ export type ComplianceStatus = {
   pdf_signed?: boolean;
   pdf_signer?: string;
   pdf_pades?: string;
+  pdf_qualified?: boolean;
+  pdf_eidas_mode?: string;
+  pdf_eidas_profile?: string;
 };
 
 export type ComplianceReport = {

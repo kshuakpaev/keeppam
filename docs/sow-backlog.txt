@@ -24,11 +24,11 @@
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | **Закрыт** — EAP-TTLS/PEAP + RadSec; см. `docs/radius-eap.txt` |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | **Закрыт** — drive/clipboard ingest; см. `docs/rdp-file-capture.txt` |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
-| **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | Не OCR-index |
-| **SOW-NAC** | NAC-клиент | Сетевой контроль | Вне PAM-ядра |
-| **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | PAdES B-B уже опция |
-| **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | Сейчас heuristics + notify |
-| **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | Сейчас SSH+AD LDAP |
+| **SOW-NLP-DLP** | NLP/DLP-классификатор контента | Комплаенс контента | **Закрыт** — keyword classifier + audit/mask/deny; см. `docs/nlp-dlp.txt` |
+| **SOW-NAC** | NAC-клиент | Сетевой контроль | **Закрыт** — posture REST client; см. `docs/nac-client.txt` |
+| **SOW-EIDAS** | eIDAS / ФСТЭК qualified PDF/подпись | Гос/ЕС | **Закрыт** — QES/КЭП OID + PKCS#11; см. `docs/eidas-qualified.txt` |
+| **SOW-UEBA-ML** | UEBA-ML / peer-group / live scoring | «AI UEBA» в ТЗ | **Закрыт** — peer + ML score + live; см. `docs/ueba-ml.txt` |
+| **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | **Закрыт** — WinRM + SAM SSH fallback; см. `docs/winrm-discovery.txt` |
 | **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | MVP wire есть |
 | **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | Не код |
 
@@ -65,6 +65,37 @@
 - Default deny; policy enable.
 - Acceptance: copy file in RDP → artifact SHA совпадает.
 - **Статус:** закрыт (guacd staging + ingest на end session).
+
+### SOW-NLP-DLP
+- Keyword/phrase classifier контента (credentials, financial, legal, custom rules).
+- `nlp_dlp_action` audit/mask/deny; те же каналы что PII DLP.
+- Acceptance: audit hit на «salary»; deny на CONFIDENTIAL/NDA.
+- **Статус:** закрыт (on-prem, без ML-моделей).
+
+### SOW-NAC
+- REST NAC client: pre_connect posture + session_start/end notify.
+- Modes audit/enforce; mock `cmd/nac-mock` для acceptance.
+- Acceptance: enforce блокирует IP *.66; audit логирует без блокировки.
+- **Статус:** закрыт (не VLAN controller; CoA out of scope).
+
+### SOW-EIDAS
+- Qualified gate на compliance PDF: eIDAS QES / ФСТЭК КЭП policy OID.
+- PAdES-B-LTA + optional PKCS#11 HSM для ключа подписи.
+- Acceptance: qualified cert + mode=qualified → PDF export с QES label; без OID → блок.
+- **Статус:** закрыт (on-prem OID check + helper; QTSP/OEM — партнёр).
+
+### SOW-UEBA-ML
+- Peer-group baseline (`user_groups`), composite ML score, live mid-session guac scan.
+- Factors: `ueba_peer_outlier`, `ueba_ml_high`, `ueba_live_fast`.
+- Acceptance: rare asset → peer outlier; live RDP bot typing → mid-session notify.
+- **Статус:** закрыт (weighted on-prem model, no external ML runtime).
+
+### SOW-WINRM-DISC
+- WinRM discovery локальных privileged users на Windows RDP-активах (5985/5986).
+- Fallback SAM через SSH (`net user` / administrators group).
+- Import кандидата → vault account без секрета.
+- Acceptance: RDP asset + WinRM → Administrator в кандидатах; WinRM down + SSH :22 → SAM fallback.
+- **Статус:** закрыт (`winrm_accounts`, migration 103); см. `docs/winrm-discovery.txt`.
 
 ---
 

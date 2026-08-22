@@ -207,19 +207,42 @@ func ApplyPIIAction(action, s string) (out string, deny bool, kinds []string) {
 	return ApplyContentDLP(ContentDLP{Action: action}, s)
 }
 
-// ApplyContentDLP masks or denies built-in PII and custom regex patterns.
+// ApplyContentDLP masks or denies built-in PII, custom regex patterns, and NLP classifiers.
 func ApplyContentDLP(c ContentDLP, s string) (out string, deny bool, kinds []string) {
+	out = s
+	if c.active() {
+		var piiKinds []string
+		piiKinds, out, deny, _ = applyPIIScan(c, out)
+		kinds = mergeKinds(kinds, piiKinds)
+		if deny {
+			return out, true, kinds
+		}
+	}
+	if c.NLP.active() {
+		nlpKinds, nlpOut, nlpDeny := scanNLP(out, c.NLP)
+		kinds = mergeKinds(kinds, nlpKinds)
+		if nlpDeny {
+			return out, true, kinds
+		}
+		if c.NLP.Action == "mask" && len(nlpKinds) > 0 {
+			out = nlpOut
+		}
+	}
+	return out, false, kinds
+}
+
+func applyPIIScan(c ContentDLP, s string) (kinds []string, out string, deny bool, changed bool) {
 	if !c.active() {
-		return s, false, nil
+		return nil, s, false, false
 	}
 	kinds, masked, _ := scanContent(s, c.Patterns)
 	if len(kinds) == 0 {
-		return s, false, nil
+		return nil, s, false, false
 	}
 	if c.Action == "deny" {
-		return s, true, kinds
+		return kinds, s, true, false
 	}
-	return masked, false, kinds
+	return kinds, masked, false, masked != s
 }
 
 // ApplyPIIRows scans SQL cells. On deny, rows are emptied.
@@ -227,9 +250,9 @@ func ApplyPIIRows(action string, rows [][]string) (out [][]string, deny bool, ki
 	return ApplyContentDLPRows(ContentDLP{Action: action}, rows)
 }
 
-// ApplyContentDLPRows scans SQL cells with custom patterns.
+// ApplyContentDLPRows scans SQL cells with custom patterns and NLP classifiers.
 func ApplyContentDLPRows(c ContentDLP, rows [][]string) (out [][]string, deny bool, kinds []string) {
-	if !c.active() {
+	if !c.active() && !c.NLP.active() {
 		return rows, false, nil
 	}
 	seen := map[string]struct{}{}
@@ -243,32 +266,50 @@ func ApplyContentDLPRows(c ContentDLP, rows [][]string) (out [][]string, deny bo
 			order = append(order, k)
 		}
 	}
-	if c.Action == "deny" {
+	if c.Action == "deny" || c.NLP.Action == "deny" {
 		for _, row := range rows {
 			for _, cell := range row {
-				ks, _, _ := scanContent(cell, c.Patterns)
+				_, d, ks := ApplyContentDLP(c, cell)
 				if len(ks) > 0 {
 					add(ks)
-					return rows, true, order
+					if d {
+						return rows, true, order
+					}
 				}
 			}
 		}
-		return rows, false, nil
 	}
 	out = make([][]string, len(rows))
 	for i, row := range rows {
 		cp := append([]string(nil), row...)
 		for j, cell := range cp {
-			ks, masked, _ := scanContent(cell, c.Patterns)
+			nout, d, ks := ApplyContentDLP(c, cell)
 			if len(ks) == 0 {
 				continue
 			}
 			add(ks)
-			cp[j] = masked
+			if d {
+				return rows, true, order
+			}
+			cp[j] = nout
 		}
 		out[i] = cp
 	}
 	return out, false, order
+}
+
+// DlpEventAction returns session dlp event action label.
+func DlpEventAction(c ContentDLP, before, after string, deny bool) string {
+	if deny {
+		return "deny"
+	}
+	if before != after {
+		return "mask"
+	}
+	if c.NLP.active() && c.NLP.Action == "audit" {
+		return "audit"
+	}
+	return "mask"
 }
 
 func textualContentType(ct string) bool {
@@ -294,7 +335,7 @@ func FilterHTTPBody(action, contentType string, body []byte) (out []byte, deny b
 
 // FilterHTTPBodyDLP applies content DLP to a textual HTTP body.
 func FilterHTTPBodyDLP(c ContentDLP, contentType string, body []byte) (out []byte, deny bool, kinds []string) {
-	if !c.active() {
+	if !c.active() && !c.NLP.active() {
 		return body, false, nil
 	}
 	if !textualContentType(contentType) {

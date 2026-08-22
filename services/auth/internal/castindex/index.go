@@ -19,6 +19,13 @@ type Service struct {
 	store      recstore.Store
 	guacencURL string
 	uebaHook   UEBAHook
+	uebaml     UEBAMLScorer
+}
+
+// UEBAMLScorer adds peer-group + ML layer (SOW-UEBA-ML).
+type UEBAMLScorer interface {
+	Enabled(ctx context.Context) bool
+	ScorePostSession(ctx context.Context, row sessionsvc.Session, ikiZ, mouseZ float64) (mlScore float64, extraFactors []string)
 }
 
 func New(sess *sessionsvc.Service, store recstore.Store, guacencURL string) *Service {
