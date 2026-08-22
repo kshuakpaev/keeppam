@@ -22,6 +22,7 @@ import (
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
 	"github.com/keeppam/auth/internal/castindex"
+	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/dbephemeral"
@@ -89,6 +90,7 @@ type Server struct {
 	files      *filexfer.Service
 	health     *health.State
 	rdp        *rdpgw.Broker
+	hdx        *hdx.Client
 	license    license.File
 }
 
@@ -98,7 +100,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 		lic = license.DefaultFile()
 		lic.Source = "error:" + err.Error()
 	}
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -144,6 +146,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 			r.Use(middleware.Timeout(30 * time.Second))
 
 			r.Post("/alerts/webhook", s.handleAlertWebhook)
+			r.Get("/citrix/sta/{ticket}", s.handleCitrixSTAValidate)
+			r.Get("/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
+			r.Get("/citrix/Scripts/CtxSta.dll", s.handleCitrixCtxSta)
+			r.Post("/citrix/hdx/ingest", s.handleCitrixHDXIngest)
 
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)
@@ -279,6 +285,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)
 				r.With(s.requirePerm("assets.read")).Get("/license", s.handleGetLicense)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
+				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/resources", s.handleCitrixSFResources)
+				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/discovery", s.handleCitrixSFDiscovery)
+				r.With(s.requirePerm("assets.read")).Get("/citrix/hdx/health", s.handleCitrixHDXHealth)
+				r.With(s.requirePerm("sessions.write")).Post("/sessions/{id}/citrix/hdx/sync", s.handleCitrixHDXSync)
+				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/citrix/sta/probe", s.handleCitrixSTAProbe)
 				r.With(s.requirePerm("assets.write")).Patch("/assets/{id}", s.handleUpdateAsset)
 				r.With(s.requirePerm("assets.write")).Delete("/assets/{id}", s.handleDeleteAsset)
 				r.With(s.requirePerm("assets.write")).Post("/assets/{id}/firewall-applied", s.handleMarkFirewallApplied)

@@ -36,12 +36,15 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 	if s == nil || s.sess == nil {
 		return OCRResult{Skipped: "unavailable"}, nil
 	}
-	if strings.TrimSpace(s.guacencURL) == "" {
-		return OCRResult{Skipped: "no_guacenc"}, nil
-	}
 	row, err := s.sess.Get(ctx, sessionID)
 	if err != nil {
 		return OCRResult{}, err
+	}
+	if citrixSession(row) {
+		return s.indexCitrixOCR(ctx, sessionID, row, force)
+	}
+	if strings.TrimSpace(s.guacencURL) == "" {
+		return OCRResult{Skipped: "no_guacenc"}, nil
 	}
 	if !graphicalSession(row) {
 		return OCRResult{Skipped: "unsupported"}, nil
@@ -109,12 +112,23 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 }
 
 func (s *Service) IndexOCRAsync(sessionID uuid.UUID) {
-	if s == nil || strings.TrimSpace(s.guacencURL) == "" {
+	if s == nil {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
+		row, err := s.sess.Get(ctx, sessionID)
+		if err != nil {
+			return
+		}
+		if citrixSession(row) {
+			_, _ = s.IndexOCR(ctx, sessionID, false)
+			return
+		}
+		if strings.TrimSpace(s.guacencURL) == "" {
+			return
+		}
 		_, _ = s.IndexOCR(ctx, sessionID, false)
 	}()
 }

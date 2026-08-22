@@ -18,7 +18,7 @@
 
 | ID | Модуль | Зачем в тендере | Зависимости / риск |
 |----|--------|-----------------|-------------------|
-| **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | OEM/партнёр; годы; сейчас есть SOCKS+`.ica` MVP |
+| **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | **фазы 1–4 в коде** (`docs/citrix-hdx.txt`); пиксельный decode — OEM |
 | **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | Сейчас HA 2+2/3+2 в одном сайте |
 | **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | Нет в password-sync A |
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | Сейчас PAP + x509 map |
@@ -40,6 +40,7 @@
 - Terminate HDX на шлюзе KeepPAM; STA ticket flow; StoreFront broker (или документированный subset).
 - Запись/replay экрана ICA на уровне, согласованном с OEM.
 - Acceptance: сессия через StoreFront → запись → forensic hit.
+- **Статус:** фазы 1–4 в коде (plugin terminate + recording/OCR ingest + mock); пиксельный ICA decode — OEM binary.
 
 ### SOW-GEO-HA
 - Два сайта; async репликация метаданных (+ политика RPO/RGO).

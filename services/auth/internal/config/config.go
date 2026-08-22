@@ -37,6 +37,8 @@ type Config struct {
 	TN3270Addr             string // native TN3270 gateway; empty/off = disabled
 	CitrixSocksAddr        string // SOCKS5 for Citrix ICA; empty/off = disabled
 	CitrixPublicHost       string // hostname in .ica ProxyHost; empty = localhost
+	CitrixHDXPluginURL     string // OEM HDX terminate plugin HTTP base; empty/off = disabled
+	CitrixHDXCallbackBase  string // public base for plugin ingest callback; empty = CORSOrigin
 	Mode                   string // all | api | ssh
 	GuacdAddr              string
 	GuacencURL             string
@@ -115,6 +117,8 @@ func Load() (Config, error) {
 		TN3270Addr:             env("KEEPPAM_TN3270_ADDR", ":2324"),
 		CitrixSocksAddr:        env("KEEPPAM_CITRIX_SOCKS_ADDR", ":1081"),
 		CitrixPublicHost:       env("KEEPPAM_CITRIX_PUBLIC_HOST", ""),
+		CitrixHDXPluginURL:     env("KEEPPAM_CITRIX_HDX_PLUGIN_URL", ""),
+		CitrixHDXCallbackBase:  env("KEEPPAM_CITRIX_HDX_CALLBACK_BASE", env("KEEPPAM_PUBLIC_URL", "")),
 		Mode:                   env("KEEPPAM_MODE", "all"),
 		GuacdAddr:              env("KEEPPAM_GUACD_ADDR", "127.0.0.1:4822"),
 		GuacencURL:             env("KEEPPAM_GUACENC_URL", ""),

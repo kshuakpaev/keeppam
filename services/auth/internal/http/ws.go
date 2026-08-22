@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	citrixica "github.com/keeppam/auth/internal/citrix"
+	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
 	"github.com/keeppam/auth/internal/policy"
@@ -219,6 +220,87 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_hint"] = "x3270/c3270 → PAM wire_addr; on KeepPAM login screen: Session UUID + wire_token"
 		}
 	}
+	if !created.WaitingSupervisor && created.Protocol == "citrix" {
+		transport := creds.Asset.CitrixTransport
+		if transport == "" {
+			transport = "socks"
+		}
+		// Phase 3: OEM HDX terminate plugin
+		if transport == "hdx" {
+			if s.hdx == nil || !s.hdx.Enabled() {
+				writeErr(w, http.StatusServiceUnavailable, "citrix_transport=hdx but KEEPPAM_CITRIX_HDX_PLUGIN_URL not set")
+				return
+			}
+			if _, err := s.hdx.Health(r.Context()); err != nil {
+				writeErr(w, http.StatusBadGateway, "hdx plugin unhealthy: "+err.Error())
+				return
+			}
+			target := creds.Asset.Address
+			if target == "" {
+				target = creds.Asset.Hostname
+			}
+			staTicket := ""
+			if sta, err := citrixica.IssueSTATicket(r.Context(), s.sessions.Redis(), created.ID, creds.Asset.ID, s.cfg.SessionTTL); err == nil {
+				staTicket = sta.Ticket
+				out["citrix_sta_ticket"] = sta.Ticket
+				out["citrix_sta_expires_at"] = sta.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			ttlSec := int(s.cfg.SessionTTL.Seconds())
+			if ttlSec <= 0 {
+				ttlSec = 3600
+			}
+			// Bind first so ingest token exists before plugin Start (callback may fire immediately).
+			bind, err := hdx.Bind(r.Context(), s.sessions.Redis(), created.ID, "pending", s.cfg.SessionTTL)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "hdx bind: "+err.Error())
+				return
+			}
+			cbBase := s.hdxCallbackBase()
+			st, err := s.hdx.Start(r.Context(), hdx.StartRequest{
+				KeepPAMSessionID: created.ID.String(),
+				VDAHost:          target,
+				VDAPort:          creds.Asset.Port,
+				Username:         creds.Account.Username,
+				Password:         creds.Secret,
+				InitialProgram:   creds.Asset.CitrixPublishedApp,
+				STATicket:        staTicket,
+				StoreFrontURL:    creds.Asset.CitrixStoreFrontURL,
+				TTLSeconds:       ttlSec,
+				RecordingHint:    created.RecordingPath,
+				CallbackURL:      hdx.CallbackURL(cbBase),
+				IngestToken:      bind.IngestToken,
+				Record:           true,
+			})
+			if err != nil {
+				hdx.ClearBinding(r.Context(), s.sessions.Redis(), created.ID)
+				writeErr(w, http.StatusBadGateway, "hdx plugin start: "+err.Error())
+				return
+			}
+			// Re-bind with real plugin session id (same ingest token).
+			_ = hdx.SetPluginSessionID(r.Context(), s.sessions.Redis(), created.ID, st.PluginSessionID, s.cfg.SessionTTL)
+			_ = hdx.AppendJSONL(created.RecordingPath, hdx.RecordingEvt{
+				T: time.Now().UTC().Format(time.RFC3339Nano), Event: "hdx_started", Seq: 1,
+				Meta: map[string]any{"plugin_session_id": st.PluginSessionID, "listen_addr": st.ListenAddr, "mode": st.Mode},
+			})
+			_ = s.sessionsvc.MarkActive(r.Context(), created.ID)
+			_ = s.sessionsvc.AddEvent(r.Context(), created.ID, "citrix_hdx_started", map[string]any{
+				"plugin_session_id": st.PluginSessionID, "listen_addr": st.ListenAddr, "mode": st.Mode,
+				"record": true, "callback": hdx.CallbackURL(cbBase) != "",
+			})
+			out["citrix_transport"] = "hdx"
+			out["citrix_hdx"] = map[string]any{
+				"plugin_session_id": st.PluginSessionID,
+				"listen_addr":       st.ListenAddr,
+				"mode":              st.Mode,
+				"message":           st.Message,
+				"recording":         created.RecordingPath != "",
+			}
+			out["recording_path"] = created.RecordingPath
+			out["wire_hint"] = "HDX terminate+record via OEM plugin (docs/citrix-hdx-oem.txt). Ingest → /api/v1/citrix/hdx/ingest."
+			writeJSON(w, http.StatusCreated, out)
+			return
+		}
+	}
 	if !created.WaitingSupervisor && created.Protocol == "citrix" && s.cfg.CitrixSocksAddr != "" && s.cfg.CitrixSocksAddr != "off" {
 		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
 		if err == nil {
@@ -241,13 +323,39 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				ProxyUser: created.ID.String(), ProxyPassword: tok,
 				TargetHost: target, TargetPort: creds.Asset.Port,
 				AppName: creds.Asset.Name, Title: creds.Asset.Name,
+				InitialProg:   creds.Asset.CitrixPublishedApp,
+				StoreFrontURL: creds.Asset.CitrixStoreFrontURL,
+				Username:      creds.Account.Username,
 			})
+			if sta, err := citrixica.IssueSTATicket(r.Context(), s.sessions.Redis(), created.ID, creds.Asset.ID, s.cfg.SessionTTL); err == nil {
+				ica = citrixica.BuildICAFile(citrixica.ICAFileOpts{
+					ProxyHost: host, ProxyPort: socksPort,
+					ProxyUser: created.ID.String(), ProxyPassword: tok,
+					TargetHost: target, TargetPort: creds.Asset.Port,
+					AppName: creds.Asset.Name, Title: creds.Asset.Name,
+					InitialProg:   creds.Asset.CitrixPublishedApp,
+					StoreFrontURL: creds.Asset.CitrixStoreFrontURL,
+					Username:      creds.Account.Username,
+					STATicket:     sta.Ticket,
+				})
+				out["citrix_sta_ticket"] = sta.Ticket
+				out["citrix_sta_expires_at"] = sta.ExpiresAt.UTC().Format(time.RFC3339)
+				_ = s.sessionsvc.AddEvent(r.Context(), created.ID, "citrix_sta_issued", map[string]any{
+					"ticket_prefix": sta.Ticket[:8], "transport": creds.Asset.CitrixTransport,
+				})
+			}
 			out["wire_token"] = tok
 			out["wire_addr"] = s.cfg.CitrixSocksAddr
 			out["wire_user"] = created.ID.String()
 			out["citrix_ica"] = ica
 			out["citrix_filename"] = fmt.Sprintf("keeppam-%s.ica", created.ID.String()[:8])
-			out["wire_hint"] = "Workspace: откройте .ica (SOCKS через KeepPAM). Полный ICA decode/STA — SOW."
+			out["citrix_transport"] = creds.Asset.CitrixTransport
+			if creds.Asset.CitrixTransport == "hdx_pending" {
+				out["wire_hint"] = "Workspace: .ica через SOCKS. citrix_transport=hdx_pending — HDX terminate ещё OEM (docs/citrix-hdx.txt)."
+			} else {
+				out["wire_hint"] = "Workspace: .ica (SOCKS). STA: KeepPAM /Scripts/CtxSta.dll или JSON /api/v1/citrix/sta/{ticket}. StoreFront enum — assets/…/citrix/resources."
+			}
+			out["citrix_sta_cgi"] = "/Scripts/CtxSta.dll"
 		}
 	}
 	if created.Protocol == "kubectl" && !created.WaitingSupervisor {

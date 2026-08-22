@@ -46,6 +46,9 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	if graphicalSession(row) {
 		return s.indexGuac(ctx, sessionID, row, force)
 	}
+	if citrixSession(row) {
+		return s.indexCitrix(ctx, sessionID, row, force)
+	}
 	if row.Protocol != "ssh" {
 		return Result{Skipped: "unsupported"}, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,8 +29,11 @@ type AuthFunc func(user, pass string) bool
 // AllowFunc returns whether CONNECT to host:port is permitted for this auth.
 type AllowFunc func(user, host string, port int) bool
 
+// CloseFunc is called after the relay ends (bytes are best-effort counts).
+type CloseFunc func(user, host string, port int, bytesUp, bytesDown int64)
+
 // ServeSOCKS handles one client connection (already Accepted).
-func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(user, host string, port int)) error {
+func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(user, host string, port int), onClose CloseFunc) error {
 	defer client.Close()
 	_ = client.SetDeadline(time.Now().Add(60 * time.Second))
 
@@ -125,10 +129,25 @@ func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(
 		onConnect(user, host, port)
 	}
 
-	errCh := make(chan error, 2)
-	go func() { _, e := io.Copy(up, client); errCh <- e }()
-	go func() { _, e := io.Copy(client, up); errCh <- e }()
-	<-errCh
+	var bytesUp, bytesDown atomic.Int64
+	done := make(chan struct{}, 2)
+	go func() {
+		n, _ := io.Copy(up, client)
+		bytesUp.Store(n)
+		done <- struct{}{}
+	}()
+	go func() {
+		n, _ := io.Copy(client, up)
+		bytesDown.Store(n)
+		done <- struct{}{}
+	}()
+	<-done
+	_ = client.Close()
+	_ = up.Close()
+	<-done
+	if onClose != nil {
+		onClose(user, host, port, bytesUp.Load(), bytesDown.Load())
+	}
 	return nil
 }
 

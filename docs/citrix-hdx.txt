@@ -1,0 +1,32 @@
+# KeepPAM: SOW-CITRIX-HDX
+
+Модуль уровня C. Базовый mid-market уже даёт Citrix **SOCKS + `.ica`** (`docs/citrix-socks.txt`).
+
+## Фазы
+
+| Фаза | Содержание | Статус |
+|------|------------|--------|
+| **1** | Metadata, STA ticket, richer `.ica`, SOCKS bytes | **есть** |
+| **2** | CtxSta.dll CGI, STA probe, StoreFront discovery/resources | **есть** |
+| **3** | OEM **plugin contract** for HDX terminate | **есть (контракт)** |
+| **4** | Recording ingest → JSONL / forensic / OCR index | **есть (контракт + mock)** |
+
+Контракт: `docs/citrix-hdx-oem.txt`. Реальный HDX decode / пиксели — **OEM binary**.
+
+## Phase 4 DoD (KeepPAM side)
+
+- [x] Ingest `POST /api/v1/citrix/hdx/ingest` (Bearer token)
+- [x] Events `hdx_frame` / `hdx_ocr` / `hdx_keystroke` → JSONL + `session_events`
+- [x] Sync + Finalize on session end; `castindex` Index/OCR для `protocol=citrix`
+- [x] Mock emits OCR/keystroke + callback
+- [x] `KEEPPAM_CITRIX_HDX_CALLBACK_BASE` / `KEEPPAM_PUBLIC_URL`
+- [ ] Pixel video / guacenc-style MP4 from ICA — OEM
+
+## Acceptance
+
+1–3. Как раньше + plugin health.
+4. Mock session → JSONL + `screen_text`/`keystroke` source=hdx; transcript index OK.
+
+## Файлы
+
+`docs/citrix-hdx-oem.txt`, `internal/citrix/hdx`, `cmd/citrix-hdx-mock`, `castindex/citrix.go`.

@@ -146,6 +146,16 @@ func (g *Gateway) handle(client net.Conn) {
 				"event": "connect", "host": host, "port": port,
 			})
 		},
+		func(user, host string, port int, bytesUp, bytesDown int64) {
+			_ = g.sessions.AddEvent(ctx, sessionID, "citrix_disconnect", map[string]any{
+				"host": host, "port": port, "bytes_up": bytesUp, "bytes_down": bytesDown, "via": "socks5",
+			})
+			appendRec(row.RecordingPath, map[string]any{
+				"t": time.Now().UTC().Format(time.RFC3339Nano),
+				"event": "disconnect", "host": host, "port": port,
+				"bytes_up": bytesUp, "bytes_down": bytesDown,
+			})
+		},
 	)
 	if err != nil {
 		slog.Debug("citrix socks", "err", err)
