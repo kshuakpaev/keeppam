@@ -1128,6 +1128,8 @@ func defaultPort(protocol string) int {
 		return 3306
 	case "mssql":
 		return 1433
+	case "oracle":
+		return 1521
 	case "kubectl":
 		return 6443
 	case "telnet":

@@ -16,6 +16,24 @@ func TestNormalizeSyncOrder(t *testing.T) {
 	}
 }
 
+func TestOracleQuotes(t *testing.T) {
+	if got := oracleQuoteIdent(`scott"`); got != `"scott"""` {
+		t.Fatalf("ident %q", got)
+	}
+	if got := oracleQuoteLiteral(`a"b`); got != `"a""b"` {
+		t.Fatalf("lit %q", got)
+	}
+}
+
+func TestOracleServiceName(t *testing.T) {
+	if got := oracleServiceName(Asset{}); got != "ORCL" {
+		t.Fatalf("default %q", got)
+	}
+	if got := oracleServiceName(Asset{DatabaseName: " XEPDB1 "}); got != "XEPDB1" {
+		t.Fatalf("custom %q", got)
+	}
+}
+
 func TestMSSQLQuotes(t *testing.T) {
 	if got := mssqlQuoteIdent("sa]"); got != "[sa]]]" {
 		t.Fatalf("ident %q", got)

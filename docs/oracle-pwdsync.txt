@@ -1,0 +1,76 @@
+# KeepPAM: Oracle password sync (SOW-ORACLE)
+
+Rotate/sync пароля Oracle-учётки из vault без показа секрета оператору. Wire-сессии SQL*Net через PAM — **вне** этого среза (как в КП уровня A: «не Oracle» на wire).
+
+## Настройка актива
+
+| Поле | Значение |
+|------|----------|
+| `protocol` | `oracle` |
+| `port` | `1521` (default) |
+| `database_name` | service name или SID (default `ORCL`) |
+| Учётка | `auth_method=password`, vault-секрет = текущий пароль |
+
+Учётка должна иметь право `ALTER USER` на себя (обычный пользователь) или подключаться как DBA (`SYS` → автоматически `SYSDBA` в thin driver).
+
+## Remote rotate
+
+1. UI **Rotate secret** на учётке или **Rotate all** в password set.
+2. `apply_remote=true` (default когда протокол поддерживается).
+
+### Путь 1 — thin (go-ora, без Instant Client)
+
+KeepPAM API подключается к `host:port/service`, выполняет:
+
+```sql
+ALTER USER "<user>" IDENTIFIED BY "<new>"
+```
+
+и проверяет login новым паролем. Откат на старый пароль при ошибке verify.
+
+### Путь 2 — thick fallback (SQL*Plus через SSH :22)
+
+Если thin недоступен (нет TNS/listener с API-хоста, только sqlplus на jump host), KeepPAM пробует management SSH (как MySQL):
+
+```text
+sqlplus -S -L user/pass@//host:1521/service
+ALTER USER … IDENTIFIED BY …
+```
+
+На jump host нужны `sqlplus` и сеть до listener. Oracle Instant Client — **на jump host**, не на KeepPAM API.
+
+## Password sync (наборы)
+
+Oracle-учётки включаются в `password_sets` наравне с PostgreSQL/MSSQL/AD. Один rotate → один пароль на все members.
+
+## Acceptance (DoD)
+
+1. Создать актив `oracle`, учётку с паролем в vault.
+2. Rotate с `apply_remote=true`.
+3. Подключиться SQL*Plus / приложением с **новым** секретом (оператор секрет не видит).
+4. Reconcile / verify учётки в UI — OK.
+
+## Ограничения
+
+| В scope | Вне scope |
+|---------|-----------|
+| Vault rotate + thin `ALTER USER` | Wire proxy SQL*Net |
+| SQL*Plus fallback через SSH | godror / OCI thick на API-хосте |
+| Password sets peer sync | CDB/PDB multi-tenant edge cases |
+
+## API
+
+Тот же rotate что у других DB:
+
+`POST /api/v1/assets/{asset_id}/accounts/{account_id}/rotate`
+
+Body: `{ "apply_remote": true }`
+
+## Миграция
+
+`096_oracle.sql` — `protocol=oracle` в CHECK constraint.
+
+## Связанные документы
+
+- `docs/password-sync.txt` — password sets
+- `docs/sow-backlog.txt` — SOW-ORACLE

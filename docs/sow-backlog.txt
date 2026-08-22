@@ -20,7 +20,7 @@
 |----|--------|-----------------|-------------------|
 | **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | **фазы 1–4 в коде** (`docs/citrix-hdx.txt`); пиксельный decode — OEM |
 | **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | **фазы 1–4 в коде** — SOW закрыт |
-| **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | Нет в password-sync A |
+| **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | **Закрыт** — thin rotate + sqlplus fallback; см. `docs/oracle-pwdsync.txt` |
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | Сейчас PAP + x509 map |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | DLP-политика; не metadata-only |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | Без агента — best-effort/OEM |
@@ -52,6 +52,7 @@
 - Rotate/sync пароля Oracle УЗ из KeepPAM vault.
 - Thick-client path или явный out-of-scope в SOW.
 - Acceptance: rotate → connect SQL*Plus/app с новым секретом без показа оператору.
+- **Статус:** закрыт (thin go-ora + SQL*Plus SSH fallback); wire SQL*Net — out of scope.
 
 ### SOW-RADIUS-EAP
 - EAP-TTLS или PEAP (указать в SOW); опционально RadSec.

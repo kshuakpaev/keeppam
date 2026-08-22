@@ -6,7 +6,7 @@ import { useI18n } from "../i18n";
 import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
 
@@ -1049,14 +1049,22 @@ export function AssetEditPage() {
             />
           </div>
         </div>
-        {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
+        {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql" || form.protocol === "oracle") && (
           <>
-            <label>Database</label>
+            <label>{form.protocol === "oracle" ? "Service / SID" : "Database"}</label>
             <input
               value={form.database_name}
               onChange={(e) => setForm({ ...form, database_name: e.target.value })}
               disabled={!canWrite}
-              placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional schema)"}
+              placeholder={
+                form.protocol === "postgres"
+                  ? "postgres"
+                  : form.protocol === "mssql"
+                    ? "master"
+                    : form.protocol === "oracle"
+                      ? "ORCL"
+                      : "(optional schema)"
+              }
             />
             <p className="muted" style={{ marginTop: 0 }}>
               {t("assets.dbHint")}

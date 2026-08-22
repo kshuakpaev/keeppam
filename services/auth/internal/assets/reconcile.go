@@ -188,6 +188,8 @@ func (s *Service) verifyTargetCreds(ctx context.Context, creds TargetCreds) erro
 		return verifyPostgresCreds(ctx, creds)
 	case "mssql":
 		return verifyMSSQLCreds(ctx, creds)
+	case "oracle":
+		return verifyOracleCreds(ctx, creds)
 	case "mysql":
 		client, err := s.dialManagementSSH(ctx, creds)
 		if err != nil {

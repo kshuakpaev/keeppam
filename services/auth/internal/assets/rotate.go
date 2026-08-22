@@ -201,7 +201,7 @@ func supportsRemoteRotation(protocol, method string) bool {
 		return method == "password" || method == "ssh_key"
 	case "rdp", "vnc":
 		return method == "password" || method == "ssh_key"
-	case "postgres", "mysql", "mssql":
+	case "postgres", "mysql", "mssql", "oracle":
 		return method == "password"
 	default:
 		return false
@@ -282,6 +282,9 @@ func (s *Service) applyRemotePassword(ctx context.Context, creds TargetCreds, ne
 
 	case "mssql":
 		return rotateMSSQLPassword(ctx, creds, newSecret)
+
+	case "oracle":
+		return s.rotateOraclePassword(ctx, creds, newSecret)
 
 	default:
 		return fmt.Errorf("unsupported protocol %s", creds.Asset.Protocol)

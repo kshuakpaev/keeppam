@@ -4,7 +4,7 @@ import { api, hasPerm, type Asset } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "kubectl", "telnet", "tn3270", "citrix"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 
 export function AssetsPage() {
@@ -179,13 +179,21 @@ export function AssetsPage() {
               />
             </div>
           </div>
-          {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql") && (
+          {(form.protocol === "postgres" || form.protocol === "mysql" || form.protocol === "mssql" || form.protocol === "oracle") && (
             <>
-              <label>Database</label>
+              <label>{form.protocol === "oracle" ? "Service / SID" : "Database"}</label>
               <input
                 value={form.database_name}
                 onChange={(e) => setForm({ ...form, database_name: e.target.value })}
-                placeholder={form.protocol === "postgres" ? "postgres" : form.protocol === "mssql" ? "master" : "(optional)"}
+                placeholder={
+                  form.protocol === "postgres"
+                    ? "postgres"
+                    : form.protocol === "mssql"
+                      ? "master"
+                      : form.protocol === "oracle"
+                        ? "ORCL"
+                        : "(optional)"
+                }
               />
             </>
           )}
