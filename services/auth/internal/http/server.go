@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -97,16 +98,18 @@ type Server struct {
 	health     *health.State
 	rdp        *rdpgw.Broker
 	hdx        *hdx.Client
+	licenseMu  sync.RWMutex
 	license    license.File
 }
 
 func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, uebamlSvc *uebaml.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
-	lic, err := license.Load(cfg.LicenseFile)
+	lic, err := license.LoadAny(cfg.LicenseFile, cfg.LicenseEncryptionKey, cfg.LicenseSkipHW)
 	if err != nil {
 		lic = license.DefaultFile()
 		lic.Source = "error:" + err.Error()
 	}
 	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, uebaml: uebamlSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
+	s.syncAssetQuota()
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
 	}
@@ -307,6 +310,8 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("assets.read")).Get("/assets", s.handleListAssets)
 				r.With(s.requirePerm("assets.write")).Post("/assets", s.handleCreateAsset)
 				r.With(s.requirePerm("assets.read")).Get("/license", s.handleGetLicense)
+				r.With(s.requirePerm("assets.read")).Get("/license/fingerprint", s.handleLicenseFingerprint)
+				r.With(s.requirePerm("settings.write")).Post("/license/upload", s.handleUploadLicense)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}", s.handleGetAsset)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/resources", s.handleCitrixSFResources)
 				r.With(s.requirePerm("assets.read")).Get("/assets/{id}/citrix/discovery", s.handleCitrixSFDiscovery)
@@ -980,15 +985,6 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"assets": list})
 }
 
-func (s *Server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
-	n, err := s.assets.CountActive(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, s.license.Evaluate(n, time.Now()))
-}
-
 func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	var in assets.CreateAssetInput
@@ -1001,7 +997,7 @@ func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.license.AllowCreate(n, time.Now()); err != nil {
+	if err := s.currentLicense().AllowCreate(n, time.Now()); err != nil {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}

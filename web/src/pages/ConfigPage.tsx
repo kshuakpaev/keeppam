@@ -13,6 +13,7 @@ import {
   type SAMLIdP,
   type ArchiveSettings,
   type EIDASSettings,
+  type LicenseStatus,
   type UEBAMLSettings,
 } from "../api";
 import { useAuth } from "../auth";
@@ -252,7 +253,40 @@ export function ConfigPage() {
   const [extraIdPs, setExtraIdPs] = useState<SAMLIdP[]>([]);
   const [extraForm, setExtraForm] = useState<SAMLIdP>(emptyExtraIdP);
   const [extraMapText, setExtraMapText] = useState("");
+  const [licenseInfo, setLicenseInfo] = useState<LicenseStatus | null>(null);
+  const [licenseFp, setLicenseFp] = useState("");
+  const [licenseSkipHw, setLicenseSkipHw] = useState(false);
   const canWrite = hasPerm(user, "settings.write");
+  const canReadLicense = hasPerm(user, "assets.read") || canWrite;
+
+  async function loadLicense() {
+    if (!canReadLicense) return;
+    try {
+      const [lic, fp] = await Promise.all([api.getLicense(), api.getLicenseFingerprint()]);
+      setLicenseInfo(lic);
+      setLicenseFp(fp.hardware_fingerprint);
+      setLicenseSkipHw(fp.skip_hw);
+    } catch {
+      /* optional */
+    }
+  }
+
+  async function onUploadLicense(file: File) {
+    if (!canWrite) return;
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const lic = await api.uploadLicenseFile(file);
+      setLicenseInfo(lic);
+      setMsg("Лицензия загружена");
+      await loadLicense();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка загрузки лицензии");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!canWrite) return;
@@ -340,6 +374,7 @@ export function ConfigPage() {
         });
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
+        await loadLicense();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Ошибка загрузки");
       }
@@ -723,6 +758,79 @@ export function ConfigPage() {
       </div>
       {error && <p className="error">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
+
+      {licenseInfo && canReadLicense && (
+        <div className="card" style={{ maxWidth: 720, marginBottom: "1.25rem" }}>
+          <h2>Лицензия KeepPAM</h2>
+          <p className="muted">
+            Формат совместим с генератором из <span className="mono">../ex2/license-generator</span> (AES-GCM + подпись).
+            Ключ шифрования: <span className="mono">KEEPPAM_LICENSE_ENCRYPTION_KEY</span> (должен совпадать с{" "}
+            <span className="mono">LICENSE_ENCRYPTION_KEY</span> в генераторе).
+          </p>
+          <table style={{ marginBottom: "0.75rem" }}>
+            <tbody>
+              <tr>
+                <td className="muted">Клиент</td>
+                <td>{licenseInfo.customer || "—"}</td>
+              </tr>
+              <tr>
+                <td className="muted">Активы</td>
+                <td>
+                  {licenseInfo.asset_count} / {licenseInfo.max_assets}
+                  {licenseInfo.soft_warn ? " · предупреждение" : ""}
+                  {licenseInfo.hard_blocked ? " · блок" : ""}
+                </td>
+              </tr>
+              <tr>
+                <td className="muted">Истекает</td>
+                <td>{licenseInfo.expires || "—"}</td>
+              </tr>
+              <tr>
+                <td className="muted">HA</td>
+                <td>{licenseInfo.ha ? "да" : "нет"}</td>
+              </tr>
+              <tr>
+                <td className="muted">Источник</td>
+                <td className="mono">{licenseInfo.source}</td>
+              </tr>
+              {licenseInfo.message && (
+                <tr>
+                  <td className="muted">Статус</td>
+                  <td>{licenseInfo.message}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <label>Hardware fingerprint (для генератора)</label>
+          <textarea
+            readOnly
+            rows={2}
+            value={licenseFp}
+            className="mono"
+            style={{ width: "100%", marginBottom: "0.5rem" }}
+          />
+          <p className="muted" style={{ marginTop: 0 }}>
+            Скопируйте в поле Hardware Fingerprint генератора. Для dev без привязки к железу укажите{" "}
+            <span className="mono">*</span> и включите <span className="mono">KEEPPAM_LICENSE_SKIP_HW=true</span>.
+            {licenseSkipHw ? " (проверка HW сейчас отключена)" : ""}
+          </p>
+          {canWrite && (
+            <>
+              <label>Загрузить файл .lic</label>
+              <input
+                type="file"
+                accept=".lic,application/octet-stream"
+                disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onUploadLicense(f);
+                  e.target.value = "";
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {infra && (
         <div className="card" style={{ maxWidth: 640, marginBottom: "1.25rem" }}>

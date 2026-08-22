@@ -627,6 +627,25 @@ export type InboxNotification = {
   created_at: string;
 };
 
+export type LicenseStatus = {
+  issued: string;
+  customer?: string;
+  max_assets: number;
+  asset_count: number;
+  soft_warn_at: number;
+  ha: boolean;
+  expires?: string;
+  expired: boolean;
+  soft_warn: boolean;
+  hard_blocked: boolean;
+  source: string;
+  message?: string;
+  format?: string;
+  host_fingerprint?: string;
+  issued_by?: string;
+  days_remaining?: number;
+};
+
 export type InfraStatus = {
   data_key_source: string;
   recordings_backend: string;
@@ -1246,20 +1265,30 @@ export const api = {
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
   listAssets: () => request<{ assets: Asset[] }>("/api/v1/admin/assets"),
   getLicense: () =>
-    request<{
-      issued: string;
-      customer?: string;
-      max_assets: number;
-      asset_count: number;
-      soft_warn_at: number;
-      ha: boolean;
-      expires?: string;
-      expired: boolean;
-      soft_warn: boolean;
-      hard_blocked: boolean;
-      source: string;
-      message?: string;
-    }>("/api/v1/admin/license"),
+    request<LicenseStatus>("/api/v1/admin/license"),
+  getLicenseFingerprint: () =>
+    request<{ hardware_fingerprint: string; skip_hw: boolean; encryption_key_hint: boolean }>(
+      "/api/v1/admin/license/fingerprint",
+    ),
+  uploadLicenseFile: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/v1/admin/license/upload", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error || res.statusText);
+    }
+    return res.json() as Promise<LicenseStatus>;
+  },
+  uploadLicenseBase64: (license_file: string) =>
+    request<LicenseStatus>("/api/v1/admin/license/upload", {
+      method: "POST",
+      body: JSON.stringify({ license_file }),
+    }),
   getAsset: (id: string) => request<Asset>(`/api/v1/admin/assets/${id}`),
   createAsset: (body: {
     name: string;

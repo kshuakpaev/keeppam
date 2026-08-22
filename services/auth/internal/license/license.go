@@ -31,8 +31,12 @@ type Status struct {
 	Expired      bool   `json:"expired"`
 	SoftWarn     bool   `json:"soft_warn"`
 	HardBlocked  bool   `json:"hard_blocked"`
-	Source       string `json:"source"`
-	Message      string `json:"message,omitempty"`
+	Source              string `json:"source"`
+	Message             string `json:"message,omitempty"`
+	Format              string `json:"format,omitempty"` // json | ex2
+	HostFingerprint     string `json:"host_fingerprint,omitempty"`
+	IssuedBy            string `json:"issued_by,omitempty"`
+	DaysRemaining       *int   `json:"days_remaining,omitempty"`
 }
 
 // DefaultFile is used when no license.json is present (contract baseline ≥100 ИС).

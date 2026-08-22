@@ -235,7 +235,7 @@ func main() {
 	usersSvc := users.New(db, auditSvc)
 	scimSvc := scim.New(db, usersSvc, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
-	licFile, licErr := license.Load(cfg.LicenseFile)
+	licFile, licErr := license.LoadAny(cfg.LicenseFile, cfg.LicenseEncryptionKey, cfg.LicenseSkipHW)
 	if licErr != nil {
 		slog.Warn("license load", "err", licErr)
 		licFile = license.DefaultFile()

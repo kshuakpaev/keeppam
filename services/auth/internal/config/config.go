@@ -88,7 +88,9 @@ type Config struct {
 	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
 	RDPProxyCertFile       string
 	RDPProxyKeyFile        string
-	LicenseFile            string // path to license.json (T-52); empty → default max_assets=100
+	LicenseFile            string // path to license.json or ex2 .lic blob (T-52)
+	LicenseEncryptionKey   string // AES key for ex2 generator format
+	LicenseSkipHW          bool   // dev: skip hardware fingerprint check on upload/load
 	SiteID                 string // SOW-GEO-HA site identity
 	SiteRole               string // primary | standby | standalone
 	SitePeerURL            string // optional peer /livez
@@ -181,6 +183,8 @@ func Load() (Config, error) {
 		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
 		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
 		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
+		LicenseEncryptionKey:   env("KEEPPAM_LICENSE_ENCRYPTION_KEY", "your-32-byte-encryption-key-change-me!!"),
+		LicenseSkipHW:          boolEnv("KEEPPAM_LICENSE_SKIP_HW", false),
 		SiteID:                 env("KEEPPAM_SITE_ID", ""),
 		SiteRole:               geoNormalizeRole(env("KEEPPAM_SITE_ROLE", "")),
 		SitePeerURL:            env("KEEPPAM_SITE_PEER_URL", ""),

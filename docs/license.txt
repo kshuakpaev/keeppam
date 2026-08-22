@@ -1,8 +1,8 @@
 # KeepPAM: лицензия активов (T-52)
 
-Не криптоподпись — entitlement-файл для soft/hard cap по числу **активных** активов.
+## Форматы
 
-## Файл
+### 1. JSON (простой entitlement)
 
 `KEEPPAM_LICENSE_FILE` → JSON (пример `deploy/license.json.example`).
 
@@ -17,16 +17,32 @@
 }
 ```
 
-Нет файла / пустой path → default `max_assets=100`, `ha=true`.
+### 2. ex2 license-generator (рекомендуется)
+
+Бинарный `.lic` из `../ex2/license-generator` + UI (`license-generator-ui`).
+
+- AES-256-GCM, подпись SHA256 (ключ + fingerprint + days + issued_by + issued_at)
+- Опциональные поля KeepPAM внутри JSON: `max_assets`, `soft_warn_pct`, `ha`, `customer`
+- Ключ: `KEEPPAM_LICENSE_ENCRYPTION_KEY` в KeepPAM = `LICENSE_ENCRYPTION_KEY` в генераторе
+  (dev default: `your-32-byte-encryption-key-change-me!!`)
+
+Загрузка: **Конфигурация → Лицензия KeepPAM** (`POST /api/v1/admin/license/upload`).
+
+Fingerprint хоста: `GET /api/v1/admin/license/fingerprint` — вставьте в генератор.
+
+Dev без привязки к железу: fingerprint `*` + `KEEPPAM_LICENSE_SKIP_HW=true`.
+
+## Поведение
 
 | Условие | Поведение |
 |---------|-----------|
+| нет файла | default `max_assets=100`, `ha=true` |
 | count ≥ soft_warn_at | UI banner |
-| count ≥ max_assets | create asset / discovery import → 403 |
-| expires (YYYY-MM-DD) прошедшая | hard block |
-
-Пользователи безлимитны (не считаются). HA 3+2 — флаг `ha` в статусе (кластер уже T-07).
+| count ≥ max_assets или expires | create asset → 403 |
+| ex2 expires (issued_at + days) | hard block |
 
 ## API
 
-`GET /api/v1/admin/license` (`assets.read`) → `asset_count`, `soft_warn`, `hard_blocked`, `message`.
+- `GET /api/v1/admin/license` (`assets.read`)
+- `GET /api/v1/admin/license/fingerprint` (`assets.read`)
+- `POST /api/v1/admin/license/upload` (`settings.write`) — multipart `file` или JSON `{ "license_file": "<base64>" }`
