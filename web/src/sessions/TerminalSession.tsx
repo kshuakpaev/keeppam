@@ -3,6 +3,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
+import {
+  getMemoryClipboardText,
+  rememberClipboardText,
+  writeLocalClipboardText,
+} from "../sessionClipboard";
 
 type Props = {
   id: string;
@@ -20,6 +25,7 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [closing, setClosing] = useState(false);
+  const [clipMsg, setClipMsg] = useState("");
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -28,6 +34,7 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
       cursorBlink: true,
       fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
       fontSize: 14,
+      rightClickSelectsWord: false,
       theme: {
         background: "#0b1016",
         foreground: "#e8eef5",
@@ -85,6 +92,83 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
       }
     });
 
+    function applyPaste(text: string) {
+      if (!text) return false;
+      rememberClipboardText(text);
+      term.paste(text);
+      setClipMsg(t("clip.pasted"));
+      term.focus();
+      return true;
+    }
+
+    async function copySelection() {
+      const sel = term.getSelection();
+      if (!sel) {
+        setClipMsg(t("clip.noSelection"));
+        return;
+      }
+      rememberClipboardText(sel);
+      const ok = await writeLocalClipboardText(sel);
+      setClipMsg(ok ? t("clip.copied") : t("clip.copyFailed"));
+    }
+
+    function pasteFromMemoryOrFail() {
+      const text = getMemoryClipboardText();
+      if (!applyPaste(text)) setClipMsg(t("clip.emptyOrDenied"));
+    }
+
+    // Return false → xterm ignores the key (no SIGINT / no literal). Browser keeps
+    // default so native copy/paste events still reach xterm's textarea.
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown") return true;
+      const mod = ev.ctrlKey || ev.metaKey;
+      if (!mod) return true;
+      const key = ev.key.toLowerCase();
+      if (key === "c" && (ev.shiftKey || term.hasSelection())) {
+        // Also push to OS clipboard explicitly (HTTP-safe via execCommand fallback).
+        void copySelection();
+        return false;
+      }
+      if (key === "v") {
+        return false;
+      }
+      return true;
+    });
+
+    const host = hostRef.current;
+
+    // Remember clipboard text from native paste; do NOT cancel — xterm handles paste.
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text/plain") || "";
+      if (text) {
+        rememberClipboardText(text);
+        setClipMsg(t("clip.pasted"));
+      }
+    };
+
+    const onCopy = (e: ClipboardEvent) => {
+      const sel = term.getSelection();
+      if (!sel) return;
+      e.preventDefault();
+      e.clipboardData?.setData("text/plain", sel);
+      rememberClipboardText(sel);
+      setClipMsg(t("clip.copied"));
+    };
+
+    // Linux SSH: right-click pastes last known text (from Ctrl+V / copy in this tab).
+    // Browser blocks reading the OS clipboard on HTTP from contextmenu.
+    const onContext = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = getMemoryClipboardText();
+      if (applyPaste(text)) return;
+      setClipMsg(t("clip.rightClickNeedCtrlV"));
+    };
+
+    host.addEventListener("paste", onPaste);
+    host.addEventListener("copy", onCopy);
+    host.addEventListener("contextmenu", onContext);
+
     const onResize = () => {
       fit.fit();
       if (ws.readyState === WebSocket.OPEN) {
@@ -93,19 +177,25 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
     };
     window.addEventListener("resize", onResize);
 
+    (term as Terminal & { __kpCopy?: () => void; __kpPaste?: () => void }).__kpCopy = () => void copySelection();
+    (term as Terminal & { __kpPaste?: () => void }).__kpPaste = () => pasteFromMemoryOrFail();
+
     return () => {
       window.removeEventListener("resize", onResize);
+      host.removeEventListener("paste", onPaste);
+      host.removeEventListener("copy", onCopy);
+      host.removeEventListener("contextmenu", onContext);
       ws.close();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
       wsRef.current = null;
     };
-  }, [id]);
+  }, [id, t]);
 
   useEffect(() => {
     if (!visible) return;
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       fitRef.current?.fit();
       termRef.current?.focus();
       const term = termRef.current;
@@ -114,8 +204,14 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }
     }, 50);
-    return () => window.clearTimeout(t);
+    return () => window.clearTimeout(timer);
   }, [visible]);
+
+  useEffect(() => {
+    if (!clipMsg) return;
+    const timer = window.setTimeout(() => setClipMsg(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [clipMsg]);
 
   async function handleClose() {
     if (closing) return;
@@ -128,6 +224,16 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
     onClose();
   }
 
+  function onCopyClick() {
+    const term = termRef.current as (Terminal & { __kpCopy?: () => void }) | null;
+    term?.__kpCopy?.();
+  }
+
+  function onPasteClick() {
+    const term = termRef.current as (Terminal & { __kpPaste?: () => void }) | null;
+    term?.__kpPaste?.();
+  }
+
   return (
     <div className="terminal-page session-panel-inner">
       <div className="toolbar">
@@ -136,11 +242,20 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
           <p className="muted">
             {title} · {status || t("term.connecting")}
             <span className="mono"> · {id.slice(0, 8)}</span>
+            {clipMsg ? <span> · {clipMsg}</span> : null}
           </p>
         </div>
-        <button className="btn secondary" type="button" disabled={closing} onClick={() => void handleClose()}>
-          {closing ? t("common.loading") : t("tabs.close")}
-        </button>
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <button className="btn secondary" type="button" onClick={onCopyClick} title={t("clip.copyHint")}>
+            {t("clip.copy")}
+          </button>
+          <button className="btn secondary" type="button" onClick={onPasteClick} title={t("clip.pasteHint")}>
+            {t("clip.paste")}
+          </button>
+          <button className="btn secondary" type="button" disabled={closing} onClick={() => void handleClose()}>
+            {closing ? t("common.loading") : t("tabs.close")}
+          </button>
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       <div className="terminal-host card" ref={hostRef} />

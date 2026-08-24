@@ -2555,6 +2555,10 @@ export type PolicySnapshot = {
   match_mode?: string;
   break_glass?: boolean;
   admin_bypass?: boolean;
+  rdp_clipboard?: boolean;
+  rdp_drive?: boolean;
+  rdp_printer?: boolean;
+  rdp_native?: boolean;
 };
 
 export type SessionFile = {

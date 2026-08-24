@@ -290,6 +290,7 @@ func (s *Server) openGuacTunnel(protocol, address string, port int, username, pa
 			cfg.Parameters["disable-paste"] = "false"
 		} else {
 			cfg.Parameters["disable-copy"] = "true"
+			cfg.Parameters["disable-paste"] = "true"
 		}
 	}
 	if s.cfg.RecordingsDir != "" {
