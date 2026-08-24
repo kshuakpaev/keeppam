@@ -1,8 +1,10 @@
-# KeepPAM: i18n EN/RU портала
+# KeepPAM: i18n RU/EN/KK портала
 
-Словарь: `web/src/i18n/catalog.ts` (свой провайдер, без react-i18next). Cookie и localStorage: `kp_lang=en|ru`. Переключатель — на login/setup и в сайдбаре.
+Словарь: `web/src/i18n/catalog.ts` (свой провайдер, без react-i18next). Cookie и localStorage: `kp_lang=kk|en|ru`. По умолчанию — **kk**. Переключатель — на login/setup и в сайдбаре (**KK / EN / RU**).
 
-`Accept-Language` уходит с запросами API. Ошибки: `{ error, code }`, UI переводит `errors.<code>` (`te()`), не сырой русский с бэка.
+`Accept-Language` уходит с запросами API (`ru` | `en` | `kk`). Ошибки: `{ error, code }`, UI переводит `errors.<code>` (`te()`), не сырой русский с бэка.
+
+Локаль дат: `ru-RU`, `en-GB`, `kk-KZ`.
 
 ## Сценарий DoD (T-15)
 

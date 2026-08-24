@@ -1,20 +1,52 @@
 # KeepPAM: единый дистрибутив (P0.5 / T-01 compose)
 
-Версия: файл `VERSION` (сейчас 1.0.0). Bundled runtime: `NOTICE`.
+Версия: файл `VERSION` (semver). При `./scripts/keeppam-dist.sh` / `make dist` patch увеличивается автоматически (+0.0.1), история — `VERSION_HISTORY`.
 
 **Virtual Appliance (OVA / Hyper-V):** `docs/appliance-ova.txt` (КП-2.1 / T-01 P5 + T-02).
 
-## Сборка артефакта
+**Системные требования** (минимум / оптимум / расширенный): `docs/system-requirements.txt`.
 
-На хосте с Docker и уже собранными образами (`make up`):
+## Сборка артефакта (рекомендуется)
+
+Один скрипт: bump VERSION → бинарники API/UI → Docker-образы → `tar.gz` для другого сервера.
+
+```bash
+./scripts/keeppam-dist.sh
+# или:
+make dist
+
+# полный стенд (Grafana / OpenSearch / HAProxy image):
+SET=full ./scripts/keeppam-dist.sh
+
+# управление версией:
+BUMP=patch ./scripts/keeppam-dist.sh   # default: 1.0.0 → 1.0.1
+BUMP=minor ./scripts/keeppam-dist.sh   # 1.0.1 → 1.1.0
+BUMP=major ./scripts/keeppam-dist.sh   # 1.1.0 → 2.0.0
+BUMP=none  ./scripts/keeppam-dist.sh   # не менять VERSION
+make bump                              # только +patch в VERSION
+./scripts/keeppam-version.sh show
+```
+
+Результат: `dist/keeppam-<ver>-offline-<set>.tar.gz` (+ `.sha256`, `.README.txt`).
+
+Переменные:
+
+| Переменная | Смысл |
+|------------|--------|
+| `SET=core\|full` | состав образов (default `core`) |
+| `OUT=…` | каталог вывода (default `dist/`) |
+| `BUMP=patch\|minor\|major\|none` | автосчётчик версии (default `patch`) |
+| `SKIP_BUILD=1` | только упаковать уже собранные образы |
+| `SKIP_PULL=1` | не тянуть отсутствующие upstream-образы |
+
+Только упаковка (образы уже локально, как после `make up`):
 
 ```bash
 SET=core ./scripts/keeppam-pack.sh
-# полный стенд (Grafana / OpenSearch / HAProxy image):
 SET=full ./scripts/keeppam-pack.sh
 ```
 
-Один файл: `dist/keeppam-1.0.0-offline-<set>.tar.gz` — образы (`docker save`) + compose + миграции + скрипты install/upgrade/rollback + `NOTICE`.
+В архиве: `images.tar` (`docker save`) + compose + миграции + `auth-server` + скрипты install/upgrade/rollback + `NOTICE`.
 
 ## Установка с USB (без git, без registry)
 

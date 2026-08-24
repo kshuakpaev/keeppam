@@ -1,0 +1,1872 @@
+{
+  "config.addAgent": {
+    "ru": "+ agent",
+    "en": "+ agent",
+    "kk": "+ agent"
+  },
+  "config.addIdP": {
+    "ru": "Добавить IdP",
+    "en": "Add IdP",
+    "kk": "IdP қосу"
+  },
+  "config.archiveAgeDays": {
+    "ru": "Возраст, дней (0 = сразу)",
+    "en": "Age, days (0 = immediately)",
+    "kk": "Жасы, күн"
+  },
+  "config.archiveHint": {
+    "ru": "Копия recordings старше N дней на NFS mount или SMB2/3. Индекс сессии в БД остаётся. Replay качает из архива при необходимости.",
+    "en": "Copy old recordings to NFS/SMB2/3. Session index in DB.",
+    "kk": "Recordings NFS/SMB архивы."
+  },
+  "config.archiveNfsPath": {
+    "ru": "Путь NFS (mount в контейнере)",
+    "en": "NFS path (mount in container)",
+    "kk": "NFS жолы"
+  },
+  "config.archiveProtocolNfs": {
+    "ru": "NFS (каталог в контейнере)",
+    "en": "NFS (directory in container)",
+    "kk": "NFS каталог"
+  },
+  "config.archiveProtocolSmb": {
+    "ru": "SMB2/3 (CIFS v2–3)",
+    "en": "SMB2/3 (CIFS v2–3)",
+    "kk": "SMB2/3"
+  },
+  "config.archiveSaved": {
+    "ru": "Архив сохранён",
+    "en": "Archive saved",
+    "kk": "Мұрағат сақталды"
+  },
+  "config.archiveStatusCopied": {
+    "ru": "Архив: скопировано {copied}, ошибок {failed}",
+    "en": "Archive: copied {copied}, errors {failed}",
+    "kk": "Мұрағат: {copied}, қате {failed}"
+  },
+  "config.archiveTitle": {
+    "ru": "Архив записей (SMB / NFS)",
+    "en": "Session archive (SMB / NFS)",
+    "kk": "Жазба мұрағаты (SMB / NFS)"
+  },
+  "config.authSaved": {
+    "ru": "Авторизация сохранена",
+    "en": "Authentication settings saved",
+    "kk": "Аутентификация сақталды"
+  },
+  "config.authTitle": {
+    "ru": "Авторизация",
+    "en": "Authentication",
+    "kk": "Аутентификация"
+  },
+  "config.autoCreateUsers": {
+    "ru": "Автосоздание пользователей",
+    "en": "Auto-create users",
+    "kk": "Автожасау"
+  },
+  "config.awxAutoPush": {
+    "ru": "Auto-push AWX при отметке «правила применены»",
+    "en": "AWX auto-push when rules applied",
+    "kk": "AWX auto-push"
+  },
+  "config.awxJobStarted": {
+    "ru": "AWX job запущен",
+    "en": "AWX job started",
+    "kk": "AWX job іске қосылды"
+  },
+  "config.bearerLeaveEmpty": {
+    "ru": "Bearer token — пусто = не менять",
+    "en": "Bearer — empty = keep",
+    "kk": "Bearer бос"
+  },
+  "config.caPubkeyCopied": {
+    "ru": "CA pubkey скопирован",
+    "en": "CA pubkey copied",
+    "kk": "CA pubkey көшірілді"
+  },
+  "config.caRotateFailed": {
+    "ru": "Ошибка ротации CA",
+    "en": "CA rotation failed",
+    "kk": "CA ротация қатесі"
+  },
+  "config.caRotated": {
+    "ru": "Новый SSH CA сгенерирован — обновите TrustedUserCAKeys на целях",
+    "en": "New SSH CA generated — update TrustedUserCAKeys on targets",
+    "kk": "Жаңа SSH CA генерацияланды — мақсаттарда TrustedUserCAKeys жаңартыңыз"
+  },
+  "config.certTtlHours": {
+    "ru": "TTL сертификата (часы)",
+    "en": "Certificate TTL (hours)",
+    "kk": "Cert TTL"
+  },
+  "config.checkTicket": {
+    "ru": "Проверить тикет",
+    "en": "Check ticket",
+    "kk": "Тикет тексеру"
+  },
+  "config.copyPubkey": {
+    "ru": "Копировать pubkey",
+    "en": "Copy pubkey",
+    "kk": "Pubkey көшіру"
+  },
+  "config.dash": {
+    "ru": "—",
+    "en": "—",
+    "kk": "—"
+  },
+  "config.defaultRole": {
+    "ru": "Роль по умолчанию",
+    "en": "Default role",
+    "kk": "Default role"
+  },
+  "config.defaultRoleAutoProvision": {
+    "ru": "Роль по умолчанию при auto-provision",
+    "en": "Default role on auto-provision",
+    "kk": "Auto-provision рөлі"
+  },
+  "config.defaultRoleNewUsers": {
+    "ru": "Роль по умолчанию для новых пользователей",
+    "en": "Default role for new users",
+    "kk": "Жаңа пайдаланушыларға рөл"
+  },
+  "config.delete": {
+    "ru": "Удалить",
+    "en": "Delete",
+    "kk": "Delete"
+  },
+  "config.deleteLocalAfterChecksum": {
+    "ru": "Удалять локальную копию после checksum OK",
+    "en": "Delete local copy after checksum OK",
+    "kk": "Delete after checksum"
+  },
+  "config.disabled": {
+    "ru": "Выкл",
+    "en": "Off",
+    "kk": "Өш."
+  },
+  "config.downloadAnsible": {
+    "ru": "Скачать Ansible",
+    "en": "Download Ansible",
+    "kk": "Ansible"
+  },
+  "config.downloadIptables": {
+    "ru": "Скачать iptables",
+    "en": "Download iptables",
+    "kk": "iptables"
+  },
+  "config.downloadNft": {
+    "ru": "Скачать nft",
+    "en": "Download nft",
+    "kk": "nft"
+  },
+  "config.eapNoVerifyHostname": {
+    "ru": "EAP: не проверять hostname сертификата",
+    "en": "EAP: do not verify certificate hostname",
+    "kk": "EAP hostname"
+  },
+  "config.ecsBulkFailed": {
+    "ru": "Ошибка ECS bulk",
+    "en": "ECS bulk error",
+    "kk": "ECS bulk қатесі"
+  },
+  "config.edit": {
+    "ru": "Изменить",
+    "en": "Edit",
+    "kk": "Өңдеу"
+  },
+  "config.eidasCertInfo": {
+    "ru": "Сертификат: {cn} · PAdES-{profile} · QES/КЭП: {qes}",
+    "en": "Certificate: {cn} · PAdES-{profile} · QES: {qes}",
+    "kk": "Cert info"
+  },
+  "config.eidasHint": {
+    "ru": "Поверх PAdES B-LTA: проверка policy OID квалифицированного сертификата, опционально PKCS#11 HSM (KEEPPAM_PDF_PKCS11_HELPER).",
+    "en": "PAdES B-LTA + QES OID, PKCS#11 HSM.",
+    "kk": "PAdES B-LTA"
+  },
+  "config.eidasLastCheck": {
+    "ru": "Последняя проверка: {error}",
+    "en": "Last check: {error}",
+    "kk": "Соңғы тексеру"
+  },
+  "config.eidasModeAdvanced": {
+    "ru": "advanced (B-LTA без QES gate)",
+    "en": "advanced (B-LTA without QES gate)",
+    "kk": "advanced B-LTA"
+  },
+  "config.eidasModeFstec": {
+    "ru": "ФСТЭК (КЭП OID)",
+    "en": "FSTEC (QES OID)",
+    "kk": "ФСТЭК КЭП"
+  },
+  "config.eidasModeOff": {
+    "ru": "выкл. (PAdES only)",
+    "en": "off (PAdES only)",
+    "kk": "PAdES only"
+  },
+  "config.eidasQualified": {
+    "ru": "qualified (QES/КЭП + B-LTA)",
+    "en": "qualified (QES + B-LTA)",
+    "kk": "qualified QES"
+  },
+  "config.eidasSaveFailed": {
+    "ru": "Ошибка сохранения eIDAS",
+    "en": "eIDAS save failed",
+    "kk": "eIDAS сақтау қатесі"
+  },
+  "config.eidasSaved": {
+    "ru": "Qualified PDF (eIDAS) сохранён",
+    "en": "Qualified PDF (eIDAS) saved",
+    "kk": "Qualified PDF (eIDAS) сақталды"
+  },
+  "config.eidasTitle": {
+    "ru": "Qualified PDF (eIDAS / ФСТЭК)",
+    "en": "Qualified PDF (eIDAS / FSTEC)",
+    "kk": "Qualified PDF"
+  },
+  "config.emptyNoChange": {
+    "ru": "пусто = не менять",
+    "en": "empty = do not change",
+    "kk": "бос = өзгертпеу"
+  },
+  "config.enable": {
+    "ru": "Включить",
+    "en": "Enable",
+    "kk": "Enable"
+  },
+  "config.enableEmail": {
+    "ru": "Включить почту",
+    "en": "Enable email",
+    "kk": "Email"
+  },
+  "config.enableWebhook": {
+    "ru": "Включить webhook",
+    "en": "Enable webhook",
+    "kk": "Webhook"
+  },
+  "config.enabled": {
+    "ru": "Включён",
+    "en": "Enabled",
+    "kk": "Enabled"
+  },
+  "config.errorGeneric": {
+    "ru": "Ошибка",
+    "en": "Error",
+    "kk": "Қате"
+  },
+  "config.extraIdpHint": {
+    "ru": "Один SP (ключ / Entity ID выше). Каждый IdP — своя кнопка на логине и ACS /api/v1/auth/saml/idp/{slug}/acs. Максимум 8.",
+    "en": "Single SP. Max 8 IdPs with separate ACS.",
+    "kk": "Бір SP, макс. 8 IdP"
+  },
+  "config.extraIdpTitle": {
+    "ru": "Дополнительные SAML IdP",
+    "en": "Additional SAML IdPs",
+    "kk": "Қосымша SAML IdP"
+  },
+  "config.firewallHint": {
+    "ru": "CIDR шлюзов KeepPAM (SSH :2222, Guacamole, wire). Экспорт iptables/nft для активов с pam_only.",
+    "en": "Gateway CIDRs, iptables/nft export.",
+    "kk": "Firewall CIDR"
+  },
+  "config.firewallPortForwardHint": {
+    "ru": "На SSH worker дополнительно блокируется port-forward на сервисный порт другого pam-only актива.",
+    "en": "SSH worker blocks port-forward to pam-only assets.",
+    "kk": "Port-forward block"
+  },
+  "config.firewallProbeDone": {
+    "ru": "Firewall probe завершён",
+    "en": "Firewall probe finished",
+    "kk": "Firewall probe аяқталды"
+  },
+  "config.firewallSaveFailed": {
+    "ru": "Ошибка сохранения Firewall PAM",
+    "en": "Firewall PAM save failed",
+    "kk": "Firewall PAM сақтау қатesi"
+  },
+  "config.firewallSaved": {
+    "ru": "Firewall PAM сохранён",
+    "en": "Firewall PAM saved",
+    "kk": "Firewall PAM сақталды"
+  },
+  "config.firewallStatusLine": {
+    "ru": "pam_only: {pam_only} · без отметки: {unapplied}",
+    "en": "pam_only: {pam_only} · unmarked: {unapplied}",
+    "kk": "pam_only status"
+  },
+  "config.firewallTitle": {
+    "ru": "Firewall PAM",
+    "en": "Firewall PAM",
+    "kk": "Firewall PAM"
+  },
+  "config.groupRoleMap": {
+    "ru": "Group → role (строка , роли должны существовать)",
+    "en": "Group → role (, roles must exist)",
+    "kk": "Group → role"
+  },
+  "config.idpButtonLabel": {
+    "ru": "Имя на кнопке входа",
+    "en": "Sign-in button label",
+    "kk": "Кіру батырması"
+  },
+  "config.idpDeleteFailed": {
+    "ru": "Ошибка удаления IdP",
+    "en": "IdP delete failed",
+    "kk": "IdP жою қатесі"
+  },
+  "config.idpDeleted": {
+    "ru": "IdP удалён",
+    "en": "IdP deleted",
+    "kk": "IdP жойылды"
+  },
+  "config.idpDisabled": {
+    "ru": " — выкл",
+    "en": " — off",
+    "kk": " — өш."
+  },
+  "config.idpEntityIdFallback": {
+    "ru": "IdP Entity ID (ручной fallback)",
+    "en": "IdP Entity ID (manual fallback)",
+    "kk": "IdP Entity ID fallback"
+  },
+  "config.idpInitiatedHint": {
+    "ru": "IdP-initiated ACS принимается без предварительного /start. SLO на IdP — из metadata URL.",
+    "en": "IdP-initiated ACS without prior /start.",
+    "kk": "IdP-initiated ACS"
+  },
+  "config.idpManualFallback": {
+    "ru": "IdP Entity ID / SSO URL / cert — ручной fallback",
+    "en": "IdP Entity ID / SSO URL / cert — manual fallback",
+    "kk": "IdP fallback"
+  },
+  "config.idpMetadataUrl": {
+    "ru": "IdP Metadata URL (предпочтительно)",
+    "en": "IdP Metadata URL (preferred)",
+    "kk": "IdP Metadata URL"
+  },
+  "config.idpSaveFailed": {
+    "ru": "Ошибка сохранения IdP",
+    "en": "IdP save failed",
+    "kk": "IdP сақтау қатесі"
+  },
+  "config.idpSaved": {
+    "ru": "SAML IdP сохранён",
+    "en": "SAML IdP saved",
+    "kk": "SAML IdP сақталды"
+  },
+  "config.idpSigningCert": {
+    "ru": "IdP signing certificate (PEM)",
+    "en": "IdP signing certificate (PEM)",
+    "kk": "IdP signing certificate (PEM)"
+  },
+  "config.idpSlug": {
+    "ru": "Slug (латиница, не default)",
+    "en": "Slug (latin, not default)",
+    "kk": "Slug"
+  },
+  "config.idpSsoUrl": {
+    "ru": "IdP SSO URL",
+    "en": "IdP SSO URL",
+    "kk": "IdP SSO URL"
+  },
+  "config.infraDownloadCycloneDX": {
+    "ru": "Скачать CycloneDX",
+    "en": "Download CycloneDX",
+    "kk": "CycloneDX жүктеп алу"
+  },
+  "config.infraGeoipMissing": {
+    "ru": "LAN only (нет MMDB)",
+    "en": "LAN only (no MMDB)",
+    "kk": "LAN only (MMDB жоқ)"
+  },
+  "config.infraOpaMissing": {
+    "ru": " (не загружена)",
+    "en": " (not loaded)",
+    "kk": " (жүктелмеген)"
+  },
+  "config.infraOtelInactive": {
+    "ru": " (не активен)",
+    "en": " (inactive)",
+    "kk": " (белсенді емес)"
+  },
+  "config.infraReadOnlyHint": {
+    "ru": "Только чтение. Меняется через переменные окружения API / session-worker (см. docs/prod-infra.txt).",
+    "en": "Read-only via API / session-worker env (docs/prod-infra.txt).",
+    "kk": "Тек оқу, env арқылы."
+  },
+  "config.infraS3NoObjectLock": {
+    "ru": "s3 без Object Lock",
+    "en": "s3 without Object Lock",
+    "kk": "s3 Object Lock жоқ"
+  },
+  "config.infraTitle": {
+    "ru": "Инфраструктура (env)",
+    "en": "Infrastructure (env)",
+    "kk": "Инфрақұрылым (env)"
+  },
+  "config.itsmEnable": {
+    "ru": "Включить ITSM gate",
+    "en": "Enable ITSM gate",
+    "kk": "ITSM gate"
+  },
+  "config.itsmError": {
+    "ru": "Ошибка: {error}",
+    "en": "Error: {error}",
+    "kk": "Қате"
+  },
+  "config.itsmHint": {
+    "ru": "Проверка ticket_id против ITSM при запросе / одобрении / подключении. Provider mock: DEMO-100 открыт, DEMO-CLOSED закрыт.",
+    "en": "ITSM ticket_id validation. mock DEMO-100 open.",
+    "kk": "ITSM hint"
+  },
+  "config.itsmLastCheck": {
+    "ru": "Проверка: {time}",
+    "en": "Check: {time}",
+    "kk": "Тексеру"
+  },
+  "config.itsmOkStatuses": {
+    "ru": "Допустимые статусы (через запятую)",
+    "en": "Allowed statuses (comma-separated)",
+    "kk": "Статустар"
+  },
+  "config.itsmProviderMock": {
+    "ru": "mock (локальный)",
+    "en": "mock (local)",
+    "kk": "mock"
+  },
+  "config.itsmSaveFailed": {
+    "ru": "Ошибка сохранения ITSM",
+    "en": "ITSM save failed",
+    "kk": "ITSM сақтау қатесі"
+  },
+  "config.itsmSaved": {
+    "ru": "ITSM сохранён",
+    "en": "ITSM saved",
+    "kk": "ITSM сақталды"
+  },
+  "config.itsmTitle": {
+    "ru": "ITSM gate (тикеты JIT)",
+    "en": "ITSM gate (JIT tickets)",
+    "kk": "ITSM gate"
+  },
+  "config.jitWebhookTitle": {
+    "ru": "JIT webhook",
+    "en": "JIT webhook",
+    "kk": "JIT webhook"
+  },
+  "config.jobIntervalMin": {
+    "ru": "Интервал job, мин",
+    "en": "Job interval min",
+    "kk": "Job interval"
+  },
+  "config.kafkaBrokers": {
+    "ru": "Брокеры (host:port, через запятую)",
+    "en": "Brokers (comma-separated)",
+    "kk": "Brokers"
+  },
+  "config.kafkaSaslUser": {
+    "ru": "SASL username (пусто = без SASL)",
+    "en": "SASL username (empty=no SASL)",
+    "kk": "SASL user"
+  },
+  "config.kerberosHint": {
+    "ru": "По умолчанию PAM логинится в KDC паролем учётки из vault (username@REALM), затем gssapi-with-mic на SPN host/<fqdn>.",
+    "en": "PAM KDC login then gssapi-with-mic.",
+    "kk": "KDC + gssapi"
+  },
+  "config.keytabLoaded": {
+    "ru": " — загружен",
+    "en": " — loaded",
+    "kk": " — жүктелген"
+  },
+  "config.keytabPrincipal": {
+    "ru": "Keytab principal (если используете keytab)",
+    "en": "Keytab principal",
+    "kk": "Keytab principal"
+  },
+  "config.krb5Conf": {
+    "ru": "krb5.conf (опционально; пусто = DNS lookup KDC)",
+    "en": "krb5.conf (optional)",
+    "kk": "krb5.conf"
+  },
+  "config.ldapServer": {
+    "ru": "Сервер (host или host:port)",
+    "en": "Server (host or host:port)",
+    "kk": "Сервер"
+  },
+  "config.ldapTitle": {
+    "ru": "LDAP",
+    "en": "LDAP",
+    "kk": "LDAP"
+  },
+  "config.lead": {
+    "ru": "Авторизация, SSH CA, SIEM, ITSM и prod-инфраструктура",
+    "en": "Authentication, SSH CA, SIEM, ITSM and prod infrastructure",
+    "kk": "Аутентификация, SSH CA, SIEM, ITSM және prod инфрақұрылымы"
+  },
+  "config.leaveEmptyNoChange": {
+    "ru": "оставьте пустым чтобы не менять",
+    "en": "leave empty to keep unchanged",
+    "kk": "бос қалдырыңыз"
+  },
+  "config.legacyProbeUrl": {
+    "ru": "Legacy probe URL (если agents пуст)",
+    "en": "Legacy probe URL if agents empty",
+    "kk": "Legacy probe URL"
+  },
+  "config.licenseAssets": {
+    "ru": "Активы",
+    "en": "Assets",
+    "kk": "Активтер"
+  },
+  "config.licenseBlockedSuffix": {
+    "ru": " · блок",
+    "en": " · block",
+    "kk": " · блок"
+  },
+  "config.licenseCustomer": {
+    "ru": "Клиент",
+    "en": "Customer",
+    "kk": "Клиент"
+  },
+  "config.licenseExpires": {
+    "ru": "Истекает",
+    "en": "Expires",
+    "kk": "Аяқталады"
+  },
+  "config.licenseFormatHint": {
+    "ru": "Формат совместим с генератором из ../ex2/license-generator (AES-GCM + подпись). Ключ шифрования: KEEPPAM_LICENSE_ENCRYPTION_KEY (должен совпадать с LICENSE_ENCRYPTION_KEY в генераторе).",
+    "en": "Format compatible with ../ex2/license-generator (AES-GCM + signature). Encryption key: KEEPPAM_LICENSE_ENCRYPTION_KEY.",
+    "kk": "Формат ../ex2/license-generator генераторымен үйлесімді (AES-GCM + қолтаңба)."
+  },
+  "config.licenseHwFingerprint": {
+    "ru": "Hardware fingerprint (для генератора)",
+    "en": "Hardware fingerprint (for generator)",
+    "kk": "Hardware fingerprint (генератор үшін)"
+  },
+  "config.licenseHwHint": {
+    "ru": "Скопируйте в поле Hardware Fingerprint генератора. Для dev без привязки к железу — * и включите (проверка HW сейчас отключена)",
+    "en": "Copy into generator Hardware Fingerprint. Dev: use * (HW check disabled).",
+    "kk": "Hardware Fingerprint өрісіне көшіріңіз."
+  },
+  "config.licenseLoadFailed": {
+    "ru": "Ошибка загрузки лицензии",
+    "en": "License upload failed",
+    "kk": "Лицензияны жүктеу қатесі"
+  },
+  "config.licenseSource": {
+    "ru": "Источник",
+    "en": "Source",
+    "kk": "Көз"
+  },
+  "config.licenseTitle": {
+    "ru": "Лицензия KeepPAM",
+    "en": "KeepPAM license",
+    "kk": "KeepPAM лицензиясы"
+  },
+  "config.licenseUploadLabel": {
+    "ru": "Загрузить файл .lic",
+    "en": "Upload .lic file",
+    "kk": ".lic файлын жүктеу"
+  },
+  "config.licenseUploaded": {
+    "ru": "Лицензия загружена",
+    "en": "License uploaded",
+    "kk": "Лицензия жүктелді"
+  },
+  "config.liveInterval": {
+    "ru": "Live interval (сек, mode=live)",
+    "en": "Live interval (sec)",
+    "kk": "Live interval"
+  },
+  "config.loadFailed": {
+    "ru": "Ошибка загрузки",
+    "en": "Load failed",
+    "kk": "Жүктеу қатесі"
+  },
+  "config.loginMode": {
+    "ru": "Режим входа",
+    "en": "Sign-in mode",
+    "kk": "Кіру режимі"
+  },
+  "config.loginModeLdap": {
+    "ru": "LDAP",
+    "en": "LDAP",
+    "kk": "LDAP"
+  },
+  "config.loginModeLocal": {
+    "ru": "Локальный (логин/пароль + MFA)",
+    "en": "Local (login/password + MFA)",
+    "kk": "Жергілікті (логин/пароль + MFA)"
+  },
+  "config.loginModeOidc": {
+    "ru": "OIDC",
+    "en": "OIDC",
+    "kk": "OIDC"
+  },
+  "config.loginModeRadius": {
+    "ru": "RADIUS",
+    "en": "RADIUS",
+    "kk": "RADIUS"
+  },
+  "config.loginModeSaml": {
+    "ru": "SAML 2.0",
+    "en": "SAML 2.0",
+    "kk": "SAML 2.0"
+  },
+  "config.mlThreshold": {
+    "ru": "ML threshold (0–100)",
+    "en": "ML threshold (0–100)",
+    "kk": "ML threshold"
+  },
+  "config.mode": {
+    "ru": "Режим",
+    "en": "Mode",
+    "kk": "Режим"
+  },
+  "config.nacApiUrl": {
+    "ru": "API URL (база NAC)",
+    "en": "API URL (NAC base)",
+    "kk": "NAC API URL"
+  },
+  "config.nacBearerLeaveEmpty": {
+    "ru": "Bearer — пусто = не менять",
+    "en": "Bearer — empty = keep",
+    "kk": "Bearer бос"
+  },
+  "config.nacClientHeader": {
+    "ru": "Заголовок клиента:",
+    "en": "Client header:",
+    "kk": "Client header"
+  },
+  "config.nacHint": {
+    "ru": "Posture check перед подключением и notify start/end сессии во внешний NAC (generic REST или Cisco ISE path).",
+    "en": "Posture check and NAC session notify.",
+    "kk": "NAC posture"
+  },
+  "config.nacLastError": {
+    "ru": "Последняя ошибка: {error}",
+    "en": "Last error: {error}",
+    "kk": "Соңғы қате"
+  },
+  "config.nacSaveFailed": {
+    "ru": "Ошибка сохранения NAC",
+    "en": "NAC save failed",
+    "kk": "NAC сақтау қатесі"
+  },
+  "config.nacSaved": {
+    "ru": "NAC client сохранён",
+    "en": "NAC client saved",
+    "kk": "NAC client сақталды"
+  },
+  "config.nacTitle": {
+    "ru": "NAC client",
+    "en": "NAC client",
+    "kk": "NAC client"
+  },
+  "config.newIdP": {
+    "ru": "Новый",
+    "en": "New",
+    "kk": "Жаңа"
+  },
+  "config.noCertVerify": {
+    "ru": "Не проверять сертификат (self-signed)",
+    "en": "Do not verify certificate (self-signed)",
+    "kk": "Cert тексермеу"
+  },
+  "config.noTlsVerify": {
+    "ru": "Не проверять TLS-сертификат",
+    "en": "Do not verify TLS certificate",
+    "kk": "TLS тексермеу"
+  },
+  "config.notifyHint": {
+    "ru": "Inbox всегда. Webhook — только JIT. SMTP — JIT и checkout, тем же получателям. Ошибка доставки не блокирует согласование.",
+    "en": "Inbox always; webhook JIT; SMTP JIT/checkout.",
+    "kk": "Notify hint"
+  },
+  "config.notifyLastError": {
+    "ru": "Ошибка: {error}",
+    "en": "Error: {error}",
+    "kk": "Қате"
+  },
+  "config.notifySaveFailed": {
+    "ru": "Ошибка сохранения уведомлений",
+    "en": "Notifications save failed",
+    "kk": "Хабарламаларды сақтау қатесі"
+  },
+  "config.notifySaved": {
+    "ru": "Уведомления сохранены",
+    "en": "Notifications saved",
+    "kk": "Хабарламалар сақталды"
+  },
+  "config.notifyTitle": {
+    "ru": "Уведомления",
+    "en": "Notifications",
+    "kk": "Хабарламалар"
+  },
+  "config.off": {
+    "ru": "выкл.",
+    "en": "off",
+    "kk": "өш."
+  },
+  "config.oidcTitle": {
+    "ru": "OIDC",
+    "en": "OIDC",
+    "kk": "OIDC"
+  },
+  "config.onApprove": {
+    "ru": "На approve",
+    "en": "On approve",
+    "kk": "On approve"
+  },
+  "config.onConnect": {
+    "ru": "На connect",
+    "en": "On connect",
+    "kk": "On connect"
+  },
+  "config.onCreateRequest": {
+    "ru": "На create request",
+    "en": "On create request",
+    "kk": "On create request"
+  },
+  "config.opensearchStandHint": {
+    "ru": "Стенд: OpenSearch http://opensearch:9200, Dashboards localhost:5601. Security выкл.; auth header не нужен.",
+    "en": "OpenSearch stand hint",
+    "kk": "OpenSearch stand"
+  },
+  "config.pamGatewayCidr": {
+    "ru": "PAM gateway CIDR (через запятую)",
+    "en": "PAM gateway CIDR (comma-separated)",
+    "kk": "PAM gateway CIDR"
+  },
+  "config.peerGroupBaseline": {
+    "ru": "Peer-group baseline (доля peers с доступом к активу)",
+    "en": "Peer-group baseline",
+    "kk": "Peer-group baseline"
+  },
+  "config.probeAgentBearer": {
+    "ru": "Bearer token (опц.)",
+    "en": "Bearer token (opt.)",
+    "kk": "Bearer token"
+  },
+  "config.probeAgentTokenSet": {
+    "ru": "token (задан) — пусто = не менять",
+    "en": "token (set) — empty = keep",
+    "kk": "token бос"
+  },
+  "config.probeAgents": {
+    "ru": "Probe agents (сегменты, до 16)",
+    "en": "Probe agents (up to 16)",
+    "kk": "Probe agents"
+  },
+  "config.probeAgentsSaveFailed": {
+    "ru": "Ошибка сохранения probe agents",
+    "en": "Probe agents save failed",
+    "kk": "Probe agents сақтау қатесі"
+  },
+  "config.probeAgentsSaved": {
+    "ru": "Probe agents сохранены",
+    "en": "Probe agents saved",
+    "kk": "Probe agents сақталды"
+  },
+  "config.probeInterval": {
+    "ru": "Probe interval (часы, 0 = выкл.)",
+    "en": "Probe interval (hours, 0=off)",
+    "kk": "Probe interval"
+  },
+  "config.probeQuorum": {
+    "ru": "Quorum (drift если ≥ N агентов видят reachable)",
+    "en": "Quorum drift threshold",
+    "kk": "Quorum"
+  },
+  "config.profile": {
+    "ru": "Профиль",
+    "en": "Profile",
+    "kk": "Profile"
+  },
+  "config.publicBaseUrl": {
+    "ru": "Public Base URL (для SSO redirect / ACS)",
+    "en": "Public Base URL (for SSO redirect / ACS)",
+    "kk": "Public Base URL"
+  },
+  "config.radiusHint": {
+    "ru": "PAP (UDP 1812), EAP-TTLS (inner PAP), PEAP (MSCHAPv2) или RadSec (TLS :2083). Filter-Id / Class admin|operator|auditor|security (или keeppam-admin) задаёт роль при первом входе.",
+    "en": "PAP, EAP-TTLS, PEAP or RadSec. Filter-Id / Class sets role.",
+    "kk": "PAP/EAP/RadSec"
+  },
+  "config.radiusTimeout": {
+    "ru": "Timeout, сек (1–30)",
+    "en": "Timeout, sec (1–30)",
+    "kk": "Timeout сек"
+  },
+  "config.radiusTitle": {
+    "ru": "RADIUS",
+    "en": "RADIUS",
+    "kk": "RADIUS"
+  },
+  "config.radsecOption": {
+    "ru": "RadSec (RADIUS/TLS, порт 2083)",
+    "en": "RadSec (RADIUS/TLS, port 2083)",
+    "kk": "RadSec"
+  },
+  "config.regenerateSpKey": {
+    "ru": "Пересоздать SP signing key",
+    "en": "Regenerate SP signing key",
+    "kk": "SP key қайта жасау"
+  },
+  "config.requirePadesBla": {
+    "ru": "Требовать PAdES-B-LTA",
+    "en": "Require PAdES-B-LTA",
+    "kk": "PAdES-B-LTA"
+  },
+  "config.rotateCa": {
+    "ru": "Сгенерировать новый CA",
+    "en": "Generate new CA",
+    "kk": "Жаңа CA"
+  },
+  "config.rotateCaConfirm": {
+    "ru": "Сгенерировать новый CA? Старый ключ перестанет работать на целях.",
+    "en": "Generate a new CA? The old key will stop working on targets.",
+    "kk": "Жаңа CA генерациялау керек пе? Еski кілт мақсаттарда жұмыс істемейді."
+  },
+  "config.rules": {
+    "ru": "Правила",
+    "en": "Rules",
+    "kk": "Ережелер"
+  },
+  "config.runJobNow": {
+    "ru": "Запустить сейчас",
+    "en": "Run now",
+    "kk": "Run now"
+  },
+  "config.samlTitle": {
+    "ru": "SAML 2.0",
+    "en": "SAML 2.0",
+    "kk": "SAML 2.0"
+  },
+  "config.save": {
+    "ru": "Сохранить",
+    "en": "Save",
+    "kk": "Save"
+  },
+  "config.saveAgents": {
+    "ru": "Сохранить agents",
+    "en": "Save agents",
+    "kk": "Agents сақтау"
+  },
+  "config.saveArchive": {
+    "ru": "Сохранить архив",
+    "en": "Save archive",
+    "kk": "Мұрағат сақтау"
+  },
+  "config.saveAuth": {
+    "ru": "Сохранить авторизацию",
+    "en": "Save authentication",
+    "kk": "Аутентификацияны сақтау"
+  },
+  "config.saveFailed": {
+    "ru": "Ошибка сохранения",
+    "en": "Save failed",
+    "kk": "Сақтау қатесі"
+  },
+  "config.saveIdP": {
+    "ru": "Сохранить IdP",
+    "en": "Save IdP",
+    "kk": "IdP сақтау"
+  },
+  "config.saveItsm": {
+    "ru": "Сохранить ITSM",
+    "en": "Save ITSM",
+    "kk": "ITSM сақтау"
+  },
+  "config.saveNotify": {
+    "ru": "Сохранить уведомления",
+    "en": "Save notifications",
+    "kk": "Notify save"
+  },
+  "config.saveSiem": {
+    "ru": "Сохранить SIEM",
+    "en": "Save SIEM",
+    "kk": "SIEM save"
+  },
+  "config.saveSsh": {
+    "ru": "Сохранить SSH",
+    "en": "Save SSH",
+    "kk": "SSH сақтау"
+  },
+  "config.scimAdminClamp": {
+    "ru": "admin через SCIM не выдаётся — значение clamp в operator.",
+    "en": "admin via SCIM clamped to operator.",
+    "kk": "admin SCIM clamp"
+  },
+  "config.scimEnableInbound": {
+    "ru": "Включить inbound SCIM",
+    "en": "Enable inbound SCIM",
+    "kk": "Inbound SCIM"
+  },
+  "config.scimHint": {
+    "ru": "Провижinинг пользователей и групп из Entra / Okta. Не зависит от режима входа (можно вместе с SAML).",
+    "en": "SCIM provisioning from Entra/Okta.",
+    "kk": "SCIM Entra/Okta"
+  },
+  "config.scimPollInterval": {
+    "ru": "Интервал опроса (сек)",
+    "en": "Poll interval (sec)",
+    "kk": "Сауал интервалы"
+  },
+  "config.scimTitle": {
+    "ru": "SCIM 2.0",
+    "en": "SCIM 2.0",
+    "kk": "SCIM 2.0"
+  },
+  "config.scimTokenCopied": {
+    "ru": "SCIM-токен сгенерирован и скопирован — сохраните настройки",
+    "en": "SCIM token generated and copied — save settings",
+    "kk": "SCIM-токен генерацияланды — баптауларды сақтаңыз"
+  },
+  "config.scimTokenGenerated": {
+    "ru": "SCIM-токен сгенерирован — скопируйте из поля и сохраните",
+    "en": "SCIM token generated — copy from the field and save",
+    "kk": "SCIM-токен генерацияланды — өрістен көшіріп сақтаңыз"
+  },
+  "config.secretSet": {
+    "ru": "(задан)",
+    "en": "(set)",
+    "kk": "(орнатылған)"
+  },
+  "config.secretSetLeaveEmpty": {
+    "ru": "(задан, оставьте пустым чтобы не менять)",
+    "en": "(set, leave empty to keep)",
+    "kk": "(орнатылған, бос қалдырыңыз)"
+  },
+  "config.siemAuthApiKey": {
+    "ru": "Authorization: ApiKey … или Basic …",
+    "en": "ApiKey or Basic auth",
+    "kk": "ApiKey/Basic"
+  },
+  "config.siemAuthBearer": {
+    "ru": "Bearer … или Authorization: Bearer …",
+    "en": "Bearer or Authorization: Bearer",
+    "kk": "Bearer auth"
+  },
+  "config.siemCursor": {
+    "ru": "Курсор: {cursor} · последний экспорт: {export}",
+    "en": "Cursor and last export",
+    "kk": "SIEM cursor"
+  },
+  "config.siemEnable": {
+    "ru": "Включить экспорт",
+    "en": "Enable export",
+    "kk": "Export"
+  },
+  "config.siemHint": {
+    "ru": "Экспорт audit events во внешний SIEM.",
+    "en": "Export audit events to SIEM.",
+    "kk": "SIEM hint"
+  },
+  "config.siemSaveFailed": {
+    "ru": "Ошибка сохранения SIEM",
+    "en": "SIEM save failed",
+    "kk": "SIEM сақтау қатесі"
+  },
+  "config.siemSaved": {
+    "ru": "SIEM сохранён",
+    "en": "SIEM saved",
+    "kk": "SIEM сақталды"
+  },
+  "config.siemSyslog": {
+    "ru": "Syslog адрес (host:port)",
+    "en": "Syslog address (host:port)",
+    "kk": "Syslog"
+  },
+  "config.siemTitle": {
+    "ru": "SIEM-экспорт аудита",
+    "en": "SIEM audit export",
+    "kk": "SIEM export"
+  },
+  "config.siemTransport": {
+    "ru": "Транспорт",
+    "en": "Transport",
+    "kk": "Transport"
+  },
+  "config.skipLocalMfaAfterLdap": {
+    "ru": "Не требовать локальный MFA после LDAP",
+    "en": "Do not require local MFA after LDAP",
+    "kk": "LDAP кейін MFA"
+  },
+  "config.skipLocalMfaAfterOidc": {
+    "ru": "Не требовать локальный MFA после SSO",
+    "en": "Do not require local MFA after SSO",
+    "kk": "SSO кейін MFA талап etmеу"
+  },
+  "config.skipLocalMfaAfterRadius": {
+    "ru": "Не требовать локальный MFA после RADIUS",
+    "en": "Do not require local MFA after RADIUS",
+    "kk": "RADIUS кейін MFA"
+  },
+  "config.skipLocalMfaAfterSaml": {
+    "ru": "Не требовать локальный MFA после SSO",
+    "en": "Do not require local MFA after SSO",
+    "kk": "SSO кейін MFA"
+  },
+  "config.smtpError": {
+    "ru": "Ошибка SMTP",
+    "en": "SMTP error",
+    "kk": "SMTP қатесі"
+  },
+  "config.smtpRelayNone": {
+    "ru": "none (локальный relay)",
+    "en": "none (local relay)",
+    "kk": "none relay"
+  },
+  "config.smtpTitle": {
+    "ru": "SMTP",
+    "en": "SMTP",
+    "kk": "SMTP"
+  },
+  "config.smtpUsername": {
+    "ru": "Username (опц.)",
+    "en": "Username (opt.)",
+    "kk": "Username"
+  },
+  "config.spEntityId": {
+    "ru": "SP Entity ID",
+    "en": "SP Entity ID",
+    "kk": "SP Entity ID"
+  },
+  "config.spEntityIdDefaultMetadata": {
+    "ru": "по умолчанию = metadata URL",
+    "en": "default = metadata URL",
+    "kk": "әдепкі = metadata URL"
+  },
+  "config.spKeyGenerated": {
+    "ru": "сгенерирован",
+    "en": "generated",
+    "kk": "генерацияланған"
+  },
+  "config.spKeyWillCreate": {
+    "ru": "будет создан при сохранении",
+    "en": "will be created on save",
+    "kk": "сақтауда жасалады"
+  },
+  "config.spnTemplate": {
+    "ru": "SPN template (%h = hostname актива)",
+    "en": "SPN template (%h = asset hostname)",
+    "kk": "SPN template"
+  },
+  "config.sshHint": {
+    "ru": "Как PAM подключается к SSH-активам. Режим сертификата выдаёт короткоживущий user cert (principal = username).",
+    "en": "PAM SSH connection modes and ephemeral certs.",
+    "kk": "PAM SSH режимдері"
+  },
+  "config.sshModeCert": {
+    "ru": "Эфемерный SSH-сертификат (CA)",
+    "en": "Ephemeral SSH certificate (CA)",
+    "kk": "SSH сертификат (CA)"
+  },
+  "config.sshModeKerberos": {
+    "ru": "Kerberos / GSSAPI (gssapi-with-mic)",
+    "en": "Kerberos / GSSAPI (gssapi-with-mic)",
+    "kk": "Kerberos / GSSAPI"
+  },
+  "config.sshModeVault": {
+    "ru": "Секрет из vault (пароль / ключ учётки)",
+    "en": "Secret from vault (password / key)",
+    "kk": "Vault секреті"
+  },
+  "config.sshSaveFailed": {
+    "ru": "Ошибка сохранения SSH",
+    "en": "SSH save failed",
+    "kk": "SSH сақтау қатесі"
+  },
+  "config.sshSaveModeHint": {
+    "ru": "Сохраните режим — CA создастся автоматически",
+    "en": "Save mode — CA auto-created",
+    "kk": "CA автоматты"
+  },
+  "config.sshSaved": {
+    "ru": "SSH сохранён",
+    "en": "SSH saved",
+    "kk": "SSH сақталды"
+  },
+  "config.sshTargetCaHint": {
+    "ru": "На цели: положить ключ в /etc/ssh/keeppam_ca.pub, в sshd_config добавить TrustedUserCAKeys /etc/ssh/keeppam_ca.pub, затем reload sshd.",
+    "en": "Target: TrustedUserCAKeys in sshd_config.",
+    "kk": "TrustedUserCAKeys"
+  },
+  "config.sshTitle": {
+    "ru": "SSH-аутентификация к целям",
+    "en": "SSH authentication to targets",
+    "kk": "SSH аутентификация"
+  },
+  "config.syncFailed": {
+    "ru": "Ошибка sync",
+    "en": "Sync failed",
+    "kk": "Sync қатесі"
+  },
+  "config.testEmail": {
+    "ru": "Тестовое письмо",
+    "en": "Test email",
+    "kk": "Test email"
+  },
+  "config.testEmailSent": {
+    "ru": "Тестовое письмо отправлено на email текущего пользователя",
+    "en": "Test email sent to the current user's address",
+    "kk": "Сынақ хаты ағымдағы пайдаланушы email-іне жіберілді"
+  },
+  "config.ticketCheckFailed": {
+    "ru": "Ошибка проверки тикета",
+    "en": "Ticket check failed",
+    "kk": "Ticket тексеру қатесі"
+  },
+  "config.title": {
+    "ru": "Конфигурация",
+    "en": "Configuration",
+    "kk": "Баптау"
+  },
+  "config.uebaHint": {
+    "ru": "On-prem composite score поверх базового UEBA (docs/ueba.txt): сравнение с peer-group (user_groups), ML-порог, live mid-session parse guac для RDP/VNC.",
+    "en": "UEBA peer-group + ML + live guac.",
+    "kk": "UEBA hint"
+  },
+  "config.uebaLastRun": {
+    "ru": "Последний live-run: {error}",
+    "en": "Last live-run: {error}",
+    "kk": "Last live-run"
+  },
+  "config.uebaSaveFailed": {
+    "ru": "Ошибка сохранения UEBA-ML",
+    "en": "UEBA-ML save failed",
+    "kk": "UEBA-ML сақтау қатесі"
+  },
+  "config.uebaSaved": {
+    "ru": "UEBA-ML сохранён",
+    "en": "UEBA-ML saved",
+    "kk": "UEBA-ML сақталды"
+  },
+  "config.uebaTitle": {
+    "ru": "UEBA-ML (peer-group + live)",
+    "en": "UEBA-ML (peer-group + live)",
+    "kk": "UEBA-ML"
+  },
+  "config.warningSuffix": {
+    "ru": " · предупреждение",
+    "en": " · warning",
+    "kk": " · warning"
+  },
+  "jea.allowedEgress": {
+    "ru": "Allowed egress (SSH -L; пусто = туннели запрещены)",
+    "en": "Allowed egress (SSH -L; empty=tunnels denied)",
+    "kk": "Allowed egress"
+  },
+  "jea.any": {
+    "ru": "любой",
+    "en": "any",
+    "kk": "any"
+  },
+  "jea.appModeAllow": {
+    "ru": "allow — overlay, остальное не режется",
+    "en": "allow — overlay",
+    "kk": "allow overlay"
+  },
+  "jea.appModeDeny": {
+    "ru": "deny — allowlist функций",
+    "en": "deny — allowlist",
+    "kk": "deny allowlist"
+  },
+  "jea.appObjectsHint": {
+    "ru": "Named object ACL for app/API layers.",
+    "en": "App/API object ACL.",
+    "kk": "App objects hint"
+  },
+  "jea.appObjectsTitle": {
+    "ru": "Объекты приложения",
+    "en": "Application objects",
+    "kk": "App objects"
+  },
+  "jea.appPackCreated": {
+    "ru": "Пакет объектов создан",
+    "en": "App object pack created",
+    "kk": "App created"
+  },
+  "jea.appPackUpdated": {
+    "ru": "Пакет объектов обновлён",
+    "en": "App object pack updated",
+    "kk": "App updated"
+  },
+  "jea.appRulesLabel": {
+    "ru": "Правила (METHOD PATH OBJECT ACTION). GraphQL: OBJECT — glob полей (, )",
+    "en": "Rules METHOD PATH OBJECT ACTION",
+    "kk": "App rules"
+  },
+  "jea.assetNameGlob": {
+    "ru": "Имя актива (glob)",
+    "en": "Asset name (glob)",
+    "kk": "Asset name glob"
+  },
+  "jea.assetTags": {
+    "ru": "Теги активов (через запятую)",
+    "en": "Asset tags (comma-separated)",
+    "kk": "Asset tags"
+  },
+  "jea.assetTypes": {
+    "ru": "Типы активов",
+    "en": "Asset types",
+    "kk": "Asset types"
+  },
+  "jea.check": {
+    "ru": "Проверить",
+    "en": "Check",
+    "kk": "Check"
+  },
+  "jea.cidrAddresses": {
+    "ru": "CIDR адреса",
+    "en": "CIDR addresses",
+    "kk": "CIDR addresses"
+  },
+  "jea.command": {
+    "ru": "Команда",
+    "en": "Command",
+    "kk": "Command"
+  },
+  "jea.daysOfWeek": {
+    "ru": "Дни недели",
+    "en": "Days of week",
+    "kk": "Days of week"
+  },
+  "jea.deleteAppPackConfirm": {
+    "ru": "Удалить пакет объектов «{name}»?",
+    "en": "Delete app object pack «{name}»?",
+    "kk": "Объект пакеті «{name}» жою керек пе?"
+  },
+  "jea.deleteFailed": {
+    "ru": "Ошибка удаления",
+    "en": "Delete failed",
+    "kk": "Жою қатесі"
+  },
+  "jea.deleteHttpPackConfirm": {
+    "ru": "Удалить HTTP-пакет «{name}»?",
+    "en": "Delete HTTP pack «{name}»?",
+    "kk": "HTTP-пакет «{name}» жою керек пе?"
+  },
+  "jea.deletePolicyConfirm": {
+    "ru": "Удалить политику «{name}»? Привязки ACL останутся, ссылка сбросится.",
+    "en": "Delete policy «{name}»? ACL bindings remain, reference cleared.",
+    "kk": "«{name}» саясатын жою? ACL байлаулар қалады."
+  },
+  "jea.deleteSqlPackConfirm": {
+    "ru": "Удалить SQL-пакет «{name}»?",
+    "en": "Delete SQL pack «{name}»?",
+    "kk": "SQL-пакет «{name}» жою керек пе?"
+  },
+  "jea.deleteSshPackConfirm": {
+    "ru": "Удалить пакет «{name}»?",
+    "en": "Delete pack «{name}»?",
+    "kk": "«{name}» пакетін жою керек пе?"
+  },
+  "jea.deleted": {
+    "ru": "Удалён",
+    "en": "Deleted",
+    "kk": "Жойылды"
+  },
+  "jea.deletedShort": {
+    "ru": "Удалена",
+    "en": "Deleted",
+    "kk": "Deleted"
+  },
+  "jea.dlpRegex": {
+    "ru": "DLP regex (имя и паттерн на строку, до 16)",
+    "en": "DLP regex (up to 16)",
+    "kk": "DLP regex"
+  },
+  "jea.editAppPack": {
+    "ru": "Редактировать пакет объектов",
+    "en": "Edit app object pack",
+    "kk": "Edit app pack"
+  },
+  "jea.editHttpPack": {
+    "ru": "Редактировать HTTP-пакет",
+    "en": "Edit HTTP pack",
+    "kk": "Edit HTTP"
+  },
+  "jea.editPolicy": {
+    "ru": "Редактировать политику",
+    "en": "Edit policy",
+    "kk": "Edit policy"
+  },
+  "jea.editSqlPack": {
+    "ru": "Редактировать SQL-пакет",
+    "en": "Edit SQL pack",
+    "kk": "Edit SQL"
+  },
+  "jea.editSshPack": {
+    "ru": "Редактировать SSH-пакет",
+    "en": "Edit SSH pack",
+    "kk": "Edit SSH pack"
+  },
+  "jea.editTagAcl": {
+    "ru": "Изменить tag ACL",
+    "en": "Edit tag ACL",
+    "kk": "Edit tag ACL"
+  },
+  "jea.expires": {
+    "ru": "Истекает",
+    "en": "Expires",
+    "kk": "Expires"
+  },
+  "jea.forbidden": {
+    "ru": "Недостаточно прав (jea.read)",
+    "en": "Insufficient permissions (jea.read)",
+    "kk": "Құқық жеткіліксіз (jea.read)"
+  },
+  "jea.graphqlQuery": {
+    "ru": "GraphQL query (опц. — верхнеуровневые поля)",
+    "en": "GraphQL query (opt.)",
+    "kk": "GraphQL query"
+  },
+  "jea.hostnameGlob": {
+    "ru": "Hostname (glob)",
+    "en": "Hostname (glob)",
+    "kk": "Hostname glob"
+  },
+  "jea.httpPackCreated": {
+    "ru": "HTTP-пакет создан",
+    "en": "HTTP pack created",
+    "kk": "HTTP created"
+  },
+  "jea.httpPackUpdated": {
+    "ru": "HTTP-пакет обновлён",
+    "en": "HTTP pack updated",
+    "kk": "HTTP updated"
+  },
+  "jea.httpPacksHint": {
+    "ru": "URL/path rules per pack.",
+    "en": "URL/path rules per pack.",
+    "kk": "HTTP hint"
+  },
+  "jea.httpPacksTitle": {
+    "ru": "HTTP / URL-пакеты",
+    "en": "HTTP / URL packs",
+    "kk": "HTTP packs"
+  },
+  "jea.ifAboveThreshold": {
+    "ru": "Если выше порога",
+    "en": "If above threshold",
+    "kk": "If above threshold"
+  },
+  "jea.importDone": {
+    "ru": "Импорт: +{added}, всего {total}",
+    "en": "Import: +{added}, total {total}",
+    "kk": "Import done"
+  },
+  "jea.importFailed": {
+    "ru": "Ошибка импорта",
+    "en": "Import failed",
+    "kk": "Import failed"
+  },
+  "jea.importList": {
+    "ru": "Загрузить список (txt / csv / json)",
+    "en": "Upload list (txt/csv/json)",
+    "kk": "Import list"
+  },
+  "jea.importLoadedForm": {
+    "ru": "Загружено {count} паттернов в форму — нажмите Создать",
+    "en": "Loaded {count} patterns — click Create",
+    "kk": "Loaded to form"
+  },
+  "jea.importMergeConfirm": {
+    "ru": "Добавить к полю паттернов? ОК = добавить, Отмена = заменить.",
+    "en": "Add to patterns? OK=add, Cancel=replace.",
+    "kk": "Merge confirm"
+  },
+  "jea.importMergeLongConfirm": {
+    "ru": "Объединить с текущими паттернами?\nОК = merge, Отмена = заменить список.",
+    "en": "Merge patterns?\nOK=merge, Cancel=replace.",
+    "kk": "Merge long confirm"
+  },
+  "jea.importNoPatterns": {
+    "ru": "в файле нет паттернов",
+    "en": "no patterns in file",
+    "kk": "No patterns"
+  },
+  "jea.lead": {
+    "ru": "SSH / SQL / HTTP-пакеты, Policy, Command Risk и ACL на теги активов (путь prod/linux, без строки на каждый хост).",
+    "en": "SSH / SQL / HTTP packs, Policy, Command Risk and asset tag ACL (prod/linux path).",
+    "kk": "SSH / SQL / HTTP пакеттер, Policy, Command Risk және актив tag ACL."
+  },
+  "jea.leaveTtl": {
+    "ru": "оставить",
+    "en": "keep",
+    "kk": "keep"
+  },
+  "jea.loadFailed": {
+    "ru": "Ошибка загрузки",
+    "en": "Load failed",
+    "kk": "Жүктеу қатесі"
+  },
+  "jea.matchAllAnd": {
+    "ru": "Все перечисленные (AND)",
+    "en": "All listed (AND)",
+    "kk": "All AND"
+  },
+  "jea.matchAnyOr": {
+    "ru": "Любой из перечисленных (OR)",
+    "en": "Any listed (OR)",
+    "kk": "Any OR"
+  },
+  "jea.matchMode": {
+    "ru": "Совпадение",
+    "en": "Match mode",
+    "kk": "Match mode"
+  },
+  "jea.maxRowsExceeded": {
+    "ru": "При превышении max_rows",
+    "en": "When max_rows exceeded",
+    "kk": "max_rows exceeded"
+  },
+  "jea.method": {
+    "ru": "Метод",
+    "en": "Method",
+    "kk": "Method"
+  },
+  "jea.nativeMstsc": {
+    "ru": "Native mstsc path (нужен KEEPPAM_RDP_PUBLIC_HOST + freerdp-proxy)",
+    "en": "Native mstsc path",
+    "kk": "Native mstsc"
+  },
+  "jea.needAssetsRead": {
+    "ru": "Нужно право assets.read",
+    "en": "Requires assets.read",
+    "kk": "assets.read required"
+  },
+  "jea.newAppPack": {
+    "ru": "Новый пакет объектов",
+    "en": "New app object pack",
+    "kk": "New app pack"
+  },
+  "jea.newHttpPack": {
+    "ru": "Новый HTTP-пакет",
+    "en": "New HTTP pack",
+    "kk": "New HTTP"
+  },
+  "jea.newPolicy": {
+    "ru": "Новая политика",
+    "en": "New policy",
+    "kk": "New policy"
+  },
+  "jea.newSqlPack": {
+    "ru": "Новый SQL-пакет",
+    "en": "New SQL pack",
+    "kk": "New SQL"
+  },
+  "jea.newSshPack": {
+    "ru": "Новый SSH-пакет",
+    "en": "New SSH pack",
+    "kk": "New SSH pack"
+  },
+  "jea.newTagAcl": {
+    "ru": "Новый tag ACL",
+    "en": "New tag ACL",
+    "kk": "New tag ACL"
+  },
+  "jea.nlpBuiltinHint": {
+    "ru": "Встроенные: nlp_credentials, nlp_financial, nlp_personal_id, nlp_health, nlp_legal, nlp_private_key. SQL/HTTP/SSH stdout/keystroke/OCR",
+    "en": "Built-in NLP classifiers",
+    "kk": "NLP built-in"
+  },
+  "jea.nlpClassifiers": {
+    "ru": "NLP классификаторы (имя, min=N, ключевые слова)",
+    "en": "NLP classifiers",
+    "kk": "NLP classifiers"
+  },
+  "jea.nlpDlpClassifier": {
+    "ru": "NLP/DLP классификатор",
+    "en": "NLP/DLP classifier",
+    "kk": "NLP/DLP"
+  },
+  "jea.noExtraRisk": {
+    "ru": "без extra-risk",
+    "en": "no extra-risk",
+    "kk": "no extra-risk"
+  },
+  "jea.noPack": {
+    "ru": "без пакета",
+    "en": "no pack",
+    "kk": "no pack"
+  },
+  "jea.noPolicies": {
+    "ru": "Политик нет",
+    "en": "No policies",
+    "kk": "No policies"
+  },
+  "jea.noRestrictionsTemplate": {
+    "ru": "без ограничений (шаблон)",
+    "en": "no restrictions (template)",
+    "kk": "no restrictions"
+  },
+  "jea.noTagAcl": {
+    "ru": "Нет tag ACL",
+    "en": "No tag ACL",
+    "kk": "No tag ACL"
+  },
+  "jea.ocrHint": {
+    "ru": "Не live OCR каждого кадра. Post-session Tesseract, индекс screen_text.",
+    "en": "Post-session Tesseract OCR.",
+    "kk": "OCR hint"
+  },
+  "jea.ocrInterval": {
+    "ru": "OCR интервал кадров (сек, 5–120)",
+    "en": "OCR frame interval (sec)",
+    "kk": "OCR interval"
+  },
+  "jea.ocrLang": {
+    "ru": "OCR RDP/VNC (язык)",
+    "en": "OCR RDP/VNC (language)",
+    "kk": "OCR language"
+  },
+  "jea.ocrMaxFrames": {
+    "ru": "OCR макс. кадров (1–120)",
+    "en": "OCR max frames (1–120)",
+    "kk": "OCR max frames"
+  },
+  "jea.onMaxRowsDeny": {
+    "ru": "deny — запретить запрос",
+    "en": "deny — block query",
+    "kk": "deny"
+  },
+  "jea.onMaxRowsTruncate": {
+    "ru": "truncate — обрезать результат",
+    "en": "truncate — trim result",
+    "kk": "truncate"
+  },
+  "jea.pack": {
+    "ru": "Пакет",
+    "en": "Pack",
+    "kk": "Pack"
+  },
+  "jea.parse": {
+    "ru": "Разобрать",
+    "en": "Parse",
+    "kk": "Parse"
+  },
+  "jea.path": {
+    "ru": "Путь",
+    "en": "Path",
+    "kk": "Path"
+  },
+  "jea.patterns": {
+    "ru": "Паттерны",
+    "en": "Patterns",
+    "kk": "Patterns"
+  },
+  "jea.patternsHint": {
+    "ru": "До 10 000 globs (, ). Для существующего пакета — сразу в БД; для нового — в форму.",
+    "en": "Up to 10k globs; existing pack→DB, new→form.",
+    "kk": "Patterns hint"
+  },
+  "jea.permanent": {
+    "ru": "постоянно",
+    "en": "permanent",
+    "kk": "permanent"
+  },
+  "jea.permanentRemoveTtl": {
+    "ru": "Постоянно (снять TTL)",
+    "en": "Permanent (remove TTL)",
+    "kk": "Permanent TTL"
+  },
+  "jea.piiBuiltinHint": {
+    "ru": "Встроенные kind: email, pan, phone, snils. Свои regex + PII в SSH stdout, keystroke, OCR screen_text.",
+    "en": "Built-in PII kinds + custom regex.",
+    "kk": "PII hint"
+  },
+  "jea.piiInResponse": {
+    "ru": "PII в ответе SQL/HTTP",
+    "en": "PII in SQL/HTTP response",
+    "kk": "PII in response"
+  },
+  "jea.policyCreated": {
+    "ru": "Политика создана",
+    "en": "Policy created",
+    "kk": "Policy created"
+  },
+  "jea.policyHint": {
+    "ru": "Именованный набор ограничений. На ACL актива выбираете политику + пользователя/роль. Пустые поля ACL берутся из политики; ticket/reason",
+    "en": "Named policy constraints on asset ACL.",
+    "kk": "Policy hint"
+  },
+  "jea.policyOptional": {
+    "ru": "Policy (опц.)",
+    "en": "Policy (opt.)",
+    "kk": "Policy opt"
+  },
+  "jea.policyTitle": {
+    "ru": "Access Policy",
+    "en": "Access Policy",
+    "kk": "Access Policy"
+  },
+  "jea.policyUpdated": {
+    "ru": "Политика обновлена",
+    "en": "Policy updated",
+    "kk": "Policy updated"
+  },
+  "jea.previewFailed": {
+    "ru": "Ошибка preview",
+    "en": "Preview failed",
+    "kk": "Preview қатесі"
+  },
+  "jea.requireReason": {
+    "ru": "Требовать reason",
+    "en": "Require reason",
+    "kk": "Require reason"
+  },
+  "jea.requireTicket": {
+    "ru": "Требовать ticket_id",
+    "en": "Require ticket_id",
+    "kk": "Require ticket_id"
+  },
+  "jea.restrictions": {
+    "ru": "Ограничения",
+    "en": "Restrictions",
+    "kk": "Restrictions"
+  },
+  "jea.revoke": {
+    "ru": "Отозвать",
+    "en": "Revoke",
+    "kk": "Revoke"
+  },
+  "jea.revokeFailed": {
+    "ru": "Ошибка отзыва",
+    "en": "Revoke failed",
+    "kk": "Қайтару қатесі"
+  },
+  "jea.revokeTagAclConfirm": {
+    "ru": "Отозвать tag ACL? Пропадёт доступ ко всем подходящим активам.",
+    "en": "Revoke tag ACL? Access to matching assets will be lost.",
+    "kk": "Tag ACL қайтару? Сәйкес активтерге қолжетімділік жоғалады."
+  },
+  "jea.revoked": {
+    "ru": "Отозван",
+    "en": "Revoked",
+    "kk": "Қайтарылды"
+  },
+  "jea.role": {
+    "ru": "Роль",
+    "en": "Role",
+    "kk": "Role"
+  },
+  "jea.rulesPerLine": {
+    "ru": "Правила (по одному в строке)",
+    "en": "Rules (one per line)",
+    "kk": "Rules per line"
+  },
+  "jea.saveFailed": {
+    "ru": "Ошибка сохранения",
+    "en": "Save failed",
+    "kk": "Сақтау қатесі"
+  },
+  "jea.selectGroup": {
+    "ru": "выберите группу",
+    "en": "select group",
+    "kk": "select group"
+  },
+  "jea.selectPlaceholder": {
+    "ru": "— выбрать —",
+    "en": "— select —",
+    "kk": "— select —"
+  },
+  "jea.selectRole": {
+    "ru": "выберите роль",
+    "en": "select role",
+    "kk": "select role"
+  },
+  "jea.selectSubject": {
+    "ru": "выберите субъекта",
+    "en": "select subject",
+    "kk": "select subject"
+  },
+  "jea.selectUser": {
+    "ru": "выберите пользователя",
+    "en": "select user",
+    "kk": "select user"
+  },
+  "jea.sqlPackCreated": {
+    "ru": "SQL-пакет создан",
+    "en": "SQL pack created",
+    "kk": "SQL created"
+  },
+  "jea.sqlPackUpdated": {
+    "ru": "SQL-пакет обновлён",
+    "en": "SQL pack updated",
+    "kk": "SQL updated"
+  },
+  "jea.sqlPacksHint": {
+    "ru": "statements: SELECT/INSERT/UPDATE/DELETE/DDL · tables: glob · mask_columns: колонки → *** · DLP: COPY/OUTFILE всегда запрещены; max_rows",
+    "en": "SQL packs hint",
+    "kk": "SQL hint"
+  },
+  "jea.sqlPacksTitle": {
+    "ru": "SQL-пакеты",
+    "en": "SQL packs",
+    "kk": "SQL packs"
+  },
+  "jea.sshPackCreated": {
+    "ru": "SSH-пакет создан",
+    "en": "SSH pack created",
+    "kk": "SSH created"
+  },
+  "jea.sshPackOptional": {
+    "ru": "SSH-пакет (опц.)",
+    "en": "SSH pack (opt.)",
+    "kk": "SSH pack"
+  },
+  "jea.sshPackUpdated": {
+    "ru": "SSH-пакет обновлён",
+    "en": "SSH pack updated",
+    "kk": "SSH updated"
+  },
+  "jea.sshPacksTitle": {
+    "ru": "SSH-пакеты",
+    "en": "SSH packs",
+    "kk": "SSH packs"
+  },
+  "jea.subject": {
+    "ru": "Субъект",
+    "en": "Subject",
+    "kk": "Subject"
+  },
+  "jea.tabHttp": {
+    "ru": "HTTP / URL ACL",
+    "en": "HTTP / URL ACL",
+    "kk": "HTTP / URL ACL"
+  },
+  "jea.tabObjects": {
+    "ru": "Объекты",
+    "en": "Objects",
+    "kk": "Объекттер"
+  },
+  "jea.tabSql": {
+    "ru": "SQL tables / masking",
+    "en": "SQL tables / masking",
+    "kk": "SQL tables / masking"
+  },
+  "jea.tabSsh": {
+    "ru": "SSH commands",
+    "en": "SSH commands",
+    "kk": "SSH commands"
+  },
+  "jea.tabTags": {
+    "ru": "Теги активов",
+    "en": "Asset tags",
+    "kk": "Актив тегтері"
+  },
+  "jea.tablesGlob": {
+    "ru": "Tables (glob, по одному в строке)",
+    "en": "Tables (glob, one per line)",
+    "kk": "Tables glob"
+  },
+  "jea.tagAclDynamicCreated": {
+    "ru": "Динамический ACL создан",
+    "en": "Dynamic ACL created",
+    "kk": "Dynamic ACL created"
+  },
+  "jea.tagAclError": {
+    "ru": "Ошибка tag ACL",
+    "en": "Tag ACL error",
+    "kk": "Tag ACL error"
+  },
+  "jea.tagAclHint": {
+    "ru": "WHO (пользователь / роль / группа) + теги WHAT. Путь prod/linux — потомок покрывает предка.",
+    "en": "WHO + WHAT tags; prod/linux path hierarchy.",
+    "kk": "Tag ACL hint"
+  },
+  "jea.tagAclHint2": {
+    "ru": "— достаточно одного. Прямой ACL на карточке актива побеждает. Нужны права assets.read / assets.acl.",
+    "en": "Direct asset ACL wins; needs assets.read/acl.",
+    "kk": "Tag ACL hint2"
+  },
+  "jea.tagAclLoadFailed": {
+    "ru": "Ошибка загрузки tag ACL",
+    "en": "Tag ACL load failed",
+    "kk": "Tag ACL load failed"
+  },
+  "jea.tagAclNoTtl": {
+    "ru": " Сейчас без TTL.",
+    "en": " No TTL currently.",
+    "kk": " No TTL"
+  },
+  "jea.tagAclTitle": {
+    "ru": "ACL на теги активов",
+    "en": "Asset tag ACL",
+    "kk": "Tag ACL"
+  },
+  "jea.tagAclUpdated": {
+    "ru": "Tag ACL обновлён",
+    "en": "Tag ACL updated",
+    "kk": "Tag ACL updated"
+  },
+  "jea.tagAclValidation": {
+    "ru": "укажите теги, имя, hostname, тип или CIDR",
+    "en": "specify tags, name, hostname, type or CIDR",
+    "kk": "Tag ACL validation"
+  },
+  "jea.tagAclWhatHint": {
+    "ru": "Хотя бы одно поле WHAT. Непустые комбинируются через AND — новый актив покрывается без ручного bind.",
+    "en": "At least one WHAT field; AND combination.",
+    "kk": "WHAT hint"
+  },
+  "jea.tagAclWhoImmutable": {
+    "ru": "WHO нельзя сменить. Остальные ограничения (время, JEA, ABAC) сохраняются; меняются теги, Policy и TTL.",
+    "en": "WHO immutable; tags/Policy/TTL change.",
+    "kk": "WHO immutable"
+  },
+  "jea.tagSelectorHint": {
+    "ru": "— каждый тег селектора;",
+    "en": "— each selector tag;",
+    "kk": "selector tag hint"
+  },
+  "jea.timeFrom": {
+    "ru": "С (HH:MM)",
+    "en": "From (HH:MM)",
+    "kk": "From"
+  },
+  "jea.timeTo": {
+    "ru": "До (HH:MM)",
+    "en": "To (HH:MM)",
+    "kk": "To"
+  },
+  "jea.title": {
+    "ru": "JEA",
+    "en": "JEA",
+    "kk": "JEA"
+  },
+  "jea.tryCommandHint": {
+    "ru": "Парсер снимает sudo/su/env. JEA смотрит на inner binary. Баллы — класс команды (без connect-риска).",
+    "en": "Parser strips sudo/su/env; JEA checks inner binary.",
+    "kk": "JEA parser hint"
+  },
+  "jea.tryCommandTitle": {
+    "ru": "Проверить команду",
+    "en": "Test command",
+    "kk": "Test command"
+  },
+  "jea.tryRequestTitle": {
+    "ru": "Проверить запрос",
+    "en": "Test request",
+    "kk": "Test request"
+  },
+  "jea.ttlMinutes": {
+    "ru": "TTL минут (опц., пусто = {mode})",
+    "en": "TTL minutes (opt., empty={mode})",
+    "kk": "TTL minutes"
+  },
+  "jea.unmatched": {
+    "ru": "Несовпавшее",
+    "en": "Unmatched",
+    "kk": "Unmatched"
+  },
+  "jea.who": {
+    "ru": "WHO",
+    "en": "WHO",
+    "kk": "WHO"
+  }
+}

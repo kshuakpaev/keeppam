@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"github.com/keeppam/auth/internal/attacksim"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/buildinfo"
 	"github.com/keeppam/auth/internal/castindex"
 	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/compliance"
@@ -439,7 +441,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		s.health.ServeReady(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "version": buildinfo.Version})
 }
 
 type ctxKey int
@@ -976,13 +978,49 @@ func (s *Server) handleSealAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sealed": n})
 }
 
+func (s *Server) ensureAssetLicenseVisible(w http.ResponseWriter, r *http.Request, id uuid.UUID) bool {
+	limit := s.currentLicense().VisibleLimit(time.Now())
+	if limit <= 0 {
+		return true
+	}
+	ok, err := s.assets.IsVisibleUnderLimit(r.Context(), id, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, fmt.Sprintf("лимит лицензии — актив скрыт (видимы только первые %d по имени)", limit))
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
-	list, err := s.assets.List(r.Context())
+	now := time.Now()
+	lic := s.currentLicense()
+	limit := lic.VisibleLimit(now)
+	total, err := s.assets.CountAll(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assets": list})
+	list, err := s.assets.ListLimited(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	hidden := 0
+	if limit > 0 && total > len(list) {
+		hidden = total - len(list)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"assets":             list,
+		"total":              total,
+		"hidden":             hidden,
+		"visible_limit":      limit,
+		"license_expired":    lic.IsExpired(now),
+		"license_unlicensed": lic.IsUnlicensed(),
+	})
 }
 
 func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
@@ -1013,6 +1051,9 @@ func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.ensureAssetLicenseVisible(w, r, id) {
 		return
 	}
 	a, err := s.assets.Get(r.Context(), id)

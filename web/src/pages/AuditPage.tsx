@@ -1,20 +1,22 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, type AuditEvent, type AuditVerify } from "../api";
+import { useI18n } from "../i18n";
 
 const DEFAULT_PAGE_SIZE = 50;
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 1000] as const;
 
-const SEARCH_FIELDS = [
-  { value: "all", label: "Все столбцы" },
-  { value: "action", label: "Action" },
-  { value: "actor_id", label: "Actor" },
-  { value: "resource_type", label: "Resource type" },
-  { value: "resource_id", label: "Resource id" },
-  { value: "ip", label: "IP" },
-  { value: "user_agent", label: "User-Agent" },
+const SEARCH_FIELD_VALUES = [
+  "all",
+  "action",
+  "actor_id",
+  "resource_type",
+  "resource_id",
+  "ip",
+  "user_agent",
 ] as const;
 
 export function AuditPage() {
+  const { t, te } = useI18n();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [q, setQ] = useState("");
   const [field, setField] = useState("all");
@@ -29,6 +31,28 @@ export function AuditPage() {
   const [loading, setLoading] = useState(false);
   const [chain, setChain] = useState<AuditVerify | null>(null);
   const [chainBusy, setChainBusy] = useState(false);
+
+  const searchFields = useMemo(
+    () =>
+      SEARCH_FIELD_VALUES.map((value) => ({
+        value,
+        label:
+          value === "all"
+            ? t("audit.searchAllColumns")
+            : value === "action"
+              ? "Action"
+              : value === "actor_id"
+                ? "Actor"
+                : value === "resource_type"
+                  ? "Resource type"
+                  : value === "resource_id"
+                    ? "Resource id"
+                    : value === "ip"
+                      ? "IP"
+                      : "User-Agent",
+      })),
+    [t],
+  );
 
   const load = useCallback(
     async (nextPage: number, nextQ: string, nextField: string, nextLimit: number) => {
@@ -46,12 +70,12 @@ export function AuditPage() {
         setPages(res.pages);
         setPage(res.page);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Ошибка");
+        setError(te(err, "audit.loadError"));
       } finally {
         setLoading(false);
       }
     },
-    [],
+    [te],
   );
 
   useEffect(() => {
@@ -83,7 +107,7 @@ export function AuditPage() {
     try {
       setChain(await api.verifyAudit());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка проверки цепочки");
+      setError(te(err, "audit.verifyError"));
     } finally {
       setChainBusy(false);
     }
@@ -96,7 +120,7 @@ export function AuditPage() {
       await api.sealAudit();
       setChain(await api.verifyAudit());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка подписи батча");
+      setError(te(err, "audit.sealError"));
     } finally {
       setChainBusy(false);
     }
@@ -106,15 +130,15 @@ export function AuditPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Аудит</h1>
-          <p className="muted">События входа и администрирования · hash-chain</p>
+          <h1>{t("audit.title")}</h1>
+          <p className="muted">{t("audit.lead")}</p>
         </div>
         <div className="row" style={{ gap: "0.5rem" }}>
           <button className="btn secondary" type="button" disabled={chainBusy} onClick={() => void onVerify()}>
-            Проверить цепочку
+            {t("audit.verifyChain")}
           </button>
           <button className="btn secondary" type="button" disabled={chainBusy} onClick={() => void onSeal()}>
-            Подписать хвост
+            {t("audit.sealTail")}
           </button>
         </div>
       </div>
@@ -122,15 +146,19 @@ export function AuditPage() {
       {chain && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <p style={{ margin: 0 }}>
-            Цепочка:{" "}
-            <span className={chain.ok ? "ok" : "error"}>{chain.ok ? "цела" : "нарушена"}</span>
+            {t("audit.chain")}{" "}
+            <span className={chain.ok ? "ok" : "error"}>{chain.ok ? t("audit.chainOk") : t("audit.chainBroken")}</span>
             {" · "}
-            {chain.events} событий · {chain.batches} батчей · хвост {chain.unsealed}
+            {t("audit.chainStats", {
+              events: chain.events,
+              batches: chain.batches,
+              unsealed: chain.unsealed,
+            })}
             {chain.breaks?.length ? (
               <>
                 <br />
                 <span className="error">
-                  Разрыв: {chain.breaks[0].reason} @ {chain.breaks[0].id}
+                  {t("audit.breakAt", { reason: chain.breaks[0].reason, id: chain.breaks[0].id })}
                 </span>
               </>
             ) : null}
@@ -147,23 +175,23 @@ export function AuditPage() {
         <select
           value={field}
           onChange={(e) => setField(e.target.value)}
-          aria-label="Поле поиска"
+          aria-label={t("audit.searchFieldLabel")}
           style={{ marginBottom: 0, width: 180 }}
         >
-          {SEARCH_FIELDS.map((f) => (
+          {searchFields.map((f) => (
             <option key={f.value} value={f.value}>
               {f.label}
             </option>
           ))}
         </select>
         <input
-          placeholder="Поиск…"
+          placeholder={t("audit.searchPlaceholder")}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           style={{ marginBottom: 0, flex: 1, minWidth: 180 }}
         />
         <button className="btn" type="submit" disabled={loading}>
-          Найти
+          {t("common.find")}
         </button>
       </form>
 
@@ -173,17 +201,17 @@ export function AuditPage() {
         <div className="pager">
           <span className="muted">
             {total === 0
-              ? "Нет записей"
-              : `Стр. ${page} из ${pages || 1} · всего ${total}`}
+              ? t("common.noRecords")
+              : t("common.pageOf", { page, pages: pages || 1, total })}
           </span>
           <div className="row">
             <label className="row" style={{ gap: "0.35rem" }}>
-              <span className="muted">Строк</span>
+              <span className="muted">{t("audit.rowsPerPage")}</span>
               <select
                 value={pageSize}
                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
                 disabled={loading}
-                aria-label="Количество строк на странице"
+                aria-label={t("audit.rowsPerPage")}
                 style={{ marginBottom: 0, width: 90 }}
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
@@ -199,7 +227,7 @@ export function AuditPage() {
               disabled={loading || page <= 1}
               onClick={() => goTo(1)}
             >
-              Первый
+              {t("audit.first")}
             </button>
             <button
               className="btn secondary"
@@ -207,7 +235,7 @@ export function AuditPage() {
               disabled={loading || page <= 1}
               onClick={() => goTo(page - 1)}
             >
-              Предыдущий
+              {t("audit.prev")}
             </button>
             <button
               className="btn secondary"
@@ -215,7 +243,7 @@ export function AuditPage() {
               disabled={loading || pages === 0 || page >= pages}
               onClick={() => goTo(page + 1)}
             >
-              Следующий
+              {t("audit.next")}
             </button>
             <button
               className="btn secondary"
@@ -223,7 +251,7 @@ export function AuditPage() {
               disabled={loading || pages === 0 || page >= pages}
               onClick={() => goTo(pages)}
             >
-              Последний
+              {t("audit.last")}
             </button>
           </div>
         </div>
@@ -231,10 +259,10 @@ export function AuditPage() {
         <table>
           <thead>
             <tr>
-              <th>Время</th>
+              <th>{t("audit.time")}</th>
               <th>Action</th>
               <th>Actor</th>
-              <th>Resource</th>
+              <th>{t("audit.resource")}</th>
               <th>IP</th>
             </tr>
           </thead>
@@ -253,7 +281,7 @@ export function AuditPage() {
             {!loading && events.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  Ничего не найдено
+                  {t("audit.nothingFound")}
                 </td>
               </tr>
             )}

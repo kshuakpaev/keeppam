@@ -1,0 +1,232 @@
+# KeepPAM: техническая спецификация продукта
+
+Документ описывает текущие функции и возможности KeepPAM как on-prem PAM-платформы (по фактическому состоянию кода и документации проекта).
+
+## 1) Назначение продукта
+
+KeepPAM — платформа управления привилегированным доступом (PAM), которая:
+- централизует доступ к критичным системам;
+- выдает доступ по политике и по времени (JIT), а не постоянные привилегии;
+- проксирует и записывает сессии;
+- хранит и ротирует секреты;
+- ведет проверяемый аудит и экспортирует события в внешние системы.
+
+## 2) Архитектура и компоненты
+
+- **Control Plane**: API, аутентификация, авторизация, политики, workflow согласований, администрирование.
+- **Session/Data Plane**: прокси сессий (SSH/RDP/VNC/SQL/K8s/Telnet/TN3270/Citrix SOCKS), session-worker, wire-шлюзы.
+- **Secret Plane**: vault-слой, хранение учетных данных, checkout/reveal/rotation/sync.
+- **Audit Plane**: аудит-события, hash-chain/батчи, forensic-поиск, SIEM-экспорт, отчеты.
+- **UI**: веб-портал администратора и оператора (KK/EN/RU).
+
+## 3) Аутентификация и идентификация
+
+### 3.1 Методы входа
+- Локальные учетные записи.
+- LDAP/AD.
+- OIDC.
+- SAML 2.0 (включая дополнительные IdP).
+- RADIUS (PAP).
+- X.509 client certificate login (cert -> user mapping).
+
+### 3.2 MFA и step-up
+- TOTP setup/verify.
+- WebAuthn (регистрация и вход).
+- Step-up MFA для чувствительных операций.
+
+### 3.3 SCIM 2.0 (inbound)
+- KeepPAM выступает SCIM service provider (`/scim/v2`).
+- Provisioning/deprovisioning пользователей и групп из Entra/Okta/других IdP.
+- Поддержка GET/POST/PUT/PATCH/DELETE для Users/Groups.
+- Offboarding через `active=false`/DELETE (disable, не hard-delete).
+
+## 4) Авторизация, политики и контроль доступа
+
+### 4.1 RBAC/ABAC
+- Ролевые права на API/операции.
+- ABAC-условия: теги, сеть (CIDR/IP), время, ticket/reason, контекст устройства/риска.
+- Deny-by-default модель.
+
+### 4.2 ACL и policy packs
+- ACL на активы и теги.
+- Command packs (SSH/JEA).
+- SQL packs (ограничение SQL-операций).
+- HTTP packs (контроль HTTP-методов/путей).
+- App Object packs (контроль объектов и операций прикладного API).
+
+### 4.3 JIT и workflow согласований
+- Запрос временного доступа (JIT request).
+- Sequential approval:
+  - менеджер;
+  - менеджер + ИБ.
+- Quorum approval: N из M (например 2/3, 3/5).
+- Запрет self-approval.
+- Отклонение/отмена заявки.
+
+### 4.4 Дополнительные режимы контроля
+- Four-eyes supervisor до старта сессии.
+- Break-glass доступ с обязательным аудитом и TTL.
+- Op-approval для чувствительных операций (approval hold/release).
+- ITSM gate (валидация тикетов для JIT-процесса).
+
+## 5) Активы, учетные записи и секреты
+
+### 5.1 Управление активами
+- CRUD активов (хосты/сервисы).
+- Поддержка протоколов и параметров подключения.
+- Группировка и доступ по тегам.
+- Проверка/сброс SSH host key (TOFU-модель).
+
+### 5.2 Учетные записи
+- CRUD учетных записей на активе.
+- Хранение секретов в vault-слое.
+- Ручная/плановая ротация.
+- HA-safe reconcile ротаций (pending/reconcile механика).
+
+### 5.3 Vault-операции
+- Checkout/checkin.
+- Force check-in.
+- Reveal по правам.
+- Dual-control (через workflow).
+
+### 5.4 Password Sync
+- Синхронизация секретов на целевые системы:
+  - SSH;
+  - AD/LDAP;
+  - PostgreSQL;
+  - MySQL;
+  - MSSQL.
+
+## 6) Сессии и поддерживаемые протоколы
+
+### 6.1 Интерактивный доступ
+- SSH gateway (`:2222`), web terminal и нативные клиенты.
+- RDP/VNC через HTML5 (Guacamole).
+- Native RDP (`.rdp` + per-session freerdp-proxy) при включенном режиме.
+- RDS RemoteApp (через параметры актива и `.rdp`/Guac).
+- SQL console и SQL wire-подключения.
+- Kubernetes API access + browse/list/get/apply/replace/delete, exec/attach/port-forward.
+- Telnet gateway (`:2323`) с записью.
+- TN3270 gateway (`:2324`) с wire-token моделью.
+- Citrix ICA через SOCKS5 (`:1081`) и `.ica` (MVP транспортного уровня).
+
+### 6.2 Session lifecycle и управление
+- Создание/старт/остановка сессий.
+- Live watch (в т.ч. для SSH).
+- Принудительное завершение.
+- Supervisor gating до connect.
+- Lease/token-механики для wire-протоколов.
+
+### 6.3 DLP-связанные ограничения в сессиях
+- Политики clipboard/drive/printer для RDP.
+- DLP-strict профиль по умолчанию.
+- Режимы захвата/аудита файловых переносов (зависит от политики канала).
+
+## 7) Запись, форензика и расследования
+
+### 7.1 Запись
+- SSH/Telnet: asciicast-поток.
+- RDP/VNC: `.guac` запись + replay/экспортные сценарии.
+- SQL/HTTP/App/K8s: событийная запись в аудит.
+- Citrix SOCKS: connect/audit события (без HDX screen decode в MVP).
+
+### 7.2 Поиск и расследование
+- Forensic UI по сессиям/событиям.
+- Индексация транскриптов.
+- Поиск по пользователю, активу, времени, типу события, текстовым фрагментам.
+- Просмотр артефактов и session files.
+
+## 8) Аудит, неизменяемость и compliance
+
+### 8.1 Аудит
+- Централизованный журнал `audit_events`.
+- Verify/seal/list audit batches.
+- Hash-chain/HMAC-цепочки для контроля целостности.
+
+### 8.2 Экспорт в SIEM
+- Асинхронный экспорт батчами с курсором доставки.
+- Транспорты:
+  - syslog UDP/TCP;
+  - HTTPS webhook;
+  - Kafka;
+  - NATS;
+  - OpenSearch `_bulk`.
+- Форматы: JSON/CEF/ECS (в зависимости от транспорта/настройки).
+
+### 8.3 Compliance-отчетность
+- Формирование отчетов по доступам и сессиям.
+- Поддержка подписания PDF (PAdES/eIDAS-связанные настройки в конфиге).
+
+## 9) Интеграции и внешние сервисы
+
+- IdP: LDAP/AD, OIDC, SAML, RADIUS.
+- SCIM inbound provisioning.
+- SIEM и observability системы.
+- ITSM для тикет-гейта JIT.
+- Archive backend: SMB/NFS для архивов записей.
+- OpenSearch/NATS/Kafka/webhook для аудита.
+- KMS/HSM-сценарии и envelope encryption (по настройкам окружения и deployment-профилю).
+
+## 10) Администрирование и конфигурация
+
+Через UI/API доступны разделы конфигурации:
+- лицензия KeepPAM;
+- инфраструктурные параметры и версия;
+- архив записей (SMB/NFS);
+- авторизация и IdP;
+- OIDC/SAML/LDAP/RADIUS/SCIM;
+- SSH auth к целям;
+- firewall PAM;
+- NAC client;
+- eIDAS/PAdES;
+- UEBA/UEBA-ML параметры;
+- ITSM gate;
+- уведомления (JIT webhook/email);
+- SIEM экспорт аудита.
+
+## 11) Аналитика, мониторинг и надежность
+
+- Health endpoints: `/livez`, `/readyz`.
+- Metrics endpoint: `/metrics`.
+- SLO/аналитические endpoints и UI-виджеты.
+- HA-топологии:
+  - 2+2 (2 control + 2 worker);
+  - 3+2 (3 control + 2 worker).
+- Draining/graceful stop для API/worker.
+- DR/backup drill сценарии и runbook-подход.
+
+## 12) Лицензирование продукта
+
+Поддерживаются два формата лицензий:
+- JSON entitlement;
+- ex2 `.lic` (шифрование/подпись).
+
+Функции лицензирования:
+- fingerprint хоста;
+- загрузка через UI/API;
+- soft/hard лимит активов;
+- поведение при отсутствии/истечении лицензии (ограничение числа активов и видимости).
+
+## 13) Локализация и интерфейс
+
+- Языки UI: казахский, английский, русский.
+- Приоритет выбора языка: cookie/localStorage/browser.
+- Дефолтный язык: казахский.
+- Брендинг KeepPAM в UI и дистрибутиве.
+
+## 14) Дистрибутив и поставка
+
+- Offline-дистрибутив `tar.gz` со всеми нужными образами/скриптами.
+- Скрипты install/upgrade/rollback для развёртывания без внешнего registry.
+- Compose/Helm варианты.
+- Версионирование semver и история версий.
+
+## 15) Ограничения текущего среза (важно для техспеки)
+
+- Citrix в базовом срезе: SOCKS/`.ica` транспорт (без полноценного HDX terminate/STA recording уровня OEM).
+- TN3270: без полноценного HTML5-эмулятора в текущем UI-срезе.
+- Часть enterprise-функций доступна как отдельный SOW/OEM модуль (geo-HA async, расширенные Citrix HDX-сценарии, ряд узкоспециализированных интеграций).
+
+---
+
+Эта техспецификация описывает продуктовые возможности KeepPAM в текущей реализации репозитория и может использоваться как базовый документ для пресейла, внедрения и внутренней архитектурной коммуникации.

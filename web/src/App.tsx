@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
-import { api, hasPerm, type AccessRequest, type InboxNotification } from "./api";
+import { api, hasPerm, type AccessRequest, type InboxNotification, type LicenseStatus } from "./api";
 import { useAuth } from "./auth";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { SessionKeepAliveHost } from "./components/SessionKeepAliveHost";
 import { SessionTabBar } from "./components/SessionTabBar";
 import { LangSwitch, notifyTitle, useI18n } from "./i18n";
+import brandMark from "./assets/keeppam-mark.png";
+import { licenseStatusText } from "./licenseStatus";
 
 const SEEN_DECISIONS_KEY = "kp_seen_access_decisions";
 
@@ -40,8 +42,7 @@ export function AppLayout() {
   const [inbox, setInbox] = useState<InboxNotification[]>([]);
   const [inboxUnread, setInboxUnread] = useState(0);
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [licenseMsg, setLicenseMsg] = useState("");
-  const [licenseHard, setLicenseHard] = useState(false);
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
   const prevPending = useRef(0);
   const prevOps = useRef(0);
   const prevSupervise = useRef(0);
@@ -55,11 +56,9 @@ export function AppLayout() {
       .then((lic) => {
         if (cancelled) return;
         if (lic.hard_blocked || lic.soft_warn) {
-          setLicenseMsg(lic.message || `${lic.asset_count}/${lic.max_assets}`);
-          setLicenseHard(!!lic.hard_blocked);
+          setLicense(lic);
         } else {
-          setLicenseMsg("");
-          setLicenseHard(false);
+          setLicense(null);
         }
       })
       .catch(() => {});
@@ -204,7 +203,10 @@ export function AppLayout() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand">KeepPAM</div>
+          <div className="brand">
+            <img className="brand-mark" src={brandMark} alt="" width={28} height={28} />
+            <span>KeepPAM</span>
+          </div>
           <div className="row" style={{ gap: "0.35rem", alignItems: "center" }}>
             <LangSwitch compact />
             <button
@@ -302,19 +304,19 @@ export function AppLayout() {
       </aside>
       <main className="main">
         <SessionTabBar />
-        {licenseMsg && (
+        {license && (
           <div
-            className={licenseHard ? "error" : "ok"}
+            className={license.hard_blocked ? "error" : "ok"}
             role="status"
             style={{
               margin: "0.75rem 1rem 0",
               padding: "0.6rem 0.85rem",
               borderRadius: 6,
-              background: licenseHard ? "rgba(180,40,40,0.12)" : "rgba(180,140,40,0.12)",
+              background: license.hard_blocked ? "rgba(180,40,40,0.12)" : "rgba(180,140,40,0.12)",
             }}
           >
-            Лицензия: {licenseMsg}
-            {licenseHard ? " (создание активов запрещено)" : ""}
+            {t("license.prefix")} {licenseStatusText(license, t)}
+            {license.hard_blocked ? ` ${t("license.createForbidden")}` : ""}
           </div>
         )}
         <div className="main-body">

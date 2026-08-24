@@ -17,15 +17,15 @@ import (
 
 // Ex2Payload matches the encrypted license blob from ../ex2 license-generator.
 type Ex2Payload struct {
-	HardwareFingerprint string `json:"hardware_fingerprint"`
-	Days                uint32 `json:"days"`
+	HardwareFingerprint string    `json:"hardware_fingerprint"`
+	Days                uint32    `json:"days"`
 	IssuedAt            time.Time `json:"issued_at"`
-	IssuedBy            string `json:"issued_by"`
-	Signature           string `json:"signature"`
-	MaxAssets           *int   `json:"max_assets,omitempty"`
-	SoftWarnPct         *int   `json:"soft_warn_pct,omitempty"`
-	HA                  *bool  `json:"ha,omitempty"`
-	Customer            string `json:"customer,omitempty"`
+	IssuedBy            string    `json:"issued_by"`
+	Signature           string    `json:"signature"`
+	MaxAssets           *int      `json:"max_assets,omitempty"`
+	SoftWarnPct         *int      `json:"soft_warn_pct,omitempty"`
+	HA                  *bool     `json:"ha,omitempty"`
+	Customer            string    `json:"customer,omitempty"`
 }
 
 // DecryptEx2 decrypts nonce+ciphertext AES-256-GCM blob from ex2 generator.
@@ -54,6 +54,20 @@ func DecryptEx2(key string, blob []byte) (Ex2Payload, error) {
 	return p, nil
 }
 
+// ex2IssuedAtString matches chrono DateTime::to_rfc3339() used by the Rust generator for signing.
+// chrono uses +00:00 (not Z) and prints fractional seconds without trailing zeros when nanos != 0.
+// The generator UI sends Date.toISOString() (with milliseconds), so signatures include ".sss".
+func ex2IssuedAtString(t time.Time) string {
+	t = t.UTC()
+	nsec := t.Nanosecond()
+	if nsec == 0 {
+		return t.Format("2006-01-02T15:04:05+00:00")
+	}
+	frac := fmt.Sprintf("%09d", nsec)
+	frac = strings.TrimRight(frac, "0")
+	return t.Format("2006-01-02T15:04:05") + "." + frac + "+00:00"
+}
+
 func normalizeKey32(key string) []byte {
 	b := []byte(key)
 	if len(b) >= 32 {
@@ -73,9 +87,30 @@ func VerifyEx2Signature(key string, p Ex2Payload) bool {
 	binary.LittleEndian.PutUint32(days[:], p.Days)
 	h.Write(days[:])
 	h.Write([]byte(p.IssuedBy))
-	h.Write([]byte(p.IssuedAt.UTC().Format(time.RFC3339)))
+	h.Write([]byte(ex2IssuedAtString(p.IssuedAt)))
 	got := base64.StdEncoding.EncodeToString(h.Sum(nil))
 	return got == p.Signature
+}
+
+// NormalizeEx2Blob accepts binary ex2 nonce+ciphertext, base64 text, or API JSON wrapper.
+func NormalizeEx2Blob(b []byte) []byte {
+	trim := strings.TrimSpace(string(b))
+	if strings.HasPrefix(trim, "{") {
+		var wrap struct {
+			LicenseFile string `json:"license_file"`
+		}
+		if err := json.Unmarshal(b, &wrap); err == nil {
+			if inner := strings.TrimSpace(wrap.LicenseFile); inner != "" {
+				if dec, err := base64.StdEncoding.DecodeString(inner); err == nil && len(dec) > 12 {
+					return dec
+				}
+			}
+		}
+	}
+	if dec, err := base64.StdEncoding.DecodeString(trim); err == nil && len(dec) > 12 {
+		return dec
+	}
+	return b
 }
 
 // HardwareFingerprint returns a stable host id (compatible with ex2/core).
@@ -258,10 +293,7 @@ func LoadAny(path, encKey string, skipHW bool) (File, error) {
 		normalizeFile(&f)
 		return f, nil
 	}
-	raw := b
-	if dec, err := base64.StdEncoding.DecodeString(trim); err == nil && len(dec) > 12 {
-		raw = dec
-	}
+	raw := NormalizeEx2Blob(b)
 	f, _, err := ParseEx2Blob(encKey, raw, skipHW)
 	if err != nil {
 		return File{}, err

@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type AnalyticsOverview, type AnalyticsSLO } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 const WINDOWS = [24, 72, 168] as const;
 const SEVS = ["", "high", "medium", "low"] as const;
 
 export function AnalyticsPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const canRead = hasPerm(user, "audit.read");
   const [hours, setHours] = useState<(typeof WINDOWS)[number]>(24);
   const [severity, setSeverity] = useState<(typeof SEVS)[number]>("");
@@ -27,7 +29,7 @@ export function AnalyticsPage() {
       setData(res);
       setSlo(sloRes);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "analytics.loadError"));
     } finally {
       setLoading(false);
     }
@@ -39,7 +41,7 @@ export function AnalyticsPage() {
   }, [canRead, hours, severity]);
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   const stats = data?.stats;
@@ -52,8 +54,8 @@ export function AnalyticsPage() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Аналитика</h1>
-          <p className="muted">SLO, аномалии, UEBA (активы + keystroke timing), SIEM-корреляция и цепочки сигналов</p>
+          <h1>{t("nav.analytics")}</h1>
+          <p className="muted">{t("analytics.lead")}</p>
         </div>
         <div className="row gap">
           {WINDOWS.map((h) => (
@@ -64,7 +66,7 @@ export function AnalyticsPage() {
               onClick={() => setHours(h)}
               disabled={loading}
             >
-              {h === 168 ? "7д" : `${h}ч`}
+              {h === 168 ? t("analytics.window7d") : t("analytics.windowHours", { h })}
             </button>
           ))}
           <select
@@ -72,19 +74,19 @@ export function AnalyticsPage() {
             onChange={(e) => setSeverity(e.target.value as (typeof SEVS)[number])}
             style={{ marginBottom: 0, width: "auto" }}
           >
-            <option value="">Все severity</option>
+            <option value="">{t("analytics.allSeverity")}</option>
             <option value="high">high</option>
             <option value="medium">medium</option>
             <option value="low">low</option>
           </select>
           <button type="button" className="btn secondary" onClick={() => void load(hours, severity)} disabled={loading}>
-            Обновить
+            {t("common.refresh")}
           </button>
         </div>
       </div>
 
       {error && <p className="error">{error}</p>}
-      {loading && !data && <p className="muted">Загрузка…</p>}
+      {loading && !data && <p className="muted">{t("common.loading")}</p>}
 
       {data && stats && (
         <>
@@ -95,25 +97,32 @@ export function AnalyticsPage() {
                 <span className={`badge sev-${slo.breached ? "high" : "low"}`}>
                   {slo.breached ? "breached" : "ok"}
                 </span>{" "}
-                цели: auth p95 &lt; {fmtSec(slo.targets.auth_p95_seconds)} · session setup p95 &lt;{" "}
-                {fmtSec(slo.targets.session_setup_p95_seconds)} · audit lag &lt; {slo.targets.audit_lag_seconds}s
+                {t("analytics.sloTargets", {
+                  authP95: fmtSec(slo.targets.auth_p95_seconds),
+                  sessionP95: fmtSec(slo.targets.session_setup_p95_seconds),
+                  auditLag: slo.targets.audit_lag_seconds,
+                })}
               </p>
               <div className="stats-grid" style={{ marginTop: "0.75rem" }}>
                 <Stat
-                  label={`Auth p95 (${slo.auth_samples})`}
+                  label={t("analytics.statAuthP95", { samples: slo.auth_samples })}
                   value={slo.auth_p95_seconds == null ? "—" : fmtSec(slo.auth_p95_seconds)}
                   warn={!!slo.auth_burn && slo.auth_burn > 1}
                 />
                 <Stat
-                  label={`Session setup p95 (${slo.session_setup_samples})`}
+                  label={t("analytics.statSessionP95", { samples: slo.session_setup_samples })}
                   value={
                     slo.session_setup_p95_seconds == null ? "—" : fmtSec(slo.session_setup_p95_seconds)
                   }
                   warn={!!slo.session_setup_burn && slo.session_setup_burn > 1}
                 />
-                <Stat label="Активные сессии" value={slo.active_sessions} />
+                <Stat label={t("analytics.statActiveSessions")} value={slo.active_sessions} />
                 <Stat
-                  label={slo.siem_enabled ? `Audit lag (pending ${slo.audit_pending})` : "Audit lag (SIEM off)"}
+                  label={
+                    slo.siem_enabled
+                      ? t("analytics.statAuditLagPending", { pending: slo.audit_pending })
+                      : t("analytics.statAuditLagOff")
+                  }
                   value={
                     slo.audit_export_lag_seconds == null ? "—" : `${slo.audit_export_lag_seconds}s`
                   }
@@ -153,35 +162,36 @@ export function AnalyticsPage() {
                 {data.siem.enabled ? data.siem.transport : "off"} · {data.siem.detail}
               </p>
               <p className="muted">
-                pending={data.siem.pending_events}
-                {data.siem.lag_seconds != null && <> · lag={data.siem.lag_seconds}s</>}
-                {data.siem.last_export_at && <> · last export {new Date(data.siem.last_export_at).toLocaleString()}</>}
-                {data.siem.last_error && <> · error: {data.siem.last_error}</>}
+                {t("analytics.siemPending", { pending: data.siem.pending_events })}
+                {data.siem.lag_seconds != null && t("analytics.siemLag", { lag: data.siem.lag_seconds })}
+                {data.siem.last_export_at &&
+                  t("analytics.siemLastExport", { at: new Date(data.siem.last_export_at).toLocaleString() })}
+                {data.siem.last_error && t("analytics.siemError", { error: data.siem.last_error })}
                 {" · "}
-                <Link to="/config">настройки</Link>
+                <Link to="/config">{t("analytics.settingsLink")}</Link>
               </p>
             </section>
           )}
 
           <div className="stats-grid">
-            <Stat label="Входы OK" value={stats.logins_ok} />
-            <Stat label="Входы fail" value={stats.logins_fail} warn={stats.logins_fail > 0} />
-            <Stat label="Сессии стартовали" value={stats.sessions_started} />
-            <Stat label="Активные сейчас" value={stats.sessions_active} />
-            <Stat label="Отказы политики" value={stats.sessions_denied} warn={stats.sessions_denied > 0} />
-            <Stat label="JIT-запросы" value={stats.jit_requests} />
-            <Stat label="Ротации секретов" value={stats.secret_rotations} />
-            <Stat label="Ночные сессии" value={stats.off_hours_sessions} warn={stats.off_hours_sessions > 0} />
-            <Stat label="Долгие >4ч" value={stats.long_sessions} warn={stats.long_sessions > 0} />
-            <Stat label="Force-kill" value={stats.force_kills} warn={stats.force_kills > 0} />
-            <Stat label="App access" value={stats.app_access} />
-            <Stat label="SQL statements" value={stats.sql_statements} />
+            <Stat label={t("analytics.statLoginsOk")} value={stats.logins_ok} />
+            <Stat label={t("analytics.statLoginsFail")} value={stats.logins_fail} warn={stats.logins_fail > 0} />
+            <Stat label={t("analytics.statSessionsStarted")} value={stats.sessions_started} />
+            <Stat label={t("analytics.statSessionsActive")} value={stats.sessions_active} />
+            <Stat label={t("analytics.statSessionsDenied")} value={stats.sessions_denied} warn={stats.sessions_denied > 0} />
+            <Stat label={t("analytics.statJitRequests")} value={stats.jit_requests} />
+            <Stat label={t("analytics.statSecretRotations")} value={stats.secret_rotations} />
+            <Stat label={t("analytics.statOffHours")} value={stats.off_hours_sessions} warn={stats.off_hours_sessions > 0} />
+            <Stat label={t("analytics.statLongSessions")} value={stats.long_sessions} warn={stats.long_sessions > 0} />
+            <Stat label={t("analytics.statForceKills")} value={stats.force_kills} warn={stats.force_kills > 0} />
+            <Stat label={t("analytics.statAppAccess")} value={stats.app_access} />
+            <Stat label={t("analytics.statSqlStatements")} value={stats.sql_statements} />
           </div>
 
           <section className="card" style={{ marginTop: "1.25rem" }}>
-            <h2>Аномалии</h2>
+            <h2>{t("analytics.anomalies")}</h2>
             {data.anomalies.length === 0 ? (
-              <p className="muted">За окно {data.window_hours} ч сигналов нет</p>
+              <p className="muted">{t("analytics.noAnomalies", { hours: data.window_hours })}</p>
             ) : (
               <ul className="anomaly-list">
                 {data.anomalies.map((a) => (
@@ -193,7 +203,7 @@ export function AnalyticsPage() {
                     </div>
                     <p className="muted">
                       {a.detail}
-                      {a.actor && <> · actor={a.actor}</>}
+                      {a.actor && t("analytics.actorLabel", { actor: a.actor })}
                     </p>
                   </li>
                 ))}
@@ -202,13 +212,10 @@ export function AnalyticsPage() {
           </section>
 
           <section className="card" style={{ marginTop: "1.25rem" }}>
-            <h2>UEBA — обычный набор активов</h2>
-            <p className="muted">
-              Baseline: ≥3 разных актива за 30 дней до окна. Сигнал, если за окно появился хост вне этого набора
-              (или за сутки целей ≥2× от обычного набора).
-            </p>
+            <h2>{t("analytics.uebaTitle")}</h2>
+            <p className="muted">{t("analytics.uebaHint")}</p>
             {(data.ueba || []).length === 0 ? (
-              <p className="muted">За окно {data.window_hours} ч выходов за обычный набор нет</p>
+              <p className="muted">{t("analytics.noUeba", { hours: data.window_hours })}</p>
             ) : (
               <ul className="plain-list">
                 {(data.ueba || []).map((u) => (
@@ -218,7 +225,11 @@ export function AnalyticsPage() {
                       {u.spread ? <span className="badge sev-high">spread</span> : <span className="badge sev-medium">new</span>}
                       <span className="muted">
                         {" "}
-                        обычных {u.baseline} · за окно {u.recent_distinct} · новых {u.new_assets}
+                        {t("analytics.uebaBaseline", {
+                          baseline: u.baseline,
+                          recent: u.recent_distinct,
+                          new: u.new_assets,
+                        })}
                         {u.new_names && u.new_names.length > 0 ? ` (${u.new_names.join(", ")})` : ""}
                       </span>
                     </span>
@@ -230,9 +241,9 @@ export function AnalyticsPage() {
           </section>
 
           <section className="card" style={{ marginTop: "1.25rem" }}>
-            <h2>Корреляционные цепочки</h2>
+            <h2>{t("analytics.chainsTitle")}</h2>
             {data.chains.length === 0 ? (
-              <p className="muted">Связанных цепочек не обнаружено</p>
+              <p className="muted">{t("analytics.noChains")}</p>
             ) : (
               <ul className="anomaly-list">
                 {data.chains.map((c) => (
@@ -253,9 +264,9 @@ export function AnalyticsPage() {
 
           <div className="two-col" style={{ marginTop: "1.25rem" }}>
             <section className="card">
-              <h2>Входы по часам</h2>
+              <h2>{t("analytics.loginsByHour")}</h2>
               {data.series.logins_by_hour.length === 0 ? (
-                <p className="muted">Нет данных</p>
+                <p className="muted">{t("analytics.noData")}</p>
               ) : (
                 <div className="spark-rows">
                   {data.series.logins_by_hour.map((b) => (
@@ -285,9 +296,9 @@ export function AnalyticsPage() {
             </section>
 
             <section className="card">
-              <h2>Топ audit actions</h2>
+              <h2>{t("analytics.topAuditActions")}</h2>
               {(data.series.actions_by_type || []).length === 0 ? (
-                <p className="muted">Нет данных</p>
+                <p className="muted">{t("analytics.noData")}</p>
               ) : (
                 <ul className="plain-list">
                   {data.series.actions_by_type.map((p) => (
@@ -303,9 +314,9 @@ export function AnalyticsPage() {
 
           <div className="two-col" style={{ marginTop: "1.25rem" }}>
             <section className="card">
-              <h2>Сессии по протоколам</h2>
+              <h2>{t("analytics.sessionsByProtocol")}</h2>
               {data.series.sessions_by_protocol.length === 0 ? (
-                <p className="muted">Нет данных</p>
+                <p className="muted">{t("analytics.noData")}</p>
               ) : (
                 <ul className="plain-list">
                   {data.series.sessions_by_protocol.map((p) => (
@@ -318,7 +329,7 @@ export function AnalyticsPage() {
               )}
             </section>
             <section className="card">
-              <h2>Топ пользователей / активов</h2>
+              <h2>{t("analytics.topUsersAssets")}</h2>
               <div className="two-col">
                 <ul className="plain-list">
                   {data.top_actors.map((a) => (
@@ -341,8 +352,11 @@ export function AnalyticsPage() {
           </div>
 
           <p className="muted" style={{ marginTop: "1rem" }}>
-            Сгенерировано {new Date(data.generated_at).toLocaleString()} ·{" "}
-            <Link to="/audit">аудит</Link> · <Link to="/compliance">compliance</Link>
+            {t("analytics.generatedAt", { at: new Date(data.generated_at).toLocaleString() })}
+            {" · "}
+            <Link to="/audit">{t("nav.audit")}</Link>
+            {" · "}
+            <Link to="/compliance">{t("nav.compliance")}</Link>
           </p>
         </>
       )}

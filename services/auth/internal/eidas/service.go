@@ -110,7 +110,7 @@ func (s *Service) load(ctx context.Context) (Settings, error) {
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(mode,'off'), COALESCE(profile,'eidas'), COALESCE(require_b_lta,TRUE),
 			COALESCE(pkcs11_enabled,FALSE), COALESCE(pkcs11_module,''), COALESCE(pkcs11_label,''),
-			(octet_length(pkcs11_pin_enc) > 0), last_check_at, COALESCE(last_error,''),
+			(COALESCE(octet_length(pkcs11_pin_enc), 0) > 0), last_check_at, COALESCE(last_error,''),
 			COALESCE(cert_cn,''), COALESCE(cert_qualified,FALSE), updated_at
 		FROM eidas_settings WHERE id=1`).Scan(
 		&out.Mode, &out.Profile, &out.RequireBLTA, &out.PKCS11Enabled,

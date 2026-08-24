@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import brandMark from "../assets/keeppam-mark.png";
 import { LangSwitch, useI18n } from "../i18n";
 import { webauthnRegister, webauthnSupported } from "../webauthn";
 
@@ -97,7 +98,10 @@ export function SetupPage() {
     <div className="auth-page">
       <div className="card auth-card">
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div className="brand">KeepPAM</div>
+          <div className="brand">
+            <img className="brand-mark" src={brandMark} alt="" width={28} height={28} />
+            <span>KeepPAM</span>
+          </div>
           <LangSwitch />
         </div>
         <h1>{t("setup.title")}</h1>

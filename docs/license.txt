@@ -36,10 +36,10 @@ Dev без привязки к железу: fingerprint `*` + `KEEPPAM_LICENSE_
 
 | Условие | Поведение |
 |---------|-----------|
-| нет файла | default `max_assets=100`, `ha=true` |
+| нет файла / default | **5** активов (создание + видимость); HA=true |
 | count ≥ soft_warn_at | UI banner |
-| count ≥ max_assets или expires | create asset → 403 |
-| ex2 expires (issued_at + days) | hard block |
+| count ≥ max_assets | create asset → 403 |
+| expires (JSON `expires` или ex2 `issued_at + days`) | как без лицензии: лимит **5**, в списках только первые 5 (по имени); connect/get скрытых → 403 |
 
 ## API
 

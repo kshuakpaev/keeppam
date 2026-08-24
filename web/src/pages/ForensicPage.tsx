@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type TimelineEvent, type User } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 const PAGE_SIZE = 50;
 
@@ -30,6 +31,7 @@ function sessionHref(e: TimelineEvent) {
 
 export function ForensicPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const canRead = hasPerm(user, "sessions.read");
   const canPickUser = hasPerm(user, "audit.read") || hasPerm(user, "users.write") || hasPerm(user, "users.read");
   const initialFrom = toLocalInput(new Date(Date.now() - 24 * 3600 * 1000));
@@ -92,11 +94,11 @@ export function ForensicPage() {
       setActor(res.username || "");
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err, "common.error"));
     } finally {
       setBusy(false);
     }
-  }, [canRead, applied, offset]);
+  }, [canRead, applied, offset, te]);
 
   useEffect(() => {
     if (!canRead || !applied.userId) return;
@@ -123,12 +125,12 @@ export function ForensicPage() {
         limit: 200,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка CSV");
+      setError(te(err, "forensic.csvError"));
     }
   }
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав (sessions.read)</p>;
+    return <p className="error">{t("forensic.forbiddenDetail")}</p>;
   }
 
   const page = Math.floor(offset / PAGE_SIZE) + 1;
@@ -138,11 +140,8 @@ export function ForensicPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Расследование</h1>
-          <p className="muted">
-            Лента действий пользователя: аудит (вход, ACL, JIT) и события сессий (SQL, k8s, команды SSH, JEA, DLP).
-            RDP/видео не индексируются.
-          </p>
+          <h1>{t("nav.forensic")}</h1>
+          <p className="muted">{t("forensic.lead")}</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => void onCsv()} disabled={busy || total === 0}>
           CSV
@@ -155,7 +154,7 @@ export function ForensicPage() {
         onSubmit={onSearch}
       >
         <label>
-          Пользователь
+          {t("common.user")}
           {canPickUser && users.length > 0 ? (
             <select value={userId} onChange={(e) => setUserId(e.target.value)}>
               {users.map((u) => (
@@ -169,35 +168,35 @@ export function ForensicPage() {
           )}
         </label>
         <label>
-          С
+          {t("forensic.from")}
           <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
         <label>
-          По
+          {t("forensic.to")}
           <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
         <label>
-          Источник
+          {t("forensic.source")}
           <select value={source} onChange={(e) => setSource(e.target.value)}>
-            <option value="all">все</option>
-            <option value="audit">аудит</option>
-            <option value="session">сессии</option>
+            <option value="all">{t("common.all")}</option>
+            <option value="audit">{t("forensic.sourceAudit")}</option>
+            <option value="session">{t("forensic.sourceSession")}</option>
           </select>
         </label>
         <label>
-          Поиск
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="sql, login, denied…" />
+          {t("common.search")}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("forensic.searchPlaceholder")} />
         </label>
         <label>
-          Имя файла
+          {t("sess.filename")}
           <input value={filename} onChange={(e) => setFilename(e.target.value)} placeholder="secret.bin" />
         </label>
         <label>
-          Процесс
+          {t("sess.process")}
           <input value={process} onChange={(e) => setProcess(e.target.value)} placeholder="notepad.exe" />
         </label>
         <button className="btn" type="submit" disabled={busy}>
-          Показать
+          {t("forensic.show")}
         </button>
       </form>
 
@@ -208,19 +207,19 @@ export function ForensicPage() {
           {actor ? (
             <>
               <span className="mono">{actor}</span>
-              {total ? ` · ${total} событий` : " · нет событий"}
+              {total ? t("forensic.eventsCount", { count: total }) : t("forensic.noEventsShort")}
             </>
           ) : (
-            "Задайте окно и пользователя"
+            t("forensic.setWindowAndUser")
           )}
         </p>
         <table>
           <thead>
             <tr>
-              <th>Время</th>
-              <th>Источник</th>
-              <th>Событие</th>
-              <th>Актив</th>
+              <th>{t("sess.time")}</th>
+              <th>{t("forensic.source")}</th>
+              <th>{t("forensic.event")}</th>
+              <th>{t("common.asset")}</th>
               <th />
             </tr>
           </thead>
@@ -241,7 +240,7 @@ export function ForensicPage() {
                     {(e.labels || []).length > 0 || e.risk_score ? (
                       <div className="muted" style={{ fontSize: "0.8rem" }}>
                         {(e.labels || []).length ? (e.labels || []).join(", ") : ""}
-                        {e.risk_score ? ` · risk ${e.risk_score}` : ""}
+                        {e.risk_score ? t("forensic.riskScore", { score: e.risk_score }) : ""}
                         {e.ip ? ` · ${e.ip}` : ""}
                       </div>
                     ) : e.ip ? (
@@ -263,7 +262,7 @@ export function ForensicPage() {
                   <td>
                     {href ? (
                       <Link className="btn secondary" to={href}>
-                        Сессия
+                        {t("forensic.session")}
                       </Link>
                     ) : null}
                   </td>
@@ -273,7 +272,7 @@ export function ForensicPage() {
             {events.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  Нет событий за выбранное окно
+                  {t("forensic.noEventsInWindow")}
                 </td>
               </tr>
             )}
@@ -281,7 +280,7 @@ export function ForensicPage() {
         </table>
         <div className="row" style={{ marginTop: "0.75rem", justifyContent: "space-between" }}>
           <span className="muted">
-            {total === 0 ? "Нет записей" : `Стр. ${page} из ${pages} · всего ${total}`}
+            {total === 0 ? t("common.noRecords") : t("common.pageOf", { page, pages, total })}
           </span>
           <div className="row">
             <button

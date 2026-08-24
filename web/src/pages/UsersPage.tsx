@@ -2,9 +2,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type Role, type User } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 export function UsersPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [error, setError] = useState("");
@@ -26,7 +28,7 @@ export function UsersPage() {
       setUsers(u.users || []);
       setRoles(r.roles || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "users.loadError"));
     }
   }
 
@@ -45,7 +47,7 @@ export function UsersPage() {
       setForm({ username: "", email: "", display_name: "", roles: ["operator"] });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка создания");
+      setError(te(err, "users.createError"));
     }
   }
 
@@ -53,25 +55,25 @@ export function UsersPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Пользователи</h1>
-          <p className="muted">Учётные записи, роли и группы PAM</p>
+          <h1>{t("users.title")}</h1>
+          <p className="muted">{t("users.lead")}</p>
         </div>
         {canWrite && (
           <button className="btn" type="button" onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? "Отмена" : "Создать"}
+            {showCreate ? t("common.cancel") : t("common.create")}
           </button>
         )}
       </div>
       {error && <p className="error">{error}</p>}
       {tempPwd && (
         <p className="ok">
-          Временный пароль: <span className="mono">{tempPwd}</span>
+          {t("users.tempPassword")} <span className="mono">{tempPwd}</span>
         </p>
       )}
       {showCreate && (
         <form className="card" onSubmit={onCreate} style={{ marginBottom: "1rem" }}>
-          <h2>Новый пользователь</h2>
-          <label>Логин</label>
+          <h2>{t("users.new")}</h2>
+          <label>{t("login.username")}</label>
           <input
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
@@ -84,12 +86,12 @@ export function UsersPage() {
             onChange={(e) => setForm({ ...form, email: e.target.value })}
             required
           />
-          <label>Имя</label>
+          <label>{t("common.name")}</label>
           <input
             value={form.display_name}
             onChange={(e) => setForm({ ...form, display_name: e.target.value })}
           />
-          <label>Роль</label>
+          <label>{t("users.role")}</label>
           <select
             value={form.roles[0]}
             onChange={(e) => setForm({ ...form, roles: [e.target.value] })}
@@ -101,7 +103,7 @@ export function UsersPage() {
             ))}
           </select>
           <button className="btn" type="submit">
-            Создать
+            {t("common.create")}
           </button>
         </form>
       )}
@@ -109,12 +111,12 @@ export function UsersPage() {
         <table>
           <thead>
             <tr>
-              <th>Логин</th>
+              <th>{t("login.username")}</th>
               <th>Email</th>
-              <th>Статус</th>
+              <th>{t("common.status")}</th>
               <th>MFA</th>
-              <th>Роли</th>
-              <th>Группы</th>
+              <th>{t("users.roles")}</th>
+              <th>{t("nav.groups")}</th>
               <th />
             </tr>
           </thead>
@@ -128,13 +130,13 @@ export function UsersPage() {
                 <td>
                   <span className={`badge ${u.status}`}>{u.status}</span>
                 </td>
-                <td>{u.mfa_enabled ? "да" : "нет"}</td>
+                <td>{u.mfa_enabled ? t("common.yes") : t("common.no")}</td>
                 <td className="mono">{(u.roles || []).join(", ")}</td>
                 <td className="mono">{(u.groups || []).join(", ") || "—"}</td>
                 <td>
                   {canRead && (
                     <Link className="btn secondary" to={`/users/${u.id}`}>
-                      Открыть
+                      {t("common.open")}
                     </Link>
                   )}
                 </td>

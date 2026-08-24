@@ -119,6 +119,7 @@ func (s *Server) handleUploadLicense(w http.ResponseWriter, r *http.Request) {
 		raw = b
 	}
 
+	raw = license.NormalizeEx2Blob(raw)
 	f, _, err := license.ParseEx2Blob(s.cfg.LicenseEncryptionKey, raw, s.cfg.LicenseSkipHW)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

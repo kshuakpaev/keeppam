@@ -29,6 +29,9 @@ export function AssetsPage() {
   const { t, te } = useI18n();
   const { openTab } = useSessionTabs();
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [hiddenAssets, setHiddenAssets] = useState(0);
+  const [licenseRestricted, setLicenseRestricted] = useState(false);
+  const [licenseRestrictReason, setLicenseRestrictReason] = useState<"expired" | "unlicensed" | "">("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -68,6 +71,17 @@ export function AssetsPage() {
     try {
       const res = await api.listAssets();
       setAssets(res.assets || []);
+      setHiddenAssets(res.hidden || 0);
+      if (res.license_expired) {
+        setLicenseRestricted(true);
+        setLicenseRestrictReason("expired");
+      } else if (res.license_unlicensed) {
+        setLicenseRestricted(true);
+        setLicenseRestrictReason("unlicensed");
+      } else {
+        setLicenseRestricted(false);
+        setLicenseRestrictReason("");
+      }
     } catch (err) {
       setError(te(err, "assets.loadError"));
     }
@@ -159,6 +173,25 @@ export function AssetsPage() {
       </div>
       {error && <p className="error">{error}</p>}
       {msg && <p className="muted">{msg}</p>}
+      {licenseRestricted && hiddenAssets > 0 && (
+        <p className="error" style={{ marginBottom: "1rem" }}>
+          {t("assets.licenseHidden", {
+            reason:
+              licenseRestrictReason === "unlicensed" ? t("license.notInstalled") : t("license.expired"),
+            shown: assets.length,
+            total: assets.length + hiddenAssets,
+          })}
+        </p>
+      )}
+      {licenseRestricted && hiddenAssets === 0 && (
+        <p className="muted" style={{ marginBottom: "1rem" }}>
+          {t("assets.licenseGrace", {
+            reason:
+              licenseRestrictReason === "unlicensed" ? t("license.notInstalled") : t("license.expired"),
+            max: 5,
+          })}
+        </p>
+      )}
       {canConnect && hasRdpAssets && (
         <div className="card" style={{ marginBottom: "1rem", maxWidth: 360 }}>
           <label>{t("assets.rdpResolution")}</label>

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/keeppam/auth/internal/buildinfo"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/fips"
@@ -27,6 +28,8 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 	}
 	mem := crypto.LastMemStatus()
 	writeJSON(w, http.StatusOK, map[string]any{
+		"version":             buildinfo.Version,
+		"build_time":          buildinfo.BuildTime,
 		"data_key_source":     s.cfg.DataKeySource,
 		"recordings_backend":  backend,
 		"recordings_dir":      s.cfg.RecordingsDir,

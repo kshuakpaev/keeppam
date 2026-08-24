@@ -62,7 +62,7 @@ KEEPPAM_FB_NONINTERACTIVE=1 \
 
 1. Deploy OVF Template → выбрать `.ova`.  
 2. Сеть: VM Network / порт-группа заказчика.  
-3. CPU ≥4, RAM ≥8 GiB, диск ≥80 GiB.  
+3. CPU ≥4, RAM ≥8 GiB, диск ≥80 GiB (см. профиль «Минимальный» в `docs/system-requirements.txt`; для пилота лучше 8 / 16 / 250).
 4. Power on → консоль → мастер.  
 5. Портал `http://<ip>:5173`, API `http://<ip>:8080/readyz`.
 

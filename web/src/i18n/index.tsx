@@ -28,16 +28,19 @@ function writeCookie(name: string, value: string) {
 
 export function detectLang(): Lang {
   const fromCookie = readCookie(LANG_COOKIE).toLowerCase();
+  if (fromCookie.startsWith("kk")) return "kk";
   if (fromCookie.startsWith("en")) return "en";
   if (fromCookie.startsWith("ru")) return "ru";
   try {
     const stored = localStorage.getItem(LANG_COOKIE);
-    if (stored === "en" || stored === "ru") return stored;
+    if (stored === "en" || stored === "ru" || stored === "kk") return stored;
   } catch {
     /* ignore */
   }
   const nav = (navigator.language || "").toLowerCase();
-  return nav.startsWith("en") ? "en" : "ru";
+  if (nav.startsWith("en")) return "en";
+  if (nav.startsWith("ru")) return "ru";
+  return "kk";
 }
 
 export function persistLang(lang: Lang) {
@@ -56,7 +59,7 @@ function interpolate(s: string, vars?: Record<string, string | number>): string 
 }
 
 export function translate(lang: Lang, key: string, vars?: Record<string, string | number>): string {
-  const pair = (catalog as Record<string, { ru: string; en: string }>)[key];
+  const pair = (catalog as Record<string, { ru: string; en: string; kk: string }>)[key];
   const raw = pair ? pair[lang] : key;
   return interpolate(raw, vars);
 }
@@ -111,10 +114,11 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       setLang,
       t,
       te: (err, fallback) => translateError(lang, err, fallback),
-      locale: lang === "en" ? "en-GB" : "ru-RU",
+      locale: lang === "en" ? "en-GB" : lang === "kk" ? "kk-KZ" : "ru-RU",
       formatDate: (value) => {
         const d = value instanceof Date ? value : new Date(value);
-        return d.toLocaleString(lang === "en" ? "en-GB" : "ru-RU");
+        const loc = lang === "en" ? "en-GB" : lang === "kk" ? "kk-KZ" : "ru-RU";
+        return d.toLocaleString(loc);
       },
     };
   }, [lang, setLang]);

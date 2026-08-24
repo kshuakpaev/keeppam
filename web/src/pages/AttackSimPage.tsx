@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, hasPerm, type AttackSimRun, type AttackSimScenario } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 export function AttackSimPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const canRead = hasPerm(user, "attacksim.read");
   const canWrite = hasPerm(user, "attacksim.write");
   const [scenarios, setScenarios] = useState<AttackSimScenario[]>([]);
@@ -21,7 +23,7 @@ export function AttackSimPage() {
       setScenarios(sc.scenarios || []);
       setRuns(rn.runs || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "attacksim.loadError"));
     }
   }
 
@@ -31,7 +33,7 @@ export function AttackSimPage() {
   }, [canRead]);
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав (attacksim.read)</p>;
+    return <p className="error">{t("attacksim.forbidden")}</p>;
   }
 
   async function startRun() {
@@ -42,11 +44,17 @@ export function AttackSimPage() {
     try {
       const run = await api.startAttackRun({ notes });
       setSelected(run);
-      setMsg(`Прогон ${run.status}: pass=${run.summary?.pass ?? "?"} fail=${run.summary?.fail ?? "?"}`);
+      setMsg(
+        t("attacksim.runStarted", {
+          status: run.status,
+          pass: String(run.summary?.pass ?? "?"),
+          fail: String(run.summary?.fail ?? "?"),
+        }),
+      );
       setNotes("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка запуска");
+      setError(te(err, "attacksim.startError"));
     } finally {
       setBusy(false);
     }
@@ -58,28 +66,25 @@ export function AttackSimPage() {
       const run = await api.getAttackRun(id);
       setSelected(run);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
+      setError(te(err, "attacksim.openError"));
     }
   }
 
   return (
     <div>
-      <h1>Attack simulation</h1>
-      <p className="muted">
-        Безопасные проверки контролей KeepPAM (auth deny, JEA packs, ACL deny-by-default, schema). Не атакует
-        целевые хосты.
-      </p>
+      <h1>{t("attacksim.title")}</h1>
+      <p className="muted">{t("attacksim.lead")}</p>
       {error && <p className="error">{error}</p>}
       {msg && <p className="ok">{msg}</p>}
 
       <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>Сценарии ({scenarios.length})</h2>
+        <h2>{t("attacksim.scenarios", { n: scenarios.length })}</h2>
         <table>
           <thead>
             <tr>
               <th>ID</th>
-              <th>Категория</th>
-              <th>Название</th>
+              <th>{t("attacksim.category")}</th>
+              <th>{t("attacksim.scenarioName")}</th>
             </tr>
           </thead>
           <tbody>
@@ -102,24 +107,28 @@ export function AttackSimPage() {
         {canWrite && (
           <div className="row" style={{ gap: "0.5rem", marginTop: "1rem", alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
-              <label>Заметки к прогону</label>
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="квартальный drill" />
+              <label>{t("attacksim.runNotes")}</label>
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder={t("attacksim.runNotesPlaceholder")}
+              />
             </div>
             <button className="btn" type="button" disabled={busy} onClick={() => void startRun()}>
-              Запустить suite
+              {t("attacksim.startSuite")}
             </button>
           </div>
         )}
       </div>
 
       <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>История прогонов</h2>
+        <h2>{t("attacksim.runHistory")}</h2>
         <table>
           <thead>
             <tr>
-              <th>Когда</th>
-              <th>Статус</th>
-              <th>Summary</th>
+              <th>{t("attacksim.when")}</th>
+              <th>{t("attacksim.status")}</th>
+              <th>{t("attacksim.summary")}</th>
               <th />
             </tr>
           </thead>
@@ -134,7 +143,7 @@ export function AttackSimPage() {
                 </td>
                 <td>
                   <button className="btn secondary" type="button" onClick={() => void openRun(r.id)}>
-                    Открыть
+                    {t("common.open")}
                   </button>
                 </td>
               </tr>
@@ -142,7 +151,7 @@ export function AttackSimPage() {
             {runs.length === 0 && (
               <tr>
                 <td colSpan={4} className="muted">
-                  Прогонов ещё не было
+                  {t("attacksim.noRuns")}
                 </td>
               </tr>
             )}
@@ -153,15 +162,15 @@ export function AttackSimPage() {
       {selected && (
         <div className="card">
           <h2>
-            Прогон <span className="mono">{selected.id.slice(0, 8)}</span> · {selected.status}
+            {t("attacksim.run")} <span className="mono">{selected.id.slice(0, 8)}</span> · {selected.status}
           </h2>
           {selected.notes && <p className="muted">{selected.notes}</p>}
           <table>
             <thead>
               <tr>
-                <th>Сценарий</th>
-                <th>Статус</th>
-                <th>Деталь</th>
+                <th>{t("attacksim.scenario")}</th>
+                <th>{t("attacksim.status")}</th>
+                <th>{t("attacksim.detail")}</th>
                 <th>ms</th>
               </tr>
             </thead>

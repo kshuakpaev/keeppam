@@ -39,16 +39,47 @@ type Status struct {
 	DaysRemaining       *int   `json:"days_remaining,omitempty"`
 }
 
-// DefaultFile is used when no license.json is present (contract baseline ≥100 ИС).
+// GraceMaxAssets is the hard cap with no license file or after expires.
+const GraceMaxAssets = 5
+
+// ExpiredMaxAssets is an alias used when the license is past its expires date.
+const ExpiredMaxAssets = GraceMaxAssets
+
+// DefaultFile is used when no license file is present (unlicensed grace: 5 assets).
 func DefaultFile() File {
 	return File{
 		Issued:      time.Now().UTC().Format("2006-01-02"),
-		Customer:    "default",
-		MaxAssets:   100,
+		Customer:    "unlicensed",
+		MaxAssets:   GraceMaxAssets,
 		SoftWarnPct: 90,
 		HA:          true,
 		Source:      "default",
 	}
+}
+
+// IsUnlicensed is true when no entitlement file was loaded (default / missing path).
+func (f File) IsUnlicensed() bool {
+	s := strings.TrimSpace(f.Source)
+	return s == "" || s == "default" || strings.HasPrefix(s, "missing:")
+}
+
+// EffectiveMaxAssets is MaxAssets, or GraceMaxAssets when expired / unlicensed.
+func (f File) EffectiveMaxAssets(now time.Time) int {
+	if f.IsExpired(now) || f.IsUnlicensed() {
+		return GraceMaxAssets
+	}
+	if f.MaxAssets <= 0 {
+		return GraceMaxAssets
+	}
+	return f.MaxAssets
+}
+
+// VisibleLimit returns how many assets are shown in lists under grace (0 = no restriction).
+func (f File) VisibleLimit(now time.Time) int {
+	if f.IsExpired(now) || f.IsUnlicensed() {
+		return GraceMaxAssets
+	}
+	return 0
 }
 
 // Load reads path; empty path or missing file → DefaultFile.
@@ -85,14 +116,7 @@ func Load(path string) (File, error) {
 }
 
 func (f File) SoftWarnAt() int {
-	n := f.MaxAssets * f.SoftWarnPct / 100
-	if n < 1 {
-		n = 1
-	}
-	if n > f.MaxAssets {
-		n = f.MaxAssets
-	}
-	return n
+	return SoftWarnAtFor(f.MaxAssets, f.SoftWarnPct)
 }
 
 func (f File) IsExpired(now time.Time) bool {
@@ -111,36 +135,75 @@ func (f File) IsExpired(now time.Time) bool {
 
 // Evaluate compares current active asset count to entitlement.
 func (f File) Evaluate(assetCount int, now time.Time) Status {
+	expired := f.IsExpired(now)
+	unlicensed := f.IsUnlicensed()
+	max := f.EffectiveMaxAssets(now)
+	warnAt := SoftWarnAtFor(max, f.SoftWarnPct)
 	st := Status{
 		Issued:     f.Issued,
 		Customer:   f.Customer,
-		MaxAssets:  f.MaxAssets,
+		MaxAssets:  max,
 		AssetCount: assetCount,
-		SoftWarnAt: f.SoftWarnAt(),
+		SoftWarnAt: warnAt,
 		HA:         f.HA,
 		Expires:    f.Expires,
-		Expired:    f.IsExpired(now),
+		Expired:    expired,
 		Source:     f.Source,
 	}
-	if st.Expired {
-		st.HardBlocked = true
-		st.Message = "лицензия истекла — создание активов заблокировано"
+	if expired {
+		if assetCount >= max {
+			st.HardBlocked = true
+			st.SoftWarn = true
+			st.Message = fmt.Sprintf("лицензия истекла — лимит %d/%d активов, создание заблокировано", assetCount, max)
+			return st
+		}
+		st.SoftWarn = true
+		st.Message = fmt.Sprintf("лицензия истекла — доступно до %d активов (%d/%d)", max, assetCount, max)
 		return st
 	}
-	if assetCount >= f.MaxAssets {
-		st.HardBlocked = true
+	if unlicensed {
+		if assetCount >= max {
+			st.HardBlocked = true
+			st.SoftWarn = true
+			st.Message = fmt.Sprintf("лицензия не установлена — лимит %d/%d активов, создание заблокировано", assetCount, max)
+			return st
+		}
 		st.SoftWarn = true
-		st.Message = fmt.Sprintf("лимит активов %d/%d — создание заблокировано", assetCount, f.MaxAssets)
+		st.Message = fmt.Sprintf("лицензия не установлена — доступно до %d активов (%d/%d)", max, assetCount, max)
 		return st
 	}
-	if assetCount >= st.SoftWarnAt {
+	if assetCount >= max {
+		st.HardBlocked = true
 		st.SoftWarn = true
-		st.Message = fmt.Sprintf("приближение к лимиту активов %d/%d", assetCount, f.MaxAssets)
+		st.Message = fmt.Sprintf("лимит активов %d/%d — создание заблокировано", assetCount, max)
+		return st
+	}
+	if assetCount >= warnAt {
+		st.SoftWarn = true
+		st.Message = fmt.Sprintf("приближение к лимиту активов %d/%d", assetCount, max)
 	}
 	return st
 }
 
-// AllowCreate is false when hard cap or expired.
+// SoftWarnAtFor computes soft-warn threshold for a given max.
+func SoftWarnAtFor(maxAssets, softWarnPct int) int {
+	if maxAssets <= 0 {
+		maxAssets = GraceMaxAssets
+	}
+	if softWarnPct <= 0 || softWarnPct > 100 {
+		softWarnPct = 90
+	}
+	n := maxAssets * softWarnPct / 100
+	if n < 1 {
+		n = 1
+	}
+	if n > maxAssets {
+		n = maxAssets
+	}
+	return n
+}
+
+// AllowCreate is false when hard cap (including expired grace of ExpiredMaxAssets).
 func (f File) AllowCreate(assetCount int, now time.Time) error {
 	st := f.Evaluate(assetCount, now)
 	if st.HardBlocked {

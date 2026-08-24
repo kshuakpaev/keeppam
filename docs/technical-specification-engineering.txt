@@ -1,0 +1,192 @@
+# KeepPAM: инженерная техспецификация
+
+Документ для архитекторов/инженеров эксплуатации и внедрения.
+
+## 1) Архитектурная модель
+
+### 1.1 Control Plane
+- HTTP API и админ-функции.
+- AuthN/AuthZ, policy-engine, workflow, settings.
+- Управление пользователями, группами, ролями, активами, ACL.
+
+### 1.2 Session/Data Plane
+- Session broker и session-worker.
+- Проксирование интерактивных и wire-сценариев.
+- Протокол-специфичные шлюзы.
+
+### 1.3 Secret Plane
+- Vault-операции и шифрованное хранение секретов.
+- Ротация и reconcile pending ротаций (HA-safe подход).
+
+### 1.4 Audit Plane
+- Централизованный журнал событий.
+- Verify/seal батчей.
+- Экспорт в SIEM и forensic индексация.
+
+## 2) UI/маршруты продукта
+
+Основные разделы UI:
+- `/` обзор.
+- `/assets`, `/assets/:id`.
+- `/password-sets`.
+- `/discovery`.
+- `/access-requests`.
+- `/sessions`, `/sessions/:id/*`.
+- `/forensic`.
+- `/users`, `/users/:id`, `/groups`.
+- `/audit`.
+- `/analytics`.
+- `/compliance`.
+- `/jea`.
+- `/attack-sim`.
+- `/config`.
+- `/profile`.
+
+## 3) Функциональные модули
+
+### 3.1 Identity/Auth
+- Local/LDAP/OIDC/SAML/RADIUS/x509 login.
+- MFA (TOTP/WebAuthn), step-up endpoints.
+- SCIM 2.0 inbound provider.
+
+### 3.2 Access Control
+- RBAC + ABAC.
+- ACL/tag-ACL.
+- JIT workflows:
+  - sequential;
+  - quorum N-of-M.
+- Supervisor gating (four-eyes).
+- Break-glass.
+- Op-approval (sensitive operations).
+
+### 3.3 Assets/Accounts/Vault
+- Asset CRUD и host key reset.
+- Account CRUD, rotate, delete.
+- Checkout/checkin/force-checkin/reveal.
+- Password sync в целевые системы.
+
+### 3.4 Session/Protocol Layer
+- SSH gateway.
+- Guacamole RDP/VNC.
+- Native RDP broker path (`.rdp` + freerdp-proxy).
+- SQL console/wire.
+- K8s proxy (catalog/list/get/apply/replace/delete/exec/attach/port-forward).
+- Telnet wire gateway.
+- TN3270 wire gateway.
+- Citrix SOCKS wire gateway + `.ica`.
+
+### 3.5 Recording/Forensic
+- Транскрипты и записи по протоколам.
+- Индексация и поиск.
+- Session files browse/download.
+
+### 3.6 Audit/Compliance
+- audit_events и batch verify/seal/list.
+- SIEM transports: syslog/webhook/kafka/nats/opensearch.
+- Форматы JSON/CEF/ECS.
+
+### 3.7 Platform/Ops
+- `/livez`, `/readyz`, `/metrics`.
+- HA 2+2 и 3+2 deployment patterns.
+- DR status/settings/backup/drill API.
+- Archive sync (SMB/NFS).
+
+## 4) Матрица API-возможностей (укрупненно)
+
+### 4.1 Core Auth/User
+- login/logout/me/change password.
+- mfa setup/confirm/verify.
+- webauthn register/login begin/finish.
+- users CRUD + reset password/MFA + user SSH keys.
+- roles list.
+
+### 4.2 Assets/Access
+- assets CRUD + clear host key.
+- accounts CRUD/rotate.
+- ACL/tag ACL CRUD.
+- access requests create/list/approve/deny/cancel/summary.
+- supervisor approve/deny.
+
+### 4.3 Sessions/Streaming
+- session creation/management (через assets/access flow).
+- guac endpoint.
+- SQL session endpoint.
+- app session endpoint (HTTP/app object controls).
+- watch endpoint.
+- transcript get/index.
+- files list/get per session.
+
+### 4.4 Config/Integrations
+- auth settings (OIDC/SAML/LDAP/RADIUS/SCIM context).
+- SSH settings.
+- SIEM settings + bulk export test/trigger.
+- ITSM settings + validate.
+- notify settings + test email.
+- NAC settings + test.
+- eIDAS settings + test.
+- UEBA-ML settings + test.
+- firewall settings/status/probe/export/push/mark.
+- archive settings/sync.
+- DR status/settings/backup/drill.
+
+### 4.5 Compliance/Audit/License
+- audit list/verify/batches/seal.
+- compliance/analytics endpoints (SLO/metrics-linked).
+- license get/fingerprint/upload.
+
+### 4.6 SCIM 2.0
+- `/scim/v2/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`.
+- Users: list/create/get/put/patch/delete.
+- Groups: list/create/get/put/patch/delete.
+
+## 5) Протоколы и порты (типовой профиль)
+
+- HTTPS/API/UI: `:8080` (через edge/proxy слой).
+- SSH gateway: `:2222`.
+- Telnet wire: `:2323`.
+- TN3270 wire: `:2324`.
+- Citrix SOCKS: `:1081`.
+- Внутренние worker/API порты зависят от профиля deployment.
+
+Примечание: фактическая публикация портов определяется `deploy` compose/helm и окружением.
+
+## 6) SIEM и наблюдаемость
+
+### 6.1 SIEM Export
+- Асинхронный poll+batch механизм.
+- Продвижение курсора только при успешной доставке.
+- Retry того же батча при ошибке.
+
+### 6.2 Observability
+- `metrics` endpoint для Prometheus-стека.
+- readiness учитывает зависимости и draining.
+- SLO-ориентированная аналитика в продукте.
+
+## 7) HA/DR и отказоустойчивость
+
+- 2+2: два control + два worker.
+- 3+2: три control + два worker.
+- Draining logic для graceful shutdown.
+- PG HA в compose — с ограничениями; production рекомендует отдельный HA-стек БД.
+- DR API + runbook сценарии.
+
+## 8) Лицензирование и квоты
+
+- Поддержка JSON и ex2 `.lic`.
+- Fingerprint API.
+- Upload API.
+- Эффективный лимит активов (включая unlicensed/expired режимы).
+- UI-баннеры и серверные ограничения по create/list/get для активов.
+
+## 9) Локализация и UX
+
+- Языки: `kk`, `en`, `ru`.
+- Default language: `kk`.
+- Language selection через cookie/localStorage/browser detection.
+
+## 10) Ограничения и границы текущего среза
+
+- Citrix реализован как SOCKS/ICA transport MVP; полноценный HDX/STA/OEM функции не в базовом срезе.
+- TN3270 без полноценного HTML5 эмулятора терминала в текущем UI.
+- Часть enterprise-сценариев вынесена в отдельные SOW-модули.
+

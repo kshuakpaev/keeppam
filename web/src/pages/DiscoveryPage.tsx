@@ -2,11 +2,13 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, hasPerm, type DiscoveryCandidate, type DiscoveryJob } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 type ScanKind = "network" | "accounts" | "ad_accounts" | "winrm_accounts";
 
 export function DiscoveryPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const [jobs, setJobs] = useState<DiscoveryJob[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<DiscoveryCandidate[]>([]);
@@ -28,7 +30,7 @@ export function DiscoveryPage() {
       const res = await api.listDiscoveryJobs();
       setJobs(res.jobs || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "discovery.loadError"));
     }
   }
 
@@ -37,7 +39,7 @@ export function DiscoveryPage() {
       const res = await api.listDiscoveryCandidates(jobId);
       setCandidates(res.candidates || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка кандидатов");
+      setError(te(err, "discovery.candidatesError"));
     }
   }
 
@@ -45,15 +47,15 @@ export function DiscoveryPage() {
     if (!canRead) return;
     void loadJobs();
     void api.listAssets().then((r) => setAssets(r.assets || [])).catch(() => {});
-    const t = setInterval(() => {
+    const timer = setInterval(() => {
       void loadJobs();
       if (selected) void loadCandidates(selected);
     }, 2000);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, [canRead, selected]);
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   async function onStart(e: FormEvent) {
@@ -66,28 +68,28 @@ export function DiscoveryPage() {
       let job: DiscoveryJob;
       if (scanKind === "accounts") {
         job = await api.createDiscoveryJob({ kind: "accounts" });
-        setMsg(`Account discovery запущен (${job.total_hosts} SSH-активов)`);
+        setMsg(t("discovery.msg.accountsStarted", { count: job.total_hosts }));
       } else if (scanKind === "ad_accounts") {
         job = await api.createDiscoveryJob({
           kind: "ad_accounts",
           target_asset_id: targetAssetId || undefined,
         });
-        setMsg("AD privileged discovery запущен (LDAP)");
+        setMsg(t("discovery.msg.adStarted"));
       } else if (scanKind === "winrm_accounts") {
         job = await api.createDiscoveryJob({
           kind: "winrm_accounts",
           ports: ports || "winrm,sam",
         });
-        setMsg(`WinRM/SAM discovery запущен (${job.total_hosts} RDP-активов)`);
+        setMsg(t("discovery.msg.winrmStarted", { count: job.total_hosts }));
       } else {
         job = await api.createDiscoveryJob({ kind: "network", cidr, ports });
-        setMsg(`Скан запущен: ${job.cidr}`);
+        setMsg(t("discovery.msg.networkStarted", { cidr: job.cidr }));
       }
       setSelected(job.id);
       await loadJobs();
       await loadCandidates(job.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка запуска");
+      setError(te(err, "discovery.startError"));
     } finally {
       setBusy(false);
     }
@@ -99,15 +101,15 @@ export function DiscoveryPage() {
     try {
       const res = await api.importDiscoveryCandidate(c.id);
       if (res.kind === "account" && res.account) {
-        setMsg(`Импортирована учётка ${res.account.username}`);
+        setMsg(t("discovery.accountImported", { username: res.account.username }));
       } else if (res.asset) {
-        setMsg(`Импортирован актив ${res.asset.name}`);
+        setMsg(t("discovery.assetImported", { name: res.asset.name }));
       } else {
-        setMsg("Импорт выполнен");
+        setMsg(t("discovery.importDone"));
       }
       if (selected) await loadCandidates(selected);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка импорта");
+      setError(te(err, "discovery.importError"));
     }
   }
 
@@ -122,8 +124,8 @@ export function DiscoveryPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Discovery</h1>
-          <p className="muted">Сеть (TCP), SSH passwd, AD/LDAP и Windows local (WinRM/SAM)</p>
+          <h1>{t("nav.discovery")}</h1>
+          <p className="muted">{t("discovery.lead")}</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -131,76 +133,65 @@ export function DiscoveryPage() {
 
       {canRun && (
         <form className="card" onSubmit={onStart} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-          <h2>Новый скан</h2>
-          <label>Тип</label>
+          <h2>{t("discovery.newScan")}</h2>
+          <label>{t("common.type")}</label>
           <select value={scanKind} onChange={(e) => setScanKind(e.target.value as ScanKind)}>
-            <option value="network">Сеть (TCP / хосты)</option>
-            <option value="accounts">Учётки (SSH account discovery)</option>
-            <option value="ad_accounts">AD privileged (LDAP)</option>
-            <option value="winrm_accounts">Windows local (WinRM/SAM)</option>
+            <option value="network">{t("discovery.scanNetwork")}</option>
+            <option value="accounts">{t("discovery.scanAccounts")}</option>
+            <option value="ad_accounts">{t("discovery.scanAd")}</option>
+            <option value="winrm_accounts">{t("discovery.scanWinrm")}</option>
           </select>
           {scanKind === "network" ? (
             <>
-              <label>CIDR / IP / диапазон</label>
+              <label>{t("discovery.cidrLabel")}</label>
               <input
                 value={cidr}
                 onChange={(e) => setCidr(e.target.value)}
-                placeholder="192.168.1.0/24 или 10.0.0.1-50"
+                placeholder={t("discovery.cidrPlaceholder")}
                 required
               />
-              <label>Порты (через запятую)</label>
+              <label>{t("discovery.portsLabel")}</label>
               <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="22,3389,5900" />
-              <p className="muted">Лимит: 1024 хоста. 22→ssh, 3389→rdp, 5900→vnc.</p>
+              <p className="muted">{t("discovery.networkHint")}</p>
             </>
           ) : scanKind === "winrm_accounts" ? (
             <>
-              <label>Режим (ports)</label>
+              <label>{t("discovery.winrmModeLabel")}</label>
               <input value={ports} onChange={(e) => setPorts(e.target.value)} placeholder="winrm,sam" />
-              <p className="muted">
-                Обходит активные RDP-активы с vault-секретом: WinRM 5985/5986 (
-                <span className="mono">Get-LocalUser</span>, Administrators), fallback SAM через SSH :22 (
-                <span className="mono">net user</span>). Импорт — учётка без секрета.
-              </p>
+              <p className="muted">{t("discovery.winrmHint")}</p>
             </>
           ) : scanKind === "ad_accounts" ? (
             <>
-              <label>Актив для импорта в vault (опционально для просмотра, нужен для Импорт)</label>
+              <label>{t("discovery.adAssetLabel")}</label>
               <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
-                <option value="">— только очередь «не под PAM» —</option>
+                <option value="">{t("discovery.adAssetOption")}</option>
                 {assets.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name} ({a.protocol})
                   </option>
                 ))}
               </select>
-              <p className="muted">
-                LDAP из Config → Auth: <span className="mono">adminCount=1</span>, Domain/Enterprise Admins.
-                Кандидаты без vault помечаются как новые.
-              </p>
+              <p className="muted">{t("discovery.adHint")}</p>
             </>
           ) : (
-            <p className="muted">
-              Обходит активные SSH-активы с vault-секретом, читает <span className="mono">getent passwd</span> /
-              <span className="mono"> /etc/passwd</span>. Импорт создаёт учётку без секрета (нужна ротация /
-              checkout).
-            </p>
+            <p className="muted">{t("discovery.sshHint")}</p>
           )}
           <button className="btn" type="submit" disabled={busy}>
-            {busy ? "…" : "Запустить"}
+            {busy ? "…" : t("discovery.run")}
           </button>
         </form>
       )}
 
       <div className="card" style={{ marginBottom: "1.25rem" }}>
-        <h2>Задания</h2>
+        <h2>{t("discovery.jobs")}</h2>
         <table>
           <thead>
             <tr>
-              <th>Тип</th>
-              <th>Scope</th>
-              <th>Статус</th>
-              <th>Прогресс</th>
-              <th>Найдено</th>
+              <th>{t("common.type")}</th>
+              <th>{t("discovery.scope")}</th>
+              <th>{t("common.status")}</th>
+              <th>{t("discovery.progress")}</th>
+              <th>{t("discovery.found")}</th>
               <th />
             </tr>
           </thead>
@@ -231,7 +222,7 @@ export function DiscoveryPage() {
                       void loadCandidates(j.id);
                     }}
                   >
-                    Кандидаты
+                    {t("discovery.candidates")}
                   </button>
                 </td>
               </tr>
@@ -239,36 +230,36 @@ export function DiscoveryPage() {
             {jobs.length === 0 && (
               <tr>
                 <td colSpan={6} className="muted">
-                  Нет заданий
+                  {t("discovery.noJobs")}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-        {active?.error && <p className="error">Ошибка задания: {active.error}</p>}
+        {active?.error && <p className="error">{t("discovery.jobError", { error: active.error })}</p>}
       </div>
 
       {selected && (
         <div className="card">
-          <h2>Кандидаты</h2>
+          <h2>{t("discovery.candidates")}</h2>
           <table>
             <thead>
               <tr>
                 {accountsMode ? (
                   <>
-                    <th>Хост</th>
+                    <th>{t("discovery.host")}</th>
                     <th>Username</th>
-                    <th>Priv</th>
-                    <th>Детали</th>
-                    <th>Статус</th>
+                    <th>{t("discovery.priv")}</th>
+                    <th>{t("discovery.details")}</th>
+                    <th>{t("common.status")}</th>
                     <th />
                   </>
                 ) : (
                   <>
-                    <th>Адрес</th>
-                    <th>Порт</th>
-                    <th>Протокол</th>
-                    <th>Статус</th>
+                    <th>{t("common.address")}</th>
+                    <th>{t("common.port")}</th>
+                    <th>{t("common.protocol")}</th>
+                    <th>{t("common.status")}</th>
                     <th />
                   </>
                 )}
@@ -298,17 +289,17 @@ export function DiscoveryPage() {
                     </td>
                     <td>
                       {c.imported_account_id ? (
-                        <span className="badge active">импортирован</span>
+                        <span className="badge active">{t("discovery.imported")}</span>
                       ) : c.already_known ? (
-                        <span className="muted">уже в vault</span>
+                        <span className="muted">{t("discovery.alreadyInVault")}</span>
                       ) : (
-                        <span className="badge active">новый</span>
+                        <span className="badge active">{t("discovery.new")}</span>
                       )}
                     </td>
                     <td>
                       {canImport && !c.imported_account_id && !c.already_known && (
                         <button className="btn" type="button" onClick={() => void onImport(c)}>
-                          Импорт
+                          {t("discovery.import")}
                         </button>
                       )}
                     </td>
@@ -320,17 +311,17 @@ export function DiscoveryPage() {
                     <td className="mono">{c.protocol}</td>
                     <td>
                       {c.imported_asset_id ? (
-                        <Link to={`/assets/${c.imported_asset_id}`}>импортирован</Link>
+                        <Link to={`/assets/${c.imported_asset_id}`}>{t("discovery.imported")}</Link>
                       ) : c.already_known ? (
-                        <span className="muted">уже в inventory</span>
+                        <span className="muted">{t("discovery.alreadyInInventory")}</span>
                       ) : (
-                        <span className="badge active">новый</span>
+                        <span className="badge active">{t("discovery.new")}</span>
                       )}
                     </td>
                     <td>
                       {canImport && !c.imported_asset_id && (
                         <button className="btn" type="button" onClick={() => void onImport(c)}>
-                          Импорт
+                          {t("discovery.import")}
                         </button>
                       )}
                     </td>
@@ -341,12 +332,12 @@ export function DiscoveryPage() {
                 <tr>
                   <td colSpan={6} className="muted">
                     {active?.status === "running" || active?.status === "pending"
-                      ? "Скан ещё идёт…"
+                      ? t("discovery.scanning")
                       : accountsMode
                         ? active?.kind === "winrm_accounts"
-                          ? "Учёток не найдено (нужны RDP-активы с секретом и WinRM или SSH :22)"
-                          : "Учёток не найдено (нужны SSH-активы с секретом)"
-                        : "Открытых портов не найдено"}
+                          ? t("discovery.noAccountsWinrm")
+                          : t("discovery.noAccountsSsh")
+                        : t("discovery.noOpenPorts")}
                   </td>
                 </tr>
               )}

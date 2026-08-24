@@ -2,10 +2,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, hasPerm, type PamGroup, type Role, type User, type UserSSHKey } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 export function UserEditPage() {
   const { id } = useParams<{ id: string }>();
   const { user: me } = useAuth();
+  const { t, te } = useI18n();
   const nav = useNavigate();
   const [target, setTarget] = useState<User | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -57,9 +59,9 @@ export function UserEditPage() {
         setSshKeys(keys.keys || []);
         setPasskeys(wa.credentials || []);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Ошибка загрузки"))
+      .catch((err) => setError(te(err, "userEdit.loadError")))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, te]);
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -82,9 +84,9 @@ export function UserEditPage() {
       setTarget(updated);
       setX509Identity(updated.x509_identity || "");
       setTags((updated.tags || []).join(", "));
-      setMsg("Сохранено");
+      setMsg(t("userEdit.saved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "userEdit.saveError"));
     }
   }
 
@@ -94,11 +96,11 @@ export function UserEditPage() {
     try {
       const res = await api.resetPassword(id);
       setTempPwd(res.temporary_password);
-      setMsg("Пароль сброшен");
+      setMsg(t("userEdit.passwordReset"));
       const u = await api.getUser(id);
       setTarget(u);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сброса пароля");
+      setError(te(err, "userEdit.passwordResetError"));
     }
   }
 
@@ -107,12 +109,12 @@ export function UserEditPage() {
     setError("");
     try {
       await api.resetMfa(id);
-      setMsg("MFA сброшен (TOTP + Passkeys)");
+      setMsg(t("userEdit.mfaReset"));
       const u = await api.getUser(id);
       setTarget(u);
       await loadPasskeys(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сброса MFA");
+      setError(te(err, "userEdit.mfaResetError"));
     }
   }
 
@@ -124,31 +126,31 @@ export function UserEditPage() {
       await api.addUserSSHKey(id, { name: keyName || undefined, public_key: keyPub });
       setKeyName("");
       setKeyPub("");
-      setMsg("SSH-ключ добавлен");
+      setMsg(t("userEdit.sshKeyAdded"));
       await loadKeys(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка добавления ключа");
+      setError(te(err, "userEdit.sshKeyAddError"));
     }
   }
 
   async function onDeleteKey(key: UserSSHKey) {
     if (!id || !canWrite) return;
-    if (!confirm(`Удалить ключ ${key.name}?`)) return;
+    if (!confirm(t("userEdit.deleteKeyConfirm", { name: key.name }))) return;
     try {
       await api.deleteUserSSHKey(id, key.id);
-      setMsg("SSH-ключ удалён");
+      setMsg(t("userEdit.sshKeyDeleted"));
       await loadKeys(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления ключа");
+      setError(te(err, "userEdit.sshKeyDeleteError"));
     }
   }
 
-  if (loading) return <p className="muted">Загрузка…</p>;
+  if (loading) return <p className="muted">{t("common.loading")}</p>;
   if (!target) {
     return (
       <div>
-        <p className="error">{error || "Пользователь не найден"}</p>
-        <Link to="/users">← К списку</Link>
+        <p className="error">{error || t("userEdit.notFound")}</p>
+        <Link to="/users">{t("userEdit.backToList")}</Link>
       </div>
     );
   }
@@ -158,13 +160,13 @@ export function UserEditPage() {
       <div className="toolbar">
         <div>
           <p className="muted" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/users">Пользователи</Link> / {target.username}
+            <Link to="/users">{t("nav.users")}</Link> / {target.username}
           </p>
-          <h1>Редактирование</h1>
+          <h1>{t("userEdit.title")}</h1>
           <p className="muted mono">{target.id}</p>
         </div>
         <button className="btn secondary" type="button" onClick={() => nav("/users")}>
-          Назад
+          {t("common.back")}
         </button>
       </div>
 
@@ -172,12 +174,12 @@ export function UserEditPage() {
       {msg && <p className="ok">{msg}</p>}
       {tempPwd && (
         <p className="ok">
-          Временный пароль: <span className="mono">{tempPwd}</span>
+          {t("users.tempPassword")} <span className="mono">{tempPwd}</span>
         </p>
       )}
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 520 }}>
-        <label>Логин</label>
+        <label>{t("login.username")}</label>
         <input value={target.username} disabled />
 
         <label htmlFor="email">Email</label>
@@ -190,7 +192,7 @@ export function UserEditPage() {
           required
         />
 
-        <label htmlFor="display_name">Отображаемое имя</label>
+        <label htmlFor="display_name">{t("userEdit.displayName")}</label>
         <input
           id="display_name"
           value={displayName}
@@ -205,13 +207,13 @@ export function UserEditPage() {
           value={x509Identity}
           onChange={(e) => setX509Identity(e.target.value)}
           disabled={!canWrite}
-          placeholder="ops@corp.example или CN из сертификата"
+          placeholder={t("userEdit.x509Placeholder")}
         />
         <p className="muted" style={{ marginTop: 0 }}>
-          Явный map для входа по клиентскому сертификату. Пусто — fallback: CN=логин или email SAN=email.
+          {t("userEdit.x509Hint")}
         </p>
 
-        <label htmlFor="status">Статус</label>
+        <label htmlFor="status">{t("common.status")}</label>
         <select
           id="status"
           value={status}
@@ -223,7 +225,7 @@ export function UserEditPage() {
           <option value="locked">locked</option>
         </select>
 
-        <label htmlFor="role">Роль</label>
+        <label htmlFor="role">{t("users.role")}</label>
         <select
           id="role"
           value={role}
@@ -237,9 +239,9 @@ export function UserEditPage() {
           ))}
         </select>
 
-        <label>Группы PAM</label>
+        <label>{t("userEdit.pamGroups")}</label>
         <p className="muted" style={{ marginTop: 0 }}>
-          Прямое членство. ACL на родителя тоже срабатывает, если отмечена дочерняя.
+          {t("userEdit.pamGroupsHint")}
         </p>
         <div style={{ marginBottom: "0.75rem" }}>
           {pamGroups.map((g) => (
@@ -256,10 +258,10 @@ export function UserEditPage() {
               <span className="muted">{g.description}</span>
             </label>
           ))}
-          {pamGroups.length === 0 && <p className="muted">Нет групп — создайте на странице «Группы»</p>}
+          {pamGroups.length === 0 && <p className="muted">{t("userEdit.noGroups")}</p>}
         </div>
 
-        <label htmlFor="tags">ABAC-теги (через запятую)</label>
+        <label htmlFor="tags">{t("userEdit.abacTags")}</label>
         <input
           id="tags"
           value={tags}
@@ -271,54 +273,56 @@ export function UserEditPage() {
         <div className="meta-grid">
           <div>
             <span className="muted">MFA</span>
-            <div>{target.mfa_enabled ? "включён" : "выключен"}</div>
+            <div>{target.mfa_enabled ? t("userEdit.mfaEnabled") : t("userEdit.mfaDisabled")}</div>
           </div>
           <div>
-            <span className="muted">Источник</span>
+            <span className="muted">{t("userEdit.source")}</span>
             <div className="mono">{target.auth_source}</div>
           </div>
           <div>
-            <span className="muted">Последний вход</span>
+            <span className="muted">{t("userEdit.lastLogin")}</span>
             <div className="mono">
               {target.last_login_at ? new Date(target.last_login_at).toLocaleString() : "—"}
             </div>
           </div>
           <div>
-            <span className="muted">Смена пароля</span>
-            <div>{target.must_change_password ? "требуется" : "нет"}</div>
+            <span className="muted">{t("userEdit.passwordChange")}</span>
+            <div>
+              {target.must_change_password ? t("userEdit.passwordChangeRequired") : t("userEdit.passwordChangeNotRequired")}
+            </div>
           </div>
         </div>
 
         <div className="row" style={{ marginTop: "1rem" }}>
           {canWrite && (
             <button className="btn" type="submit">
-              Сохранить
+              {t("common.save")}
             </button>
           )}
           {canWrite && (
             <button className="btn secondary" type="button" onClick={() => void onResetPassword()}>
-              Сброс пароля
+              {t("userEdit.resetPassword")}
             </button>
           )}
           {canResetMfa && (
             <button className="btn danger" type="button" onClick={() => void onResetMfa()}>
-              Сброс MFA
+              {t("userEdit.resetMfa")}
             </button>
           )}
         </div>
       </form>
 
       <div className="card" style={{ maxWidth: 640, marginTop: "1.25rem" }}>
-        <h2>Passkeys (WebAuthn)</h2>
-        <p className="muted">Сброс MFA удаляет все ключи вместе с TOTP.</p>
+        <h2>{t("userEdit.passkeysTitle")}</h2>
+        <p className="muted">{t("userEdit.passkeysHint")}</p>
         {passkeys.length === 0 ? (
-          <p className="muted">Ключей нет</p>
+          <p className="muted">{t("userEdit.noKeys")}</p>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Имя</th>
-                <th>Создан</th>
+                <th>{t("common.name")}</th>
+                <th>{t("userEdit.created")}</th>
               </tr>
             </thead>
             <tbody>
@@ -334,18 +338,18 @@ export function UserEditPage() {
       </div>
 
       <div className="card" style={{ maxWidth: 640, marginTop: "1.25rem" }}>
-        <h2>SSH-ключи (gateway :2222)</h2>
+        <h2>{t("userEdit.sshKeysTitle")}</h2>
         <p className="muted">
-          Вход без пароля: <span className="mono">ssh -i key -p 2222 {target.username}@host</span> → TOTP
+          {t("userEdit.sshKeysHint", { username: target.username })}
         </p>
         {sshKeys.length === 0 ? (
-          <p className="muted">Ключей нет</p>
+          <p className="muted">{t("userEdit.noKeys")}</p>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Имя</th>
-                <th>Fingerprint</th>
+                <th>{t("common.name")}</th>
+                <th>{t("userEdit.fingerprint")}</th>
                 <th />
               </tr>
             </thead>
@@ -359,7 +363,7 @@ export function UserEditPage() {
                   <td>
                     {canWrite && (
                       <button className="btn danger" type="button" onClick={() => void onDeleteKey(k)}>
-                        Удалить
+                        {t("common.delete")}
                       </button>
                     )}
                   </td>
@@ -370,9 +374,13 @@ export function UserEditPage() {
         )}
         {canWrite && (
           <form onSubmit={onAddKey} style={{ marginTop: "1rem" }}>
-            <label>Имя</label>
-            <input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="laptop" />
-            <label>Public key</label>
+            <label>{t("common.name")}</label>
+            <input
+              value={keyName}
+              onChange={(e) => setKeyName(e.target.value)}
+              placeholder={t("userEdit.keyNamePlaceholder")}
+            />
+            <label>{t("userEdit.publicKey")}</label>
             <textarea
               value={keyPub}
               onChange={(e) => setKeyPub(e.target.value)}
@@ -382,7 +390,7 @@ export function UserEditPage() {
               style={{ width: "100%", fontFamily: "monospace" }}
             />
             <button className="btn" type="submit" style={{ marginTop: "0.5rem" }}>
-              Добавить ключ
+              {t("userEdit.addKey")}
             </button>
           </form>
         )}

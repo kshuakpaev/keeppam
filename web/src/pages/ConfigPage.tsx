@@ -17,6 +17,8 @@ import {
   type UEBAMLSettings,
 } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
+import { licenseStatusText } from "../licenseStatus";
 
 const emptyEidas: EIDASSettings = { mode: "off", profile: "eidas", require_b_lta: true };
 const emptyUebaMl: UEBAMLSettings = {
@@ -183,6 +185,7 @@ const emptyNotify: NotifySettings = {
 
 export function ConfigPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const [form, setForm] = useState<AuthSettings>(empty);
   const [siem, setSiem] = useState<SIEMSettings>(emptySIEM);
   const [itsm, setItsm] = useState<ITSMSettings>(emptyITSM);
@@ -279,10 +282,10 @@ export function ConfigPage() {
     try {
       const lic = await api.uploadLicenseFile(file);
       setLicenseInfo(lic);
-      setMsg("Лицензия загружена");
+      setMsg(t("config.licenseUploaded"));
       await loadLicense();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки лицензии");
+      setError(err instanceof Error ? err.message : t("config.licenseLoadFailed"));
     } finally {
       setBusy(false);
     }
@@ -376,13 +379,13 @@ export function ConfigPage() {
         setExtraIdPs(idps.idps || []);
         await loadLicense();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Ошибка загрузки");
+        setError(te(err, "config.loadFailed"));
       }
     })();
   }, [canWrite]);
 
   if (!canWrite) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   async function onSave(e: FormEvent) {
@@ -413,9 +416,9 @@ export function ConfigPage() {
       setLdapPass("");
       setRadiusSecret("");
       setScimToken("");
-      setMsg("Авторизация сохранена");
+      setMsg(t("config.authSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "config.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -443,9 +446,9 @@ export function ConfigPage() {
         ok_statuses: saved.ok_statuses?.length ? saved.ok_statuses : emptyITSM.ok_statuses,
       });
       setItsmAuth("");
-      setMsg("ITSM сохранён");
+      setMsg(t("config.itsmSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения ITSM");
+      setError(err instanceof Error ? err.message : t("config.itsmSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -480,9 +483,9 @@ export function ConfigPage() {
       setFirewallAwxToken("");
       setProbeQuorum(saved.probe_quorum || 1);
       setFirewallStatus(await api.getFirewallStatus().catch(() => null));
-      setMsg("Firewall PAM сохранён");
+      setMsg(t("config.firewallSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения Firewall PAM");
+      setError(err instanceof Error ? err.message : t("config.firewallSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -510,9 +513,9 @@ export function ConfigPage() {
         last_error: saved.last_error || "",
       });
       setNacToken("");
-      setMsg("NAC client сохранён");
+      setMsg(t("config.nacSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения NAC");
+      setError(err instanceof Error ? err.message : t("config.nacSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -547,9 +550,9 @@ export function ConfigPage() {
         last_error: saved.last_error || "",
       });
       setEidasPin("");
-      setMsg("Qualified PDF (eIDAS) сохранён");
+      setMsg(t("config.eidasSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения eIDAS");
+      setError(err instanceof Error ? err.message : t("config.eidasSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -574,9 +577,9 @@ export function ConfigPage() {
         live_interval_s: saved.live_interval_s || 60,
         last_error: saved.last_error || "",
       });
-      setMsg("UEBA-ML сохранён");
+      setMsg(t("config.uebaSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения UEBA-ML");
+      setError(err instanceof Error ? err.message : t("config.uebaSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -610,9 +613,9 @@ export function ConfigPage() {
         })),
       );
       setFirewallStatus(await api.getFirewallStatus().catch(() => null));
-      setMsg("Probe agents сохранены");
+      setMsg(t("config.probeAgentsSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения probe agents");
+      setError(err instanceof Error ? err.message : t("config.probeAgentsSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -633,9 +636,9 @@ export function ConfigPage() {
       setNotify({ ...emptyNotify, ...saved });
       setNotifyAuth("");
       setNotifySmtpPass("");
-      setMsg("Уведомления сохранены");
+      setMsg(t("config.notifySaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения уведомлений");
+      setError(err instanceof Error ? err.message : t("config.notifySaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -647,11 +650,11 @@ export function ConfigPage() {
     setMsg("");
     try {
       await api.testNotifyEmail();
-      setMsg("Тестовое письмо отправлено на email текущего пользователя");
+      setMsg(t("config.testEmailSent"));
       const nt = await api.getNotifySettings();
       setNotify({ ...emptyNotify, ...nt });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка SMTP");
+      setError(err instanceof Error ? err.message : t("config.smtpError"));
     } finally {
       setBusy(false);
     }
@@ -667,7 +670,7 @@ export function ConfigPage() {
         `${info.id}: ${info.status}${info.ok ? " · OK" : " · REJECTED"}${info.title ? ` · ${info.title}` : ""}${info.cached ? " (cache)" : ""}`,
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка проверки тикета");
+      setError(err instanceof Error ? err.message : t("config.ticketCheckFailed"));
     } finally {
       setBusy(false);
     }
@@ -691,9 +694,9 @@ export function ConfigPage() {
       setWebhookAuth("");
       setKafkaPassword("");
       setNatsToken("");
-      setMsg("SIEM сохранён");
+      setMsg(t("config.siemSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения SIEM");
+      setError(err instanceof Error ? err.message : t("config.siemSaveFailed"));
     } finally {
       setBusy(false);
     }
@@ -715,16 +718,16 @@ export function ConfigPage() {
         ...(ssh.krb5_keytab ? { krb5_keytab: ssh.krb5_keytab } : {}),
       });
       setSsh({ ...emptySSH, ...saved, krb5_keytab: "" });
-      setMsg("SSH сохранён");
+      setMsg(t("config.sshSaved"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения SSH");
+      setError(err instanceof Error ? err.message : t("config.sshSaveFailed"));
     } finally {
       setBusy(false);
     }
   }
 
   async function onRotateCA() {
-    if (!confirm("Сгенерировать новый CA? Старый ключ перестанет работать на целях.")) return;
+    if (!confirm(t("config.rotateCaConfirm"))) return;
     setBusy(true);
     setError("");
     setMsg("");
@@ -740,9 +743,9 @@ export function ConfigPage() {
         rotate_ca: true,
       });
       setSsh({ ...emptySSH, ...saved, krb5_keytab: "" });
-      setMsg("Новый SSH CA сгенерирован — обновите TrustedUserCAKeys на целях");
+      setMsg(t("config.caRotated"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка ротации CA");
+      setError(err instanceof Error ? err.message : t("config.caRotateFailed"));
     } finally {
       setBusy(false);
     }
@@ -752,8 +755,8 @@ export function ConfigPage() {
     <div>
       <div className="toolbar">
         <div>
-          <h1>Конфигурация</h1>
-          <p className="muted">Авторизация, SSH CA, SIEM, ITSM и prod-инфраструктура</p>
+          <h1>{t("config.title")}</h1>
+          <p className="muted">{t("config.lead")}</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -761,47 +764,46 @@ export function ConfigPage() {
 
       {licenseInfo && canReadLicense && (
         <div className="card" style={{ maxWidth: 720, marginBottom: "1.25rem" }}>
-          <h2>Лицензия KeepPAM</h2>
-          <p className="muted">
-            Формат совместим с генератором из <span className="mono">../ex2/license-generator</span> (AES-GCM + подпись).
-            Ключ шифрования: <span className="mono">KEEPPAM_LICENSE_ENCRYPTION_KEY</span> (должен совпадать с{" "}
-            <span className="mono">LICENSE_ENCRYPTION_KEY</span> в генераторе).
-          </p>
+          <h2>{t("config.licenseTitle")}</h2>
+          <p className="muted">{t("config.licenseFormatHint")}</p>
           <table style={{ marginBottom: "0.75rem" }}>
             <tbody>
               <tr>
-                <td className="muted">Клиент</td>
+                <td className="muted">{t("config.licenseCustomer")}</td>
                 <td>{licenseInfo.customer || "—"}</td>
               </tr>
               <tr>
-                <td className="muted">Активы</td>
+                <td className="muted">{t("config.licenseAssets")}</td>
                 <td>
                   {licenseInfo.asset_count} / {licenseInfo.max_assets}
-                  {licenseInfo.soft_warn ? " · предупреждение" : ""}
-                  {licenseInfo.hard_blocked ? " · блок" : ""}
+                  {licenseInfo.soft_warn ? t("config.warningSuffix") : ""}
+                  {licenseInfo.hard_blocked ? t("config.licenseBlockedSuffix") : ""}
                 </td>
               </tr>
               <tr>
-                <td className="muted">Истекает</td>
+                <td className="muted">{t("config.expires")}</td>
                 <td>{licenseInfo.expires || "—"}</td>
               </tr>
               <tr>
                 <td className="muted">HA</td>
-                <td>{licenseInfo.ha ? "да" : "нет"}</td>
+                <td>{licenseInfo.ha ? t("common.yes") : t("common.no")}</td>
               </tr>
               <tr>
-                <td className="muted">Источник</td>
+                <td className="muted">{t("config.licenseSource")}</td>
                 <td className="mono">{licenseInfo.source}</td>
               </tr>
-              {licenseInfo.message && (
+              {(licenseInfo.soft_warn || licenseInfo.hard_blocked || licenseInfo.expired) && (
                 <tr>
-                  <td className="muted">Статус</td>
-                  <td>{licenseInfo.message}</td>
+                  <td className="muted">{t("common.status")}</td>
+                  <td>
+                    {licenseStatusText(licenseInfo, t)}
+                    {licenseInfo.hard_blocked ? ` ${t("license.createForbidden")}` : ""}
+                  </td>
                 </tr>
               )}
             </tbody>
           </table>
-          <label>Hardware fingerprint (для генератора)</label>
+          <label>{t("config.licenseHwFingerprint")}</label>
           <textarea
             readOnly
             rows={2}
@@ -810,13 +812,13 @@ export function ConfigPage() {
             style={{ width: "100%", marginBottom: "0.5rem" }}
           />
           <p className="muted" style={{ marginTop: 0 }}>
-            Скопируйте в поле Hardware Fingerprint генератора. Для dev без привязки к железу укажите{" "}
-            <span className="mono">*</span> и включите <span className="mono">KEEPPAM_LICENSE_SKIP_HW=true</span>.
-            {licenseSkipHw ? " (проверка HW сейчас отключена)" : ""}
+            {t("config.fingerprintHint1")}{" "}
+            <span className="mono">*</span> {t("config.fingerprintHint2")} <span className="mono">KEEPPAM_LICENSE_SKIP_HW=true</span>.
+            {licenseSkipHw ? t("config.fingerprintHwOff") : ""}
           </p>
           {canWrite && (
             <>
-              <label>Загрузить файл .lic</label>
+              <label>{t("config.licenseUploadLabel")}</label>
               <input
                 type="file"
                 accept=".lic,application/octet-stream"
@@ -834,11 +836,20 @@ export function ConfigPage() {
 
       {infra && (
         <div className="card" style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
-          <h2>Инфраструктура (env)</h2>
+          <h2>{t("config.infraTitle")}</h2>
           <p className="muted" style={{ marginTop: 0 }}>
-            Только чтение. Меняется через переменные окружения API / session-worker (см.{" "}
+            {t("config.infraReadOnly")}{" "}
             <span className="mono">docs/prod-infra.txt</span>).
           </p>
+          {(infra.version || infra.build_time) && (
+            <p>
+              {t("config.versionLabel")}{" "}
+              <span className="mono">
+                {infra.version || "—"}
+                {infra.build_time ? ` · built ${infra.build_time}` : ""}
+              </span>
+            </p>
+          )}
           <p>
             Data key: <span className="mono">{infra.data_key_source}</span>
           </p>
@@ -864,7 +875,7 @@ export function ConfigPage() {
               {infra.worm_recordings
                 ? `${infra.object_lock_mode || "on"} · ${infra.object_lock_days ?? "?"}d`
                 : infra.recordings_backend === "s3"
-                  ? "s3 без Object Lock"
+                  ? t("config.infraS3NoObjectLock")
                   : "n/a (local)"}
             </span>
           </p>
@@ -913,8 +924,8 @@ export function ConfigPage() {
               {infra.geoip_ready
                 ? `${infra.geoip_type || infra.geoip_db || "ready"}${infra.geoip_nodes ? ` · ${infra.geoip_nodes} nodes` : ""}`
                 : infra.geoip_db
-                  ? `${infra.geoip_db} (не загружена)`
-                  : "LAN only (нет MMDB)"}
+                  ? `${infra.geoip_db} ${t("config.notLoaded")}`
+                  : t("config.infraGeoipMissing")}
             </span>
           </p>
           {!!(infra.trusted_proxies && infra.trusted_proxies.length) && (
@@ -929,7 +940,7 @@ export function ConfigPage() {
               {infra.opa_ready
                 ? `${infra.opa_package || "keeppam.authz"} · ${infra.opa_policy || "ready"}`
                 : infra.opa_policy
-                  ? `${infra.opa_policy} (не загружена)`
+                  ? `${infra.opa_policy} ${t("config.notLoaded")}`
                   : "off"}
             </span>
           </p>
@@ -966,7 +977,7 @@ export function ConfigPage() {
               type="button"
               onClick={() => void api.downloadSBOM().catch((e) => setError(e instanceof Error ? e.message : "SBOM"))}
             >
-              Скачать CycloneDX
+              {t("config.infraDownloadCycloneDX")}
             </button>
           </p>
           <p>
@@ -975,7 +986,7 @@ export function ConfigPage() {
               {infra.otel_ready
                 ? `${infra.otel_via || "otlp"} · ${infra.otel_endpoint || "on"}`
                 : infra.otel_endpoint
-                  ? `${infra.otel_endpoint} (не активен)`
+                  ? `${infra.otel_endpoint} ${t("config.notActive")}`
                   : "off"}
             </span>
           </p>
@@ -1005,9 +1016,9 @@ export function ConfigPage() {
               const saved = await api.putArchiveSettings(body);
               setArchive({ ...emptyArchive, ...saved });
               setSmbPass("");
-              setMsg("Архив сохранён");
+              setMsg(t("config.archiveSaved"));
             } catch (err) {
-              setError(err instanceof Error ? err.message : "Ошибка");
+              setError(err instanceof Error ? err.message : t("config.errorGeneric"));
             } finally {
               setBusy(false);
             }
@@ -1015,10 +1026,9 @@ export function ConfigPage() {
         }}
         style={{ maxWidth: 640, marginBottom: "1.25rem" }}
       >
-        <h2>Архив записей (SMB / NFS)</h2>
+        <h2>{t("config.archiveTitle")}</h2>
         <p className="muted">
-          Копия recordings старше N дней на NFS mount или SMB2/3. Индекс сессии в БД остаётся. Replay
-          качает с архива, если локального файла нет.{" "}
+          {t("config.archiveHintJsx")}{" "}
           <span className="mono">docs/archive-smb-nfs.txt</span>
         </p>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
@@ -1027,17 +1037,17 @@ export function ConfigPage() {
             checked={archive.enabled}
             onChange={(e) => setArchive({ ...archive, enabled: e.target.checked })}
           />
-          Включить
+          {t("config.enable")}
         </label>
         <label>Backend</label>
         <select
           value={archive.backend}
           onChange={(e) => setArchive({ ...archive, backend: e.target.value })}
         >
-          <option value="nfs">NFS (каталог в контейнере)</option>
-          <option value="smb">SMB2/3 (CIFS v2–3)</option>
+          <option value="nfs">{t("config.archiveProtocolNfs")}</option>
+          <option value="smb">{t("config.archiveProtocolSmb")}</option>
         </select>
-        <label>Возраст, дней (0 = сразу)</label>
+        <label>{t("config.archiveAgeDays")}</label>
         <input
           type="number"
           min={0}
@@ -1045,7 +1055,7 @@ export function ConfigPage() {
           value={archive.age_days}
           onChange={(e) => setArchive({ ...archive, age_days: Number(e.target.value) || 0 })}
         />
-        <label>Интервал job, мин</label>
+        <label>{t("config.jobIntervalMin")}</label>
         <input
           type="number"
           min={5}
@@ -1055,7 +1065,7 @@ export function ConfigPage() {
         />
         {archive.backend === "nfs" && (
           <>
-            <label>Путь NFS (mount в контейнере)</label>
+            <label>{t("config.archiveNfsPath")}</label>
             <input
               value={archive.nfs_path}
               onChange={(e) => setArchive({ ...archive, nfs_path: e.target.value })}
@@ -1090,7 +1100,7 @@ export function ConfigPage() {
                 placeholder="AD"
               />
             </div>
-            <label>Password {archive.has_smb_password ? "(задан)" : ""}</label>
+            <label>Password {archive.has_smb_password ? t("config.secretSet") : ""}</label>
             <input
               type="password"
               value={smbPass}
@@ -1105,7 +1115,7 @@ export function ConfigPage() {
             checked={archive.delete_local}
             onChange={(e) => setArchive({ ...archive, delete_local: e.target.checked })}
           />
-          Удалять локальную копию после checksum OK
+          {t("config.deleteLocalAfterChecksum")}
         </label>
         {archive.last_run_at && (
           <p className="muted">
@@ -1115,7 +1125,7 @@ export function ConfigPage() {
         )}
         <div className="row" style={{ gap: "0.5rem" }}>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить архив
+            {t("config.saveArchive")}
           </button>
           <button
             className="btn secondary"
@@ -1127,37 +1137,37 @@ export function ConfigPage() {
                 setError("");
                 try {
                   const st = await api.runArchiveSync();
-                  setMsg(`Архив: скопировано ${st.copied}, ошибок ${st.failed}`);
+                  setMsg(t("config.archiveStatusCopied", { copied: st.copied, failed: st.failed }));
                   const saved = await api.getArchiveSettings();
                   setArchive({ ...emptyArchive, ...saved });
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : "Ошибка sync");
+                  setError(err instanceof Error ? err.message : t("config.syncFailed"));
                 } finally {
                   setBusy(false);
                 }
               })();
             }}
           >
-            Запустить сейчас
+            {t("config.runJobNow")}
           </button>
         </div>
       </form>
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
-        <h2>Авторизация</h2>
-        <label>Режим входа</label>
+        <h2>{t("config.authTitle")}</h2>
+        <label>{t("config.loginMode")}</label>
         <select
           value={form.mode}
           onChange={(e) => setForm({ ...form, mode: e.target.value })}
         >
-          <option value="local">Локальный (логин/пароль + MFA)</option>
+          <option value="local">{t("config.loginModeLocal")}</option>
           <option value="oidc">OIDC / SSO</option>
           <option value="saml">SAML 2.0 / SSO</option>
           <option value="ldap">LDAP / Active Directory</option>
           <option value="radius">RADIUS (PAP)</option>
         </select>
 
-        <label>Public Base URL (для SSO redirect / ACS)</label>
+        <label>{t("config.publicBaseUrl")}</label>
         <input
           value={form.public_base_url}
           onChange={(e) => setForm({ ...form, public_base_url: e.target.value })}
@@ -1174,7 +1184,7 @@ export function ConfigPage() {
 
         {form.mode === "oidc" && (
           <>
-            <h2>OIDC</h2>
+            <h2>{t("config.oidcTitle")}</h2>
             <label>Issuer URL</label>
             <input
               value={form.oidc_issuer}
@@ -1188,7 +1198,7 @@ export function ConfigPage() {
               onChange={(e) => setForm({ ...form, oidc_client_id: e.target.value })}
               required={form.mode === "oidc"}
             />
-            <label>Client Secret {form.has_oidc_secret ? "(задан, оставьте пустым чтобы не менять)" : ""}</label>
+            <label>Client Secret {form.has_oidc_secret ? t("config.secretSetLeaveEmpty") : ""}</label>
             <input
               type="password"
               value={secret}
@@ -1201,7 +1211,7 @@ export function ConfigPage() {
               value={form.oidc_scopes}
               onChange={(e) => setForm({ ...form, oidc_scopes: e.target.value })}
             />
-            <label>Роль по умолчанию при auto-provision</label>
+            <label>{t("config.defaultRoleAutoProvision")}</label>
             <input
               value={form.oidc_default_role}
               onChange={(e) => setForm({ ...form, oidc_default_role: e.target.value })}
@@ -1212,7 +1222,7 @@ export function ConfigPage() {
                 checked={form.oidc_auto_provision}
                 onChange={(e) => setForm({ ...form, oidc_auto_provision: e.target.checked })}
               />
-              Автосоздание пользователей
+              {t("config.autoCreateUsers")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1220,14 +1230,14 @@ export function ConfigPage() {
                 checked={form.oidc_skip_mfa}
                 onChange={(e) => setForm({ ...form, oidc_skip_mfa: e.target.checked })}
               />
-              Не требовать локальный MFA после SSO
+              {t("config.skipLocalMfaAfterSaml")}
             </label>
           </>
         )}
 
         {form.mode === "saml" && (
           <>
-            <h2>SAML 2.0</h2>
+            <h2>{t("config.samlTitle")}</h2>
             <p className="muted">
               SP metadata:{" "}
               <a className="mono" href="/api/v1/auth/saml/metadata" target="_blank" rel="noreferrer">
@@ -1238,39 +1248,39 @@ export function ConfigPage() {
               <br />
               SLO URL: <span className="mono">{form.saml_slo_url || `${form.public_base_url || "…"}/api/v1/auth/saml/slo`}</span>
               <br />
-              SP key: {form.has_saml_sp_key ? "сгенерирован" : "будет создан при сохранении"}
+              SP key: {form.has_saml_sp_key ? t("config.spKeyGenerated") : t("config.spKeyWillCreate")}
               <br />
-              IdP-initiated ACS принимается без предварительного /start. SLO на IdP — из metadata URL.
+              {t("config.idpInitiatedHint")}
             </p>
-            <label>IdP Metadata URL (предпочтительно)</label>
+            <label>{t("config.idpMetadataUrl")}</label>
             <input
               value={form.saml_idp_metadata_url}
               onChange={(e) => setForm({ ...form, saml_idp_metadata_url: e.target.value })}
               placeholder="https://idp.example/metadata"
             />
-            <label>IdP Entity ID (ручной fallback)</label>
+            <label>{t("config.idpEntityIdFallback")}</label>
             <input
               value={form.saml_idp_entity_id}
               onChange={(e) => setForm({ ...form, saml_idp_entity_id: e.target.value })}
             />
-            <label>IdP SSO URL</label>
+            <label>{t("config.idpSsoUrl")}</label>
             <input
               value={form.saml_idp_sso_url}
               onChange={(e) => setForm({ ...form, saml_idp_sso_url: e.target.value })}
               placeholder="https://idp.example/sso"
             />
-            <label>IdP signing certificate (PEM)</label>
+            <label>{t("config.idpSigningCert")}</label>
             <textarea
               value={form.saml_idp_cert_pem}
               onChange={(e) => setForm({ ...form, saml_idp_cert_pem: e.target.value })}
               rows={4}
               placeholder="-----BEGIN CERTIFICATE-----"
             />
-            <label>SP Entity ID</label>
+            <label>{t("config.spEntityId")}</label>
             <input
               value={form.saml_sp_entity_id}
               onChange={(e) => setForm({ ...form, saml_sp_entity_id: e.target.value })}
-              placeholder="по умолчанию = metadata URL"
+              placeholder={t("config.spEntityIdDefaultMetadata")}
             />
             <div className="row" style={{ gap: "0.75rem" }}>
               <div style={{ flex: 1 }}>
@@ -1295,7 +1305,7 @@ export function ConfigPage() {
                 />
               </div>
             </div>
-            <label>Роль по умолчанию при auto-provision</label>
+            <label>{t("config.defaultRoleAutoProvision")}</label>
             <input
               value={form.saml_default_role}
               onChange={(e) => setForm({ ...form, saml_default_role: e.target.value })}
@@ -1306,7 +1316,7 @@ export function ConfigPage() {
               onChange={(e) => setForm({ ...form, saml_group_attr: e.target.value })}
               placeholder="groups"
             />
-            <label>Group → role (строка `group=role`, роли должны существовать)</label>
+            <label>{t("config.groupRoleMapLabel")}</label>
             <textarea
               value={groupMapText}
               onChange={(e) => setGroupMapText(e.target.value)}
@@ -1319,7 +1329,7 @@ export function ConfigPage() {
                 checked={form.saml_auto_provision}
                 onChange={(e) => setForm({ ...form, saml_auto_provision: e.target.checked })}
               />
-              Автосоздание пользователей
+              {t("config.autoCreateUsers")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1327,7 +1337,7 @@ export function ConfigPage() {
                 checked={form.saml_skip_mfa}
                 onChange={(e) => setForm({ ...form, saml_skip_mfa: e.target.checked })}
               />
-              Не требовать локальный MFA после SSO
+              {t("config.skipLocalMfaAfterSaml")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1335,18 +1345,15 @@ export function ConfigPage() {
                 checked={!!form.rotate_saml_sp_key}
                 onChange={(e) => setForm({ ...form, rotate_saml_sp_key: e.target.checked })}
               />
-              Пересоздать SP signing key
+              {t("config.regenerateSpKey")}
             </label>
 
-            <h2>Дополнительные SAML IdP</h2>
-            <p className="muted">
-              Один SP (ключ / Entity ID выше). Каждый IdP — своя кнопка на логине и ACS{" "}
-              <span className="mono">/api/v1/auth/saml/idp/&#123;slug&#125;/acs</span>. Максимум 8.
-            </p>
+            <h2>{t("config.extraIdpTitle")}</h2>
+            <p className="muted">{t("config.extraIdpHint")}</p>
             {extraIdPs.map((idp) => (
               <div key={idp.id} className="row" style={{ gap: "0.5rem", alignItems: "center", marginBottom: "0.35rem" }}>
                 <span className="mono" style={{ flex: 1 }}>
-                  {idp.name} ({idp.slug}){idp.enabled ? "" : " — выкл"}
+                  {idp.name} ({idp.slug}){idp.enabled ? "" : t("config.idpDisabled")}
                 </span>
                 <button
                   className="btn secondary"
@@ -1356,7 +1363,7 @@ export function ConfigPage() {
                     setExtraMapText(formatGroupRoleMap(idp.group_role_map));
                   }}
                 >
-                  Изменить
+                  {t("config.edit")}
                 </button>
                 <button
                   className="btn secondary"
@@ -1370,25 +1377,25 @@ export function ConfigPage() {
                           setExtraForm(emptyExtraIdP);
                           setExtraMapText("");
                         }
-                        setMsg("IdP удалён");
+                        setMsg(t("config.idpDeleted"));
                       } catch (err) {
-                        setError(err instanceof Error ? err.message : "Ошибка удаления IdP");
+                        setError(err instanceof Error ? err.message : t("config.idpDeleteFailed"));
                       }
                     })();
                   }}
                 >
-                  Удалить
+                  {t("config.delete")}
                 </button>
               </div>
             ))}
-            <label>Slug (латиница, не default)</label>
+            <label>{t("config.idpSlug")}</label>
             <input
               value={extraForm.slug}
               onChange={(e) => setExtraForm({ ...extraForm, slug: e.target.value })}
               placeholder="okta"
               disabled={!!extraForm.id}
             />
-            <label>Имя на кнопке входа</label>
+            <label>{t("config.idpButtonLabel")}</label>
             <input
               value={extraForm.name}
               onChange={(e) => setExtraForm({ ...extraForm, name: e.target.value })}
@@ -1399,7 +1406,7 @@ export function ConfigPage() {
               value={extraForm.metadata_url}
               onChange={(e) => setExtraForm({ ...extraForm, metadata_url: e.target.value })}
             />
-            <label>IdP Entity ID / SSO URL / cert — ручной fallback</label>
+            <label>{t("config.idpManualFallback")}</label>
             <input
               value={extraForm.entity_id}
               onChange={(e) => setExtraForm({ ...extraForm, entity_id: e.target.value })}
@@ -1429,7 +1436,7 @@ export function ConfigPage() {
                 checked={extraForm.enabled}
                 onChange={(e) => setExtraForm({ ...extraForm, enabled: e.target.checked })}
               />
-              Включён
+              {t("config.enabled")}
             </label>
             {extraForm.sp_metadata_url && (
               <p className="muted">
@@ -1463,16 +1470,16 @@ export function ConfigPage() {
                       setExtraIdPs(list.idps || []);
                       setExtraForm({ ...emptyExtraIdP, ...saved });
                       setExtraMapText(formatGroupRoleMap(saved.group_role_map));
-                      setMsg("SAML IdP сохранён");
+                      setMsg(t("config.idpSaved"));
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : "Ошибка сохранения IdP");
+                      setError(err instanceof Error ? err.message : t("config.idpSaveFailed"));
                     } finally {
                       setBusy(false);
                     }
                   })();
                 }}
               >
-                {extraForm.id ? "Сохранить IdP" : "Добавить IdP"}
+                {extraForm.id ? t("config.saveIdP") : t("config.addIdP")}
               </button>
               {extraForm.id && (
                 <button
@@ -1483,7 +1490,7 @@ export function ConfigPage() {
                     setExtraMapText("");
                   }}
                 >
-                  Новый
+                  {t("config.newIdP")}
                 </button>
               )}
             </div>
@@ -1492,7 +1499,7 @@ export function ConfigPage() {
 
         {form.mode === "ldap" && (
           <>
-            <h2>LDAP</h2>
+            <h2>{t("config.loginModeLdap")}</h2>
             <label>URL</label>
             <input
               value={form.ldap_url}
@@ -1506,7 +1513,7 @@ export function ConfigPage() {
               onChange={(e) => setForm({ ...form, ldap_bind_dn: e.target.value })}
             />
             <label>
-              Bind password {form.has_ldap_bind_password ? "(задан)" : ""}
+              Bind password {form.has_ldap_bind_password ? t("config.secretSet") : ""}
             </label>
             <input
               type="password"
@@ -1549,7 +1556,7 @@ export function ConfigPage() {
                 />
               </div>
             </div>
-            <label>Роль по умолчанию</label>
+            <label>{t("config.defaultRole")}</label>
             <input
               value={form.ldap_default_role}
               onChange={(e) => setForm({ ...form, ldap_default_role: e.target.value })}
@@ -1568,7 +1575,7 @@ export function ConfigPage() {
                 checked={form.ldap_insecure_tls}
                 onChange={(e) => setForm({ ...form, ldap_insecure_tls: e.target.checked })}
               />
-              Не проверять TLS-сертификат
+              {t("config.noTlsVerify")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1576,7 +1583,7 @@ export function ConfigPage() {
                 checked={form.ldap_auto_provision}
                 onChange={(e) => setForm({ ...form, ldap_auto_provision: e.target.checked })}
               />
-              Автосоздание пользователей
+              {t("config.autoCreateUsers")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1584,29 +1591,27 @@ export function ConfigPage() {
                 checked={form.ldap_skip_mfa}
                 onChange={(e) => setForm({ ...form, ldap_skip_mfa: e.target.checked })}
               />
-              Не требовать локальный MFA после LDAP
+              {t("config.skipLocalMfaAfterLdap")}
             </label>
           </>
         )}
 
         {form.mode === "radius" && (
           <>
-            <h2>RADIUS</h2>
+            <h2>{t("config.radiusTitle")}</h2>
             <p className="muted">
-              PAP (UDP 1812), EAP-TTLS (inner PAP), PEAP (MSCHAPv2) или RadSec (TLS :2083). Filter-Id / Class{" "}
-              <span className="mono">admin|operator|auditor|security</span> (или{" "}
-              <span className="mono">keeppam-admin</span>) задаёт роль при первом входе. См.{" "}
+              {t("config.radiusHint")}{" "}
               <span className="mono">docs/radius-auth.txt</span>,{" "}
               <span className="mono">docs/radius-eap.txt</span>.
             </p>
-            <label>Сервер (host или host:port)</label>
+            <label>{t("config.ldapServer")}</label>
             <input
               value={form.radius_host}
               onChange={(e) => setForm({ ...form, radius_host: e.target.value })}
               placeholder="radius.example:1812"
               required={form.mode === "radius"}
             />
-            <label>Shared secret {form.has_radius_secret ? "(задан)" : ""}</label>
+            <label>Shared secret {form.has_radius_secret ? t("config.secretSet") : ""}</label>
             <input
               type="password"
               value={radiusSecret}
@@ -1619,7 +1624,7 @@ export function ConfigPage() {
               onChange={(e) => setForm({ ...form, radius_nas_id: e.target.value })}
               placeholder="keeppam"
             />
-            <label>Timeout, сек (1–30)</label>
+            <label>{t("config.radiusTimeout")}</label>
             <input
               type="number"
               min={1}
@@ -1657,7 +1662,7 @@ export function ConfigPage() {
                     checked={form.radius_eap_insecure_tls}
                     onChange={(e) => setForm({ ...form, radius_eap_insecure_tls: e.target.checked })}
                   />
-                  EAP: не проверять hostname сертификата
+                  {t("config.eapNoVerifyHostname")}
                 </label>
               </>
             )}
@@ -1667,7 +1672,7 @@ export function ConfigPage() {
                 checked={form.radius_radsec}
                 onChange={(e) => setForm({ ...form, radius_radsec: e.target.checked })}
               />
-              RadSec (RADIUS/TLS, порт 2083)
+              {t("config.radsecOption")}
             </label>
             {form.radius_radsec && (
               <>
@@ -1685,7 +1690,7 @@ export function ConfigPage() {
                 />
               </>
             )}
-            <label>Роль по умолчанию</label>
+            <label>{t("config.defaultRole")}</label>
             <input
               value={form.radius_default_role}
               onChange={(e) => setForm({ ...form, radius_default_role: e.target.value })}
@@ -1696,7 +1701,7 @@ export function ConfigPage() {
                 checked={form.radius_auto_provision}
                 onChange={(e) => setForm({ ...form, radius_auto_provision: e.target.checked })}
               />
-              Автосоздание пользователей
+              {t("config.autoCreateUsers")}
             </label>
             <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
               <input
@@ -1704,14 +1709,14 @@ export function ConfigPage() {
                 checked={form.radius_skip_mfa}
                 onChange={(e) => setForm({ ...form, radius_skip_mfa: e.target.checked })}
               />
-              Не требовать локальный MFA после RADIUS
+              {t("config.skipLocalMfaAfterRadius")}
             </label>
           </>
         )}
 
-        <h2>SCIM 2.0</h2>
+        <h2>{t("config.scimTitle")}</h2>
         <p className="muted">
-          Провижининг пользователей и групп из Entra / Okta. Не зависит от режима входа (можно вместе с SAML).
+          {t("config.scimLead")}
           Tenant URL:{" "}
           <span className="mono">{form.scim_base_url || `${form.public_base_url || "…"}/scim/v2`}</span>
         </p>
@@ -1721,10 +1726,10 @@ export function ConfigPage() {
             checked={form.scim_enabled}
             onChange={(e) => setForm({ ...form, scim_enabled: e.target.checked })}
           />
-          Включить inbound SCIM
+          {t("config.scimEnableInbound")}
         </label>
         <label>
-          Bearer-токен {form.has_scim_token ? "(задан, оставьте пустым чтобы не менять)" : ""}
+          {t("config.bearerTokenLabel")} {form.has_scim_token ? t("config.secretSetLeaveEmpty") : ""}
         </label>
         <input
           type="password"
@@ -1743,43 +1748,39 @@ export function ConfigPage() {
             const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
             setScimToken(token);
             void navigator.clipboard.writeText(token).then(
-              () => setMsg("SCIM-токен сгенерирован и скопирован — сохраните настройки"),
-              () => setMsg("SCIM-токен сгенерирован — скопируйте из поля и сохраните"),
+              () => setMsg(t("config.scimTokenCopied")),
+              () => setMsg(t("config.scimTokenGenerated")),
             );
           }}
         >
-          Сгенерировать токен
+          {t("config.genToken")}
         </button>
-        <label>Роль по умолчанию для новых пользователей</label>
+        <label>{t("config.defaultRoleNewUsers")}</label>
         <input
           value={form.scim_default_role}
           onChange={(e) => setForm({ ...form, scim_default_role: e.target.value })}
           placeholder="operator"
         />
-        <p className="muted">admin через SCIM не выдаётся — значение clamp в operator.</p>
+        <p className="muted">{t("config.scimAdminClamp")}</p>
 
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
-          Сохранить авторизацию
+          {t("config.saveAuth")}
         </button>
       </form>
 
       <form className="card" onSubmit={onSaveSSH} style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
-        <h2>SSH-аутентификация к целям</h2>
-        <p className="muted">
-          Как PAM подключается к SSH-активам. Режим сертификата выдаёт короткоживущий user cert
-          (principal = username учётки). На цели нужен{" "}
-          <span className="mono">TrustedUserCAKeys</span>.
-        </p>
-        <label>Режим</label>
+        <h2>{t("config.sshTitle")}</h2>
+        <p className="muted">{t("config.sshAuthLeadFull")}</p>
+        <label>{t("config.mode")}</label>
         <select
           value={ssh.ssh_auth_mode}
           onChange={(e) => setSsh({ ...ssh, ssh_auth_mode: e.target.value })}
         >
-          <option value="vault_secret">Секрет из vault (пароль / ключ учётки)</option>
-          <option value="ssh_cert">Эфемерный SSH-сертификат (CA)</option>
-          <option value="gssapi">Kerberos / GSSAPI (gssapi-with-mic)</option>
+          <option value="vault_secret">{t("config.sshModeVault")}</option>
+          <option value="ssh_cert">{t("config.sshModeCert")}</option>
+          <option value="gssapi">{t("config.sshModeKerberos")}</option>
         </select>
-        <label>TTL сертификата (часы)</label>
+        <label>{t("config.certTtlHours")}</label>
         <input
           type="number"
           min={1}
@@ -1793,7 +1794,7 @@ export function ConfigPage() {
             <textarea
               readOnly
               rows={3}
-              value={ssh.ssh_ca_public || (ssh.has_ssh_ca ? "" : "Сохраните режим — CA создастся автоматически")}
+              value={ssh.ssh_ca_public || (ssh.has_ssh_ca ? "" : t("config.sshSaveModeHint"))}
               className="mono"
               style={{ width: "100%", fontSize: "0.8rem" }}
             />
@@ -1803,20 +1804,15 @@ export function ConfigPage() {
                 type="button"
                 onClick={() => {
                   void navigator.clipboard.writeText(ssh.ssh_ca_public);
-                  setMsg("CA pubkey скопирован");
+                  setMsg(t("config.caPubkeyCopied"));
                 }}
               >
-                Копировать pubkey
+                {t("config.copyPubkey")}
               </button>
             )}
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              На цели: положить ключ в <span className="mono">/etc/ssh/keeppam_ca.pub</span>, в{" "}
-              <span className="mono">sshd_config</span> добавить{" "}
-              <span className="mono">TrustedUserCAKeys /etc/ssh/keeppam_ca.pub</span>, затем{" "}
-              <span className="mono">systemctl reload sshd</span>.
-            </p>
+            <p className="muted" style={{ marginTop: "0.5rem" }}>{t("config.sshCaTargetHint")}</p>
             <button className="btn secondary" type="button" disabled={busy} onClick={() => void onRotateCA()}>
-              Сгенерировать новый CA
+              {t("config.rotateCa")}
             </button>
           </>
         )}
@@ -1829,7 +1825,7 @@ export function ConfigPage() {
               onChange={(e) => setSsh({ ...ssh, krb5_realm: e.target.value })}
               placeholder="CORP.LOCAL"
             />
-            <label>krb5.conf (опционально; пусто = DNS lookup KDC)</label>
+            <label>{t("config.krb5Conf")}</label>
             <textarea
               className="mono"
               rows={6}
@@ -1837,53 +1833,46 @@ export function ConfigPage() {
               onChange={(e) => setSsh({ ...ssh, krb5_config: e.target.value })}
               style={{ width: "100%", fontSize: "0.8rem" }}
             />
-            <label>SPN template (%h = hostname актива)</label>
+            <label>{t("config.spnTemplate")}</label>
             <input
               className="mono"
               value={ssh.krb5_spn_template || "host/%h"}
               onChange={(e) => setSsh({ ...ssh, krb5_spn_template: e.target.value })}
             />
-            <p className="muted">
-              По умолчанию PAM логинится в KDC паролем учётки из vault (username@REALM), затем
-              gssapi-with-mic на SPN host/&lt;fqdn&gt;. Опционально — keytab сервиса.
-            </p>
-            <label>Keytab principal (если используете keytab)</label>
+            <p className="muted">{t("config.gssapiHint")}</p>
+            <label>{t("config.keytabPrincipal")}</label>
             <input
               className="mono"
               value={ssh.krb5_principal || ""}
               onChange={(e) => setSsh({ ...ssh, krb5_principal: e.target.value })}
               placeholder="keeppam/gateway$@CORP.LOCAL"
             />
-            <label>Keytab (base64, write-only){ssh.has_krb5_keytab ? " — загружен" : ""}</label>
+            <label>Keytab (base64, write-only){ssh.has_krb5_keytab ? t("config.keytabLoaded") : ""}</label>
             <textarea
               className="mono"
               rows={3}
               value={ssh.krb5_keytab || ""}
               onChange={(e) => setSsh({ ...ssh, krb5_keytab: e.target.value })}
-              placeholder="оставьте пустым чтобы не менять"
+              placeholder={t("config.leaveEmptyNoChange")}
               style={{ width: "100%", fontSize: "0.8rem" }}
             />
           </>
         )}
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
-          Сохранить SSH
+          {t("config.saveSsh")}
         </button>
       </form>
 
       <form className="card" onSubmit={onSaveFirewall} style={{ maxWidth: 640 }}>
-        <h2>Firewall PAM</h2>
-        <p className="muted">
-          CIDR шлюзов KeepPAM (SSH :2222, Guacamole, wire). Экспорт iptables/nft для активов с{" "}
-          <span className="mono">pam_only</span>. На SSH worker дополнительно блокируется port-forward на
-          сервисный порт другого pam-only актива.
-        </p>
-        <label>PAM gateway CIDR (через запятую)</label>
+        <h2>{t("config.firewallTitle")}</h2>
+        <p className="muted">{t("config.firewallLead")}</p>
+        <label>{t("config.pamGatewayCidr")}</label>
         <input
           value={firewallCidrsText}
           onChange={(e) => setFirewallCidrsText(e.target.value)}
           placeholder="10.0.1.0/24, 10.0.2.0/24"
         />
-        <label>Probe agents (сегменты, до 16)</label>
+        <label>{t("config.probeAgents")}</label>
         {probeAgents.map((a, i) => (
           <div key={i} className="card" style={{ padding: "0.5rem", marginBottom: "0.5rem" }}>
             <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
@@ -1939,7 +1928,7 @@ export function ConfigPage() {
             </div>
             <input
               type="password"
-              placeholder={a.has_token ? "token (задан) — пусто = не менять" : "Bearer token (опц.)"}
+              placeholder={a.has_token ? t("config.probeAgentTokenSet") : t("config.probeAgentBearer")}
               value={a.token}
               onChange={(e) => {
                 const next = [...probeAgents];
@@ -1961,9 +1950,9 @@ export function ConfigPage() {
               ])
             }
           >
-            + agent
+            {t("config.addAgent")}
           </button>
-          <label>Quorum (drift если ≥ N агентов видят reachable)</label>
+          <label>{t("config.probeQuorum")}</label>
           <input
             type="number"
             min={1}
@@ -1973,22 +1962,22 @@ export function ConfigPage() {
             style={{ width: 64 }}
           />
           <button type="button" className="btn secondary" disabled={busy} onClick={(e) => void onSaveProbeAgents(e)}>
-            Сохранить agents
+            {t("config.saveAgents")}
           </button>
         </div>
         <p className="muted" style={{ marginTop: 0 }}>
-          POST {"{host, port}"} → {"{reachable}"}. Стенд:{" "}
+          {t("config.probeStandHint")}{" "}
           <span className="mono">http://firewall-probe:8100/probe</span>,{" "}
           <span className="mono">http://firewall-probe-b:8101/probe</span>. Legacy{" "}
-          <span className="mono">probe_url</span> — если agents пуст.
+          
         </p>
-        <label>Legacy probe URL (если agents пуст)</label>
+        <label>{t("config.legacyProbeUrl")}</label>
         <input
           value={firewallForm.probe_url}
           onChange={(e) => setFirewallForm({ ...firewallForm, probe_url: e.target.value })}
           placeholder="http://firewall-probe:8100/probe"
         />
-        <label>Probe interval (часы, 0 = выкл.)</label>
+        <label>{t("config.probeInterval")}</label>
         <input
           type="number"
           min={0}
@@ -2009,7 +1998,7 @@ export function ConfigPage() {
           type="password"
           value={firewallAwxToken}
           onChange={(e) => setFirewallAwxToken(e.target.value)}
-          placeholder="Bearer token — пусто = не менять"
+          placeholder={t("config.bearerLeaveEmpty")}
         />
         <label className="row" style={{ gap: 8, alignItems: "center" }}>
           <input
@@ -2017,7 +2006,7 @@ export function ConfigPage() {
             checked={firewallForm.awx_auto_push}
             onChange={(e) => setFirewallForm({ ...firewallForm, awx_auto_push: e.target.checked })}
           />
-          Auto-push AWX при отметке «правила применены»
+          {t("config.awxAutoPush")}
         </label>
         <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
           <button
@@ -2026,7 +2015,7 @@ export function ConfigPage() {
             disabled={busy}
             onClick={() => void api.downloadFirewallRules("iptables").catch((err) => setError(String(err)))}
           >
-            Скачать iptables
+            {t("config.downloadIptables")}
           </button>
           <button
             className="btn secondary"
@@ -2034,7 +2023,7 @@ export function ConfigPage() {
             disabled={busy}
             onClick={() => void api.downloadFirewallRules("nft").catch((err) => setError(String(err)))}
           >
-            Скачать nft
+            {t("config.downloadNft")}
           </button>
           <button
             className="btn secondary"
@@ -2042,7 +2031,7 @@ export function ConfigPage() {
             disabled={busy}
             onClick={() => void api.downloadFirewallRules("ansible").catch((err) => setError(String(err)))}
           >
-            Скачать Ansible
+            {t("config.downloadAnsible")}
           </button>
           <button
             className="btn secondary"
@@ -2053,7 +2042,7 @@ export function ConfigPage() {
                 .runFirewallProbe()
                 .then(async () => {
                   setFirewallStatus(await api.getFirewallStatus());
-                  setMsg("Firewall probe завершён");
+                  setMsg(t("config.firewallProbeDone"));
                 })
                 .catch((err) => setError(String(err)))
             }
@@ -2069,7 +2058,7 @@ export function ConfigPage() {
                 .pushFirewallAWX()
                 .then(async () => {
                   setFirewallStatus(await api.getFirewallStatus());
-                  setMsg("AWX job запущен");
+                  setMsg(t("config.awxJobStarted"));
                 })
                 .catch((err) => setError(String(err)))
             }
@@ -2077,14 +2066,14 @@ export function ConfigPage() {
             Push AWX
           </button>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить
+            {t("config.save")}
           </button>
         </div>
         {firewallStatus && (
           <div style={{ marginTop: "1rem" }}>
             <p className="muted">
-              pam_only: {firewallStatus.pam_only_count} · без отметки: {firewallStatus.unapplied_count}
-              {firewallStatus.non_ip_count > 0 ? ` · hostname в address: ${firewallStatus.non_ip_count}` : ""}
+              {t("config.fwPamOnlyStatus", { n: firewallStatus.pam_only_count, u: firewallStatus.unapplied_count })}
+              {firewallStatus.non_ip_count > 0 ? t("config.fwHostnameInAddress", { n: firewallStatus.non_ip_count }) : ""}
               {firewallStatus.probe_reachable_count > 0
                 ? ` · probe reachable: ${firewallStatus.probe_reachable_count}`
                 : ""}
@@ -2106,9 +2095,9 @@ export function ConfigPage() {
               <table className="table compact">
                 <thead>
                   <tr>
-                    <th>Актив</th>
+                    <th>{t("common.asset")}</th>
                     <th>Endpoint</th>
-                    <th>Правила</th>
+                    <th>{t("config.rules")}</th>
                     <th>Probe</th>
                     <th>Gaps</th>
                   </tr>
@@ -2141,19 +2130,18 @@ export function ConfigPage() {
       </form>
 
       <form className="card" onSubmit={onSaveNAC} style={{ maxWidth: 640 }}>
-        <h2>NAC client</h2>
+        <h2>{t("config.nacTitle")}</h2>
         <p className="muted">
-          Posture check перед подключением и notify start/end сессии во внешний NAC (generic REST или Cisco ISE path).
-          Заголовок клиента: <span className="mono">X-KeepPAM-Client-MAC</span>. Mock:{" "}
+          {t("config.nacLead")} Mock:{" "}
           <span className="mono">cmd/nac-mock</span> (:8110), IP *.66 → deny.
         </p>
-        <label>Режим</label>
+        <label>{t("config.mode")}</label>
         <select value={nacForm.mode} onChange={(e) => setNacForm({ ...nacForm, mode: e.target.value })}>
-          <option value="off">выкл.</option>
+          <option value="off">{t("config.off")}</option>
           <option value="audit">audit</option>
           <option value="enforce">enforce</option>
         </select>
-        <label>API URL (база NAC)</label>
+        <label>{t("config.nacApiUrl")}</label>
         <input
           value={nacForm.api_url}
           onChange={(e) => setNacForm({ ...nacForm, api_url: e.target.value })}
@@ -2172,14 +2160,14 @@ export function ConfigPage() {
           value={nacForm.timeout_ms}
           onChange={(e) => setNacForm({ ...nacForm, timeout_ms: Number(e.target.value) })}
         />
-        <label>API token {nacForm.has_api_token ? "(задан)" : ""}</label>
+        <label>API token {nacForm.has_api_token ? t("config.secretSet") : ""}</label>
         <input
           type="password"
           value={nacToken}
           onChange={(e) => setNacToken(e.target.value)}
-          placeholder="Bearer — пусто = не менять"
+          placeholder={t("config.nacBearerLeaveEmpty")}
         />
-        {nacForm.last_error ? <p className="error">Последняя ошибка: {nacForm.last_error}</p> : null}
+        {nacForm.last_error ? <p className="error">{t("config.lastError", { err: nacForm.last_error })}</p> : null}
         <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
           <button
             className="btn secondary"
@@ -2192,28 +2180,24 @@ export function ConfigPage() {
             Test posture
           </button>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить
+            {t("config.save")}
           </button>
         </div>
       </form>
 
       <form className="card" onSubmit={onSaveEIDAS} style={{ maxWidth: 640 }}>
-        <h2>Qualified PDF (eIDAS / ФСТЭК)</h2>
-        <p className="muted">
-          Поверх PAdES B-LTA: проверка policy OID квалифицированного сертификата, опционально PKCS#11 HSM (
-          <span className="mono">KEEPPAM_PDF_PKCS11_HELPER</span>). Сертификат — env{" "}
-          <span className="mono">KEEPPAM_PDF_CERT_FILE</span>.
-        </p>
-        <label>Режим</label>
+        <h2>{t("config.eidasTitle")}</h2>
+        <p className="muted">{t("config.eidasLead")}</p>
+        <label>{t("config.mode")}</label>
         <select value={eidasForm.mode} onChange={(e) => setEidasForm({ ...eidasForm, mode: e.target.value })}>
-          <option value="off">выкл. (PAdES only)</option>
-          <option value="advanced">advanced (B-LTA без QES gate)</option>
-          <option value="qualified">qualified (QES/КЭП + B-LTA)</option>
+          <option value="off">{t("config.eidasModeOff")}</option>
+          <option value="advanced">{t("config.eidasModeAdvanced")}</option>
+          <option value="qualified">{t("config.eidasQualified")}</option>
         </select>
-        <label>Профиль</label>
+        <label>{t("config.profile")}</label>
         <select value={eidasForm.profile} onChange={(e) => setEidasForm({ ...eidasForm, profile: e.target.value })}>
           <option value="eidas">eIDAS (EU QES OID)</option>
-          <option value="fstec">ФСТЭК (КЭП OID)</option>
+          <option value="fstec">{t("config.eidasModeFstec")}</option>
         </select>
         <label>
           <input
@@ -2221,7 +2205,7 @@ export function ConfigPage() {
             checked={eidasForm.require_b_lta}
             onChange={(e) => setEidasForm({ ...eidasForm, require_b_lta: e.target.checked })}
           />{" "}
-          Требовать PAdES-B-LTA
+          {t("config.requirePades")}
         </label>
         <label>
           <input
@@ -2229,7 +2213,7 @@ export function ConfigPage() {
             checked={eidasForm.pkcs11_enabled}
             onChange={(e) => setEidasForm({ ...eidasForm, pkcs11_enabled: e.target.checked })}
           />{" "}
-          PKCS#11 для ключа подписи PDF
+          {t("config.pkcs11ForPdf")}
         </label>
         {eidasForm.pkcs11_enabled ? (
           <>
@@ -2244,22 +2228,22 @@ export function ConfigPage() {
               value={eidasForm.pkcs11_label}
               onChange={(e) => setEidasForm({ ...eidasForm, pkcs11_label: e.target.value })}
             />
-            <label>PKCS#11 PIN {eidasForm.has_pkcs11_pin ? "(задан)" : ""}</label>
+            <label>PKCS#11 PIN {eidasForm.has_pkcs11_pin ? t("config.secretSet") : ""}</label>
             <input
               type="password"
               value={eidasPin}
               onChange={(e) => setEidasPin(e.target.value)}
-              placeholder="пусто = не менять"
+              placeholder={t("config.emptyNoChange")}
             />
           </>
         ) : null}
         {eidasForm.cert_cn ? (
           <p className="muted">
-            Сертификат: {eidasForm.cert_cn} · PAdES-{eidasForm.pades_profile || "—"} · QES/КЭП:{" "}
-            {eidasForm.cert_qualified ? "да" : "нет"}
+            {t("config.certSummary", { cn: eidasForm.cert_cn, profile: eidasForm.pades_profile || "—" })}{" "}
+            {eidasForm.cert_qualified ? t("common.yes") : t("common.no")}
           </p>
         ) : null}
-        {eidasForm.last_error ? <p className="error">Последняя проверка: {eidasForm.last_error}</p> : null}
+        {eidasForm.last_error ? <p className="error">{t("config.lastCheck", { err: eidasForm.last_error })}</p> : null}
         <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
           <button
             className="btn secondary"
@@ -2279,20 +2263,17 @@ export function ConfigPage() {
             Test cert
           </button>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить
+            {t("config.save")}
           </button>
         </div>
       </form>
 
       <form className="card" onSubmit={onSaveUEBAML} style={{ maxWidth: 640 }}>
-        <h2>UEBA-ML (peer-group + live)</h2>
-        <p className="muted">
-          On-prem composite score поверх базового UEBA (`docs/ueba.txt`): сравнение с peer-group (
-          <span className="mono">user_groups</span>), ML-порог, live mid-session parse guac для RDP/VNC.
-        </p>
-        <label>Режим</label>
+        <h2>{t("config.uebaTitle")}</h2>
+        <p className="muted">{t("config.uebaMlLead")}</p>
+        <label>{t("config.mode")}</label>
         <select value={uebaMlForm.mode} onChange={(e) => setUebaMlForm({ ...uebaMlForm, mode: e.target.value })}>
-          <option value="off">выкл.</option>
+          <option value="off">{t("config.off")}</option>
           <option value="audit">audit (connect + post-session)</option>
           <option value="live">live (+ mid-session scan)</option>
         </select>
@@ -2302,9 +2283,9 @@ export function ConfigPage() {
             checked={uebaMlForm.peer_group}
             onChange={(e) => setUebaMlForm({ ...uebaMlForm, peer_group: e.target.checked })}
           />{" "}
-          Peer-group baseline (доля peers с доступом к активу)
+          {t("config.peerGroupBaseline")}
         </label>
-        <label>ML threshold (0–100)</label>
+        <label>{t("config.mlThreshold")}</label>
         <input
           type="number"
           min={30}
@@ -2312,7 +2293,7 @@ export function ConfigPage() {
           value={uebaMlForm.ml_threshold}
           onChange={(e) => setUebaMlForm({ ...uebaMlForm, ml_threshold: Number(e.target.value) })}
         />
-        <label>Live interval (сек, mode=live)</label>
+        <label>{t("config.liveInterval")}</label>
         <input
           type="number"
           min={15}
@@ -2320,7 +2301,7 @@ export function ConfigPage() {
           value={uebaMlForm.live_interval_s}
           onChange={(e) => setUebaMlForm({ ...uebaMlForm, live_interval_s: Number(e.target.value) })}
         />
-        {uebaMlForm.last_error ? <p className="error">Последний live-run: {uebaMlForm.last_error}</p> : null}
+        {uebaMlForm.last_error ? <p className="error">{t("config.lastLiveRun", { err: uebaMlForm.last_error })}</p> : null}
         <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
           <button
             className="btn secondary"
@@ -2340,31 +2321,28 @@ export function ConfigPage() {
             Test score
           </button>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить
+            {t("config.save")}
           </button>
         </div>
       </form>
 
       <form className="card" onSubmit={onSaveITSM} style={{ maxWidth: 640 }}>
-        <h2>ITSM gate (тикеты JIT)</h2>
-        <p className="muted">
-          Проверка ticket_id против ITSM при запросе / одобрении / подключении. Provider{" "}
-          <span className="mono">mock</span>: DEMO-100 открыт, DEMO-CLOSED закрыт.
-        </p>
+        <h2>{t("config.itsmTitle")}</h2>
+        <p className="muted">{t("config.itsmLead")}</p>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
             checked={itsm.enabled}
             onChange={(e) => setItsm({ ...itsm, enabled: e.target.checked })}
           />
-          Включить ITSM gate
+          {t("config.itsmEnable")}
         </label>
         <label>Provider</label>
         <select
           value={itsm.provider}
           onChange={(e) => setItsm({ ...itsm, provider: e.target.value })}
         >
-          <option value="mock">mock (локальный)</option>
+          <option value="mock">{t("config.itsmProviderMock")}</option>
           <option value="jira">Jira</option>
           <option value="servicenow">ServiceNow</option>
           <option value="generic">generic HTTP</option>
@@ -2387,7 +2365,7 @@ export function ConfigPage() {
           onChange={(e) => setItsm({ ...itsm, status_json_path: e.target.value })}
           placeholder="fields.status.name"
         />
-        <label>Допустимые статусы (через запятую)</label>
+        <label>{t("config.itsmOkStatuses")}</label>
         <input
           value={(itsm.ok_statuses || []).join(", ")}
           onChange={(e) =>
@@ -2397,7 +2375,7 @@ export function ConfigPage() {
             })
           }
         />
-        <label>Authorization header {itsm.has_auth_header ? "(задан)" : ""} — пусто = не менять</label>
+        <label>{t("config.authHeaderLeave", { set: itsm.has_auth_header ? t("config.secretSet") : "" })}</label>
         <input
           type="password"
           value={itsmAuth}
@@ -2412,7 +2390,7 @@ export function ConfigPage() {
               checked={itsm.require_on_request}
               onChange={(e) => setItsm({ ...itsm, require_on_request: e.target.checked })}
             />
-            На create request
+            {t("config.onCreateRequest")}
           </label>
           <label className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
             <input
@@ -2420,7 +2398,7 @@ export function ConfigPage() {
               checked={itsm.require_on_approve}
               onChange={(e) => setItsm({ ...itsm, require_on_approve: e.target.checked })}
             />
-            На approve
+            {t("config.onApprove")}
           </label>
           <label className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
             <input
@@ -2428,7 +2406,7 @@ export function ConfigPage() {
               checked={itsm.require_on_connect}
               onChange={(e) => setItsm({ ...itsm, require_on_connect: e.target.checked })}
             />
-            На connect
+            {t("config.onConnect")}
           </label>
         </div>
         <div className="row" style={{ gap: "0.75rem", marginTop: "0.75rem" }}>
@@ -2455,18 +2433,18 @@ export function ConfigPage() {
         </div>
         {(itsm.last_check_at || itsm.last_error) && (
           <p className="muted" style={{ marginTop: "0.75rem" }}>
-            Проверка: {itsm.last_check_at ? new Date(itsm.last_check_at).toLocaleString() : "—"}
+            {t("config.checkAt", { at: itsm.last_check_at ? new Date(itsm.last_check_at).toLocaleString() : "—" })}
             {itsm.last_error ? (
               <>
                 <br />
-                <span className="error">Ошибка: {itsm.last_error}</span>
+                <span className="error">{t("config.errorPrefix", { err: itsm.last_error })}</span>
               </>
             ) : null}
           </p>
         )}
         <div className="row" style={{ gap: "0.5rem", marginTop: "1rem", alignItems: "flex-end" }}>
           <div style={{ flex: 1 }}>
-            <label>Проверить тикет</label>
+            <label>{t("config.checkTicket")}</label>
             <input value={itsmTicket} onChange={(e) => setItsmTicket(e.target.value)} />
           </div>
           <button className="btn secondary" type="button" disabled={busy} onClick={() => void onCheckTicket()}>
@@ -2475,24 +2453,21 @@ export function ConfigPage() {
         </div>
         {itsmCheck && <p className="muted mono">{itsmCheck}</p>}
         <button className="btn" type="submit" disabled={busy} style={{ marginTop: "1rem" }}>
-          Сохранить ITSM
+          {t("config.saveItsm")}
         </button>
       </form>
 
       <form className="card" onSubmit={onSaveNotify} style={{ maxWidth: 640 }}>
-        <h2>Уведомления</h2>
-        <p className="muted">
-          Inbox всегда. Webhook — только JIT. SMTP — JIT и checkout, тем же получателям.
-          Ошибка доставки не блокирует согласование.
-        </p>
-        <h3>JIT webhook</h3>
+        <h2>{t("config.notifyTitle")}</h2>
+        <p className="muted">{t("config.notifyLead")}</p>
+        <h3>{t("config.jitWebhookTitle")}</h3>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
             checked={notify.enabled}
             onChange={(e) => setNotify({ ...notify, enabled: e.target.checked })}
           />
-          Включить webhook
+          {t("config.enableWebhook")}
         </label>
         <label>URL</label>
         <input
@@ -2500,7 +2475,7 @@ export function ConfigPage() {
           onChange={(e) => setNotify({ ...notify, webhook_url: e.target.value })}
           placeholder="https://hooks.example.com/keeppam"
         />
-        <label>Authorization header {notify.has_auth_header ? "(задан)" : ""} — пусто = не менять</label>
+        <label>{t("config.authHeaderLeave", { set: notify.has_auth_header ? t("config.secretSet") : "" })}</label>
         <input
           type="password"
           value={notifyAuth}
@@ -2522,19 +2497,19 @@ export function ConfigPage() {
             {notify.last_error ? (
               <>
                 <br />
-                <span className="error">Ошибка: {notify.last_error}</span>
+                <span className="error">{t("config.errorPrefix", { err: notify.last_error })}</span>
               </>
             ) : null}
           </p>
         )}
-        <h3 style={{ marginTop: "1.25rem" }}>SMTP</h3>
+        <h3 style={{ marginTop: "1.25rem" }}>{t("config.smtpTitle")}</h3>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
             checked={!!notify.smtp_enabled}
             onChange={(e) => setNotify({ ...notify, smtp_enabled: e.target.checked })}
           />
-          Включить почту
+          {t("config.enableEmail")}
         </label>
         <label>Host</label>
         <input
@@ -2557,7 +2532,7 @@ export function ConfigPage() {
         >
           <option value="starttls">STARTTLS (587)</option>
           <option value="tls">TLS (465)</option>
-          <option value="none">none (локальный relay)</option>
+          <option value="none">{t("config.smtpRelayNone")}</option>
         </select>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
@@ -2565,7 +2540,7 @@ export function ConfigPage() {
             checked={!!notify.smtp_tls_insecure}
             onChange={(e) => setNotify({ ...notify, smtp_tls_insecure: e.target.checked })}
           />
-          Не проверять сертификат (self-signed)
+          {t("config.noCertVerify")}
         </label>
         <label>From</label>
         <input
@@ -2573,13 +2548,13 @@ export function ConfigPage() {
           onChange={(e) => setNotify({ ...notify, smtp_from: e.target.value })}
           placeholder="keeppam@example.com"
         />
-        <label>Username (опц.)</label>
+        <label>{t("config.smtpUsername")}</label>
         <input
           value={notify.smtp_username || ""}
           onChange={(e) => setNotify({ ...notify, smtp_username: e.target.value })}
           autoComplete="off"
         />
-        <label>Password {notify.has_smtp_password ? "(задан)" : ""} — пусто = не менять</label>
+        <label>{t("config.passwordLeave", { set: notify.has_smtp_password ? t("config.secretSet") : "" })}</label>
         <input
           type="password"
           value={notifySmtpPass}
@@ -2592,14 +2567,14 @@ export function ConfigPage() {
             {notify.smtp_last_error ? (
               <>
                 <br />
-                <span className="error">Ошибка: {notify.smtp_last_error}</span>
+                <span className="error">{t("config.errorPrefix", { err: notify.smtp_last_error })}</span>
               </>
             ) : null}
           </p>
         )}
         <div className="row" style={{ gap: "0.5rem", marginTop: "1rem" }}>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить уведомления
+            {t("config.saveNotify")}
           </button>
           <button
             className="btn secondary"
@@ -2607,31 +2582,28 @@ export function ConfigPage() {
             disabled={busy}
             onClick={() => void onTestNotifyEmail()}
           >
-            Тестовое письмо
+            {t("config.testEmail")}
           </button>
         </div>
       </form>
 
       <form className="card" onSubmit={onSaveSIEM} style={{ maxWidth: 640 }}>
-        <h2>SIEM-экспорт аудита</h2>
-        <p className="muted">
-          Асинхронная отправка событий из audit_events (syslog, webhook, Kafka, NATS или OpenSearch _bulk).
-          Курсор продвигается только после успешной доставки. Формат ECS — Elastic Common Schema, не кластер в compose.
-        </p>
+        <h2>{t("config.siemTitle")}</h2>
+        <p className="muted">{t("config.siemLead")}</p>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
             checked={siem.enabled}
             onChange={(e) => setSiem({ ...siem, enabled: e.target.checked })}
           />
-          Включить экспорт
+          {t("config.siemEnable")}
         </label>
-        <label>Транспорт</label>
+        <label>{t("config.siemTransport")}</label>
         <select
           value={siem.transport}
           onChange={(e) => setSiem({ ...siem, transport: e.target.value })}
         >
-          <option value="off">Выкл</option>
+          <option value="off">{t("config.disabled")}</option>
           <option value="syslog_udp">Syslog UDP</option>
           <option value="syslog_tcp">Syslog TCP</option>
           <option value="webhook">HTTPS Webhook</option>
@@ -2639,7 +2611,7 @@ export function ConfigPage() {
           <option value="nats">NATS</option>
           <option value="opensearch">OpenSearch (_bulk)</option>
         </select>
-        <label>Формат</label>
+        <label>{t("config.format")}</label>
         <select value={siem.format} onChange={(e) => setSiem({ ...siem, format: e.target.value })}>
           <option value="json">JSON</option>
           <option value="cef">CEF</option>
@@ -2647,7 +2619,7 @@ export function ConfigPage() {
         </select>
         {(siem.transport === "syslog_udp" || siem.transport === "syslog_tcp") && (
           <>
-            <label>Syslog адрес (host:port)</label>
+            <label>{t("config.siemSyslog")}</label>
             <input
               value={siem.syslog_addr}
               onChange={(e) => setSiem({ ...siem, syslog_addr: e.target.value })}
@@ -2677,20 +2649,20 @@ export function ConfigPage() {
               placeholder="https://siem.example.com/hooks/keeppam"
             />
             <label>
-              Auth header {siem.has_webhook_auth_header ? "(задан)" : ""} — пусто = не менять
+              {t("config.authHeaderPlain", { set: siem.has_webhook_auth_header ? t("config.secretSet") : "" })}
             </label>
             <input
               type="password"
               value={webhookAuth}
               onChange={(e) => setWebhookAuth(e.target.value)}
-              placeholder="Bearer … или Authorization: Bearer …"
+              placeholder={t("config.siemAuthBearer")}
               autoComplete="off"
             />
           </>
         )}
         {siem.transport === "kafka" && (
           <>
-            <label>Брокеры (host:port, через запятую)</label>
+            <label>{t("config.kafkaBrokers")}</label>
             <input
               value={siem.kafka_brokers || ""}
               onChange={(e) => setSiem({ ...siem, kafka_brokers: e.target.value })}
@@ -2701,14 +2673,14 @@ export function ConfigPage() {
               value={siem.kafka_topic || "keeppam.audit"}
               onChange={(e) => setSiem({ ...siem, kafka_topic: e.target.value })}
             />
-            <label>SASL username (пусто = без SASL)</label>
+            <label>{t("config.kafkaSaslUser")}</label>
             <input
               value={siem.kafka_username || ""}
               onChange={(e) => setSiem({ ...siem, kafka_username: e.target.value })}
               autoComplete="off"
             />
             <label>
-              SASL password {siem.has_kafka_password ? "(задан)" : ""} — пусто = не менять
+              {t("config.saslPasswordLeave", { set: siem.has_kafka_password ? t("config.secretSet") : "" })}
             </label>
             <input
               type="password"
@@ -2731,7 +2703,7 @@ export function ConfigPage() {
               value={siem.nats_subject || "keeppam.audit"}
               onChange={(e) => setSiem({ ...siem, nats_subject: e.target.value })}
             />
-            <label>Token {siem.has_nats_token ? "(задан)" : ""} — пусто = не менять</label>
+            <label>{t("config.tokenLeave", { set: siem.has_nats_token ? t("config.secretSet") : "" })}</label>
             <input
               type="password"
               value={natsToken}
@@ -2755,22 +2727,16 @@ export function ConfigPage() {
               placeholder="keeppam-audit"
             />
             <label>
-              Auth header {siem.has_webhook_auth_header ? "(задан)" : ""} — пусто = не менять
+              {t("config.authHeaderPlain", { set: siem.has_webhook_auth_header ? t("config.secretSet") : "" })}
             </label>
             <input
               type="password"
               value={webhookAuth}
               onChange={(e) => setWebhookAuth(e.target.value)}
-              placeholder="Authorization: ApiKey … или Basic …"
+              placeholder={t("config.siemAuthApiKey")}
               autoComplete="off"
             />
-            <p className="muted">
-              Стенд: OpenSearch <code>http://opensearch:9200</code>, Dashboards{" "}
-              <a href="http://localhost:5601/app/dashboards#/view/keeppam-audit" target="_blank" rel="noreferrer">
-                localhost:5601
-              </a>
-              . Security выкл.; auth header не нужен.
-            </p>
+            <p className="muted">{t("config.opensearchStand")}</p>
           </>
         )}
         <div className="row" style={{ gap: "0.75rem" }}>
@@ -2785,7 +2751,7 @@ export function ConfigPage() {
             />
           </div>
           <div style={{ flex: 1 }}>
-            <label>Интервал опроса (сек)</label>
+            <label>{t("config.scimPollInterval")}</label>
             <input
               type="number"
               min={1}
@@ -2797,21 +2763,21 @@ export function ConfigPage() {
         </div>
         {(siem.last_export_at || siem.last_error || siem.cursor_ts) && (
           <p className="muted" style={{ marginTop: "0.75rem" }}>
-            Курсор: {siem.cursor_ts ? new Date(siem.cursor_ts).toLocaleString() : "—"}
+            {t("config.cursorLabel", { ts: siem.cursor_ts ? new Date(siem.cursor_ts).toLocaleString() : "—" })}
             {siem.last_export_at
-              ? ` · последний экспорт: ${new Date(siem.last_export_at).toLocaleString()}`
+              ? t("config.lastExport", { ts: new Date(siem.last_export_at).toLocaleString() })
               : ""}
             {siem.last_error ? (
               <>
                 <br />
-                <span className="error">Ошибка: {siem.last_error}</span>
+                <span className="error">{t("config.errorPrefix", { err: siem.last_error })}</span>
               </>
             ) : null}
           </p>
         )}
         <div className="row" style={{ gap: "0.75rem", marginTop: "1rem" }}>
           <button className="btn" type="submit" disabled={busy}>
-            Сохранить SIEM
+            {t("config.saveSiem")}
           </button>
           <button
             className="btn secondary"
@@ -2819,11 +2785,11 @@ export function ConfigPage() {
             disabled={busy}
             onClick={() =>
               void api.downloadSIEMBulk(200).catch((err) =>
-                setError(err instanceof Error ? err.message : "Ошибка ECS bulk"),
+                setError(err instanceof Error ? err.message : t("config.ecsBulkFailed")),
               )
             }
           >
-            Скачать ECS bulk
+            {t("config.downloadEcsBulk")}
           </button>
         </div>
       </form>

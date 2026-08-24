@@ -679,6 +679,8 @@ export type InfraStatus = {
   pkcs11_label?: string;
   pkcs11_uri?: boolean;
   go_version?: string;
+  version?: string;
+  build_time?: string;
   cgo_enabled?: string;
   fips?: string;
   fips_required?: boolean;
@@ -824,7 +826,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!headers.has("Accept-Language")) {
     const lang = (document.cookie.match(/(?:^|; )kp_lang=([^;]*)/) || [])[1];
-    headers.set("Accept-Language", decodeURIComponent(lang || "ru").startsWith("en") ? "en" : "ru");
+    const raw = decodeURIComponent(lang || "kk").toLowerCase();
+    const accept = raw.startsWith("en") ? "en" : raw.startsWith("ru") ? "ru" : "kk";
+    headers.set("Accept-Language", accept);
   }
   const method = (init.method || "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
@@ -1263,26 +1267,28 @@ export const api = {
   sealAudit: () =>
     request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
-  listAssets: () => request<{ assets: Asset[] }>("/api/v1/admin/assets"),
+  listAssets: () =>
+    request<{
+      assets: Asset[];
+      total?: number;
+      hidden?: number;
+      visible_limit?: number;
+      license_expired?: boolean;
+      license_unlicensed?: boolean;
+    }>("/api/v1/admin/assets"),
   getLicense: () =>
     request<LicenseStatus>("/api/v1/admin/license"),
   getLicenseFingerprint: () =>
     request<{ hardware_fingerprint: string; skip_hw: boolean; encryption_key_hint: boolean }>(
       "/api/v1/admin/license/fingerprint",
     ),
-  uploadLicenseFile: async (file: File) => {
+  uploadLicenseFile: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch("/api/v1/admin/license/upload", {
+    return request<LicenseStatus>("/api/v1/admin/license/upload", {
       method: "POST",
       body: fd,
-      credentials: "include",
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as { error?: string }).error || res.statusText);
-    }
-    return res.json() as Promise<LicenseStatus>;
   },
   uploadLicenseBase64: (license_file: string) =>
     request<LicenseStatus>("/api/v1/admin/license/upload", {

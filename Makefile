@@ -1,12 +1,17 @@
-.PHONY: up down logs tidy api-run smoke acceptance-smoke geo-drill web-build api-build sbom geoip-mmdb pack install demo-seed
+.PHONY: up down logs tidy api-run smoke acceptance-smoke geo-drill web-build api-build sbom geoip-mmdb pack dist bump install demo-seed
 
 web-build:
 
 web-build:
 	cd web && npm install && npm run build
 
+# Embed VERSION into the binary (override with VERSION=… or after keeppam-version.sh bump).
+KEEPPAM_VERSION ?= $(shell tr -d ' \n' < VERSION 2>/dev/null || echo dev)
+KEEPPAM_BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS = -X github.com/keeppam/auth/internal/buildinfo.Version=$(KEEPPAM_VERSION) -X github.com/keeppam/auth/internal/buildinfo.BuildTime=$(KEEPPAM_BUILD_TIME)
+
 api-build:
-	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && CGO_ENABLED=0 GOOS=linux go build -o ../../deploy/auth-server ./cmd/server
+	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && CGO_ENABLED=0 GOOS=linux go build -ldflags "$(LDFLAGS)" -o ../../deploy/auth-server ./cmd/server
 
 sbom:
 	mkdir -p deploy/sbom
@@ -34,7 +39,7 @@ api-run:
 	KEEPPAM_DATA_KEY=a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE= \
 	KEEPPAM_BOOTSTRAP_ADMIN_PASSWORD='ChangeMeNow!1' \
 	KEEPPAM_CORS_ORIGIN=http://localhost:5173 \
-	go run ./cmd/server
+	go run -ldflags "$(LDFLAGS)" ./cmd/server
 
 smoke:
 	./scripts/smoke.sh
@@ -47,6 +52,14 @@ geo-drill:
 
 pack:
 	./scripts/keeppam-pack.sh
+
+# Полная сборка дистрибутива (авто +1 patch к VERSION, затем бинарники + образы + tar.gz).
+# BUMP=minor|major|none|patch  (default patch)
+dist:
+	./scripts/keeppam-dist.sh
+
+bump:
+	./scripts/keeppam-version.sh bump
 
 install:
 	./scripts/keeppam-install.sh

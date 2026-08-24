@@ -1,8 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, hasPerm, type AccessBinding, type AccessPolicy, type AppObjectPack, type AppObjectPreview, type CommandPolicyPack, type CommandPreview, type HTTPPolicyPack, type PamGroup, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
-
-const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+import { useI18n } from "../i18n";
 
 const emptyPolicyForm = {
   name: "",
@@ -157,6 +156,11 @@ const emptyTagForm = {
 
 export function JeaPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
+  const dayLabels = useMemo(
+    () => [t("cal.0"), t("cal.1"), t("cal.2"), t("cal.3"), t("cal.4"), t("cal.5"), t("cal.6")],
+    [t],
+  );
   const canRead = hasPerm(user, "jea.read");
   const canWrite = hasPerm(user, "jea.write");
   const canACL = hasPerm(user, "assets.acl");
@@ -252,11 +256,11 @@ export function JeaPage() {
           setTagRoles(r.roles || []);
           setTagGroups(g.groups || []);
         } catch {
-          /* форма без справочников */
+          /* form without directory lookups */
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "jea.loadFailed"));
     }
   }
 
@@ -266,7 +270,7 @@ export function JeaPage() {
   }, [canRead]);
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав (jea.read)</p>;
+    return <p className="error">{t("jea.forbidden")}</p>;
   }
 
   function startEdit(p: CommandPolicyPack) {
@@ -296,7 +300,7 @@ export function JeaPage() {
       });
       setTryOut(out);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка preview");
+      setError(te(err, "jea.previewFailed"));
     } finally {
       setBusy(false);
     }
@@ -373,15 +377,15 @@ export function JeaPage() {
       };
       if (editId) {
         await api.updateCommandPack(editId, body);
-        setMsg("SSH-пакет обновлён");
+        setMsg(t("jea.sshPackUpdated"));
       } else {
         await api.createCommandPack(body);
-        setMsg("SSH-пакет создан");
+        setMsg(t("jea.sshPackCreated"));
       }
       resetForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "jea.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -416,15 +420,15 @@ export function JeaPage() {
       };
       if (sqlEditId) {
         await api.updateSQLPack(sqlEditId, body);
-        setMsg("SQL-пакет обновлён");
+        setMsg(t("jea.sqlPackUpdated"));
       } else {
         await api.createSQLPack(body);
-        setMsg("SQL-пакет создан");
+        setMsg(t("jea.sqlPackCreated"));
       }
       resetSqlForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "jea.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -432,15 +436,15 @@ export function JeaPage() {
 
   async function onDelete(p: CommandPolicyPack) {
     if (!canWrite) return;
-    if (!confirm(`Удалить пакет «${p.name}»?`)) return;
+    if (!confirm(t("jea.deleteSshPackConfirm", { name: p.name }))) return;
     setBusy(true);
     try {
       await api.deleteCommandPack(p.id);
-      setMsg("Удалён");
+      setMsg(t("jea.deleted"));
       if (editId === p.id) resetForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "jea.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -448,15 +452,15 @@ export function JeaPage() {
 
   async function onSqlDelete(p: SQLPolicyPack) {
     if (!canWrite) return;
-    if (!confirm(`Удалить SQL-пакет «${p.name}»?`)) return;
+    if (!confirm(t("jea.deleteSqlPackConfirm", { name: p.name }))) return;
     setBusy(true);
     try {
       await api.deleteSQLPack(p.id);
-      setMsg("Удалён");
+      setMsg(t("jea.deleted"));
       if (sqlEditId === p.id) resetSqlForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "jea.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -480,15 +484,15 @@ export function JeaPage() {
       };
       if (httpEditId) {
         await api.updateHTTPPack(httpEditId, body);
-        setMsg("HTTP-пакет обновлён");
+        setMsg(t("jea.httpPackUpdated"));
       } else {
         await api.createHTTPPack(body);
-        setMsg("HTTP-пакет создан");
+        setMsg(t("jea.httpPackCreated"));
       }
       resetHttpForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "jea.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -496,15 +500,15 @@ export function JeaPage() {
 
   async function onHttpDelete(p: HTTPPolicyPack) {
     if (!canWrite) return;
-    if (!confirm(`Удалить HTTP-пакет «${p.name}»?`)) return;
+    if (!confirm(t("jea.deleteHttpPackConfirm", { name: p.name }))) return;
     setBusy(true);
     try {
       await api.deleteHTTPPack(p.id);
-      setMsg("Удалён");
+      setMsg(t("jea.deleted"));
       if (httpEditId === p.id) resetHttpForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "jea.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -549,15 +553,15 @@ export function JeaPage() {
       };
       if (appEditId) {
         await api.updateAppObjectPack(appEditId, body);
-        setMsg("Пакет объектов обновлён");
+        setMsg(t("jea.appPackUpdated"));
       } else {
         await api.createAppObjectPack(body);
-        setMsg("Пакет объектов создан");
+        setMsg(t("jea.appPackCreated"));
       }
       resetAppForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "jea.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -565,15 +569,15 @@ export function JeaPage() {
 
   async function onAppDelete(p: AppObjectPack) {
     if (!canWrite) return;
-    if (!confirm(`Удалить пакет объектов «${p.name}»?`)) return;
+    if (!confirm(t("jea.deleteAppPackConfirm", { name: p.name }))) return;
     setBusy(true);
     try {
       await api.deleteAppObjectPack(p.id);
-      setMsg("Удалён");
+      setMsg(t("jea.deleted"));
       if (appEditId === p.id) resetAppForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "jea.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -592,7 +596,7 @@ export function JeaPage() {
       });
       setTryAppOut(out);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка preview");
+      setError(te(err, "jea.previewFailed"));
     } finally {
       setBusy(false);
     }
@@ -649,8 +653,8 @@ export function JeaPage() {
   }
 
   function formatDays(mask: number): string {
-    if (mask === 127) return "все дни";
-    return DAY_LABELS.filter((_, i) => mask & (1 << i)).join(", ") || "—";
+    if (mask === 127) return t("cal.allDays");
+    return dayLabels.filter((_, i) => mask & (1 << i)).join(", ") || t("config.dash");
   }
 
   function policySummary(p: AccessPolicy): string {
@@ -683,7 +687,7 @@ export function JeaPage() {
     if (p.http_policy_pack_name) bits.push(`http:${p.http_policy_pack_name}`);
     if (p.app_object_pack_name) bits.push(`obj:${p.app_object_pack_name}`);
     if (p.max_risk) bits.push(`risk≤${p.max_risk}`);
-    return bits.length ? bits.join(" · ") : "без ограничений (шаблон)";
+    return bits.length ? bits.join(" · ") : t("jea.noRestrictionsTemplate");
   }
 
   async function onPolicySubmit(e: FormEvent) {
@@ -730,15 +734,15 @@ export function JeaPage() {
       if (policyForm.app_object_pack_id) body.app_object_pack_id = policyForm.app_object_pack_id;
       if (policyEditId) {
         await api.updateAccessPolicy(policyEditId, body);
-        setMsg("Политика обновлена");
+        setMsg(t("jea.policyUpdated"));
       } else {
         await api.createAccessPolicy(body);
-        setMsg("Политика создана");
+        setMsg(t("jea.policyCreated"));
       }
       resetPolicyForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "jea.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -746,15 +750,15 @@ export function JeaPage() {
 
   async function onPolicyDelete(p: AccessPolicy) {
     if (!canWrite) return;
-    if (!confirm(`Удалить политику «${p.name}»? Привязки ACL останутся, ссылка сбросится.`)) return;
+    if (!confirm(t("jea.deletePolicyConfirm", { name: p.name }))) return;
     setBusy(true);
     try {
       await api.deleteAccessPolicy(p.id);
-      setMsg("Удалена");
+      setMsg(t("jea.deletedShort"));
       if (policyEditId === p.id) resetPolicyForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "jea.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -800,7 +804,7 @@ export function JeaPage() {
       });
       setMsg("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки tag ACL");
+      setError(err instanceof Error ? err.message : t("jea.tagAclLoadFailed"));
     }
   }
 
@@ -817,7 +821,7 @@ export function JeaPage() {
       !types.length &&
       !matchCidrs.length
     ) {
-      setError("укажите теги, имя, hostname, тип или CIDR");
+      setError(t("jea.tagAclValidation"));
       return;
     }
     setBusy(true);
@@ -856,7 +860,7 @@ export function JeaPage() {
         if (tagPermanent) body.permanent = true;
         else if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
         await api.updateACL("_", tagEditId, body);
-        setMsg("Tag ACL обновлён");
+        setMsg(t("jea.tagAclUpdated"));
         resetTagForm();
       } else {
         const body: Parameters<typeof api.createTagACL>[0] = {
@@ -871,14 +875,14 @@ export function JeaPage() {
         else if (tagForm.who === "role" && tagForm.role_id) body.role_id = tagForm.role_id;
         else if (tagForm.who === "group" && tagForm.group_id) body.group_id = tagForm.group_id;
         else {
-          setError("выберите субъекта");
+          setError(t("jea.selectSubject"));
           setBusy(false);
           return;
         }
         if (tagForm.access_policy_id) body.access_policy_id = tagForm.access_policy_id;
         if (tagForm.duration_minutes) body.duration_minutes = Number(tagForm.duration_minutes);
         await api.createTagACL(body);
-        setMsg("Динамический ACL создан");
+        setMsg(t("jea.tagAclDynamicCreated"));
         setTagForm({
           who: tagForm.who,
           user_id: "",
@@ -896,7 +900,7 @@ export function JeaPage() {
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка tag ACL");
+      setError(err instanceof Error ? err.message : t("jea.tagAclError"));
     } finally {
       setBusy(false);
     }
@@ -904,15 +908,15 @@ export function JeaPage() {
 
   async function onDeleteTagACL(b: AccessBinding) {
     if (!canACL) return;
-    if (!confirm("Отозвать tag ACL? Пропадёт доступ ко всем подходящим активам.")) return;
+    if (!confirm(t("jea.revokeTagAclConfirm"))) return;
     setBusy(true);
     try {
       await api.deleteACL("_", b.id);
-      setMsg("Отозван");
+      setMsg(t("jea.revoked"));
       if (tagEditId === b.id) resetTagForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка отзыва");
+      setError(err instanceof Error ? err.message : t("jea.revokeFailed"));
     } finally {
       setBusy(false);
     }
@@ -920,9 +924,9 @@ export function JeaPage() {
 
   return (
     <div>
-      <h1>JEA</h1>
+      <h1>{t("jea.title")}</h1>
       <p className="muted">
-        SSH / SQL / HTTP-пакеты, Policy, Command Risk и ACL на теги активов (путь prod/linux, без строки на каждый хост).
+        {t("jea.lead")}
       </p>
       <div className="row" style={{ gap: "0.5rem", marginBottom: "1rem" }}>
         <button
@@ -930,28 +934,28 @@ export function JeaPage() {
           type="button"
           onClick={() => setTab("ssh")}
         >
-          SSH commands
+          {t("jea.tabSsh")}
         </button>
         <button
           className={`btn ${tab === "sql" ? "" : "secondary"}`}
           type="button"
           onClick={() => setTab("sql")}
         >
-          SQL tables / masking
+          {t("jea.tabSql")}
         </button>
         <button
           className={`btn ${tab === "http" ? "" : "secondary"}`}
           type="button"
           onClick={() => setTab("http")}
         >
-          HTTP / URL ACL
+          {t("jea.tabHttp")}
         </button>
         <button
           className={`btn ${tab === "objects" ? "" : "secondary"}`}
           type="button"
           onClick={() => setTab("objects")}
         >
-          Объекты
+          {t("jea.tabObjects")}
         </button>
         <button
           className={`btn ${tab === "policy" ? "" : "secondary"}`}
@@ -965,7 +969,7 @@ export function JeaPage() {
           type="button"
           onClick={() => setTab("tags")}
         >
-          Теги активов
+          {t("jea.tabTags")}
         </button>
       </div>
       {error && <p className="error">{error}</p>}
@@ -974,13 +978,13 @@ export function JeaPage() {
       {tab === "ssh" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>SSH-пакеты</h2>
+            <h2>{t("jea.sshPacksTitle")}</h2>
             <table>
               <thead>
                 <tr>
-                  <th>Имя</th>
-                  <th>Режим</th>
-                  <th>Паттерны</th>
+                  <th>{t("common.name")}</th>
+                  <th>{t("config.mode")}</th>
+                  <th>{t("jea.patterns")}</th>
                   <th />
                 </tr>
               </thead>
@@ -1004,10 +1008,10 @@ export function JeaPage() {
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
                           <button className="btn secondary" type="button" onClick={() => startEdit(p)}>
-                            Изменить
+                            {t("jea.edit")}
                           </button>
                           <button className="btn danger" type="button" disabled={busy} onClick={() => void onDelete(p)}>
-                            Удалить
+                            {t("common.delete")}
                           </button>
                         </div>
                       )}
@@ -1018,20 +1022,20 @@ export function JeaPage() {
             </table>
           </div>
           <form className="card" style={{ marginBottom: "1.25rem" }} onSubmit={(e) => void tryCommand(e)}>
-            <h2>Проверить команду</h2>
+            <h2>{t("jea.tryCommandTitle")}</h2>
             <p className="muted">
-              Парсер снимает sudo/su/env. JEA смотрит на inner binary. Баллы — класс команды (без connect-риска).
+              {t("jea.tryCommandHint")}
             </p>
-            <label>Команда</label>
+            <label>{t("jea.command")}</label>
             <input
               value={tryCmd}
               onChange={(e) => setTryCmd(e.target.value)}
               placeholder="sudo rm -rf /tmp/x"
               style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
             />
-            <label>SSH-пакет (опц.)</label>
+            <label>{t("jea.sshPackOptional")}</label>
             <select value={tryPack} onChange={(e) => setTryPack(e.target.value)}>
-              <option value="">без пакета</option>
+              <option value="">{t("jea.noPack")}</option>
               {packs.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.mode})
@@ -1039,7 +1043,7 @@ export function JeaPage() {
               ))}
             </select>
             <button className="btn" type="submit" disabled={busy || !tryCmd.trim()} style={{ marginTop: "0.75rem" }}>
-              Разобрать
+              {t("jea.parse")}
             </button>
             {tryOut && (
               <div className="muted" style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
@@ -1071,7 +1075,7 @@ export function JeaPage() {
                       {tryOut.operation} · {tryOut.points} pts
                     </>
                   ) : (
-                    "без extra-risk"
+                    t("jea.noExtraRisk")
                   )}
                 </p>
                 <p>{tryOut.note}</p>
@@ -1080,32 +1084,32 @@ export function JeaPage() {
           </form>
           {canWrite && (
             <form className="card" onSubmit={onSubmit} style={{ maxWidth: 560 }}>
-              <h2>{editId ? "Редактировать SSH-пакет" : "Новый SSH-пакет"}</h2>
-              <label>Имя</label>
+              <h2>{editId ? t("jea.editSshPack") : t("jea.newSshPack")}</h2>
+              <label>{t("common.name")}</label>
               <input
                 required
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 disabled={!!editId}
               />
-              <label>Описание</label>
+              <label>{t("common.description")}</label>
               <input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
-              <label>Режим</label>
+              <label>{t("config.mode")}</label>
               <select value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}>
                 <option value="allowlist">allowlist</option>
                 <option value="denylist">denylist</option>
               </select>
-              <label>Паттерны</label>
+              <label>{t("jea.patterns")}</label>
               <textarea
                 rows={8}
                 value={form.patterns}
                 onChange={(e) => setForm({ ...form, patterns: e.target.value })}
                 style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
               />
-              <label>Загрузить список (txt / csv / json)</label>
+              <label>{t("jea.importList")}</label>
               <input
                 type="file"
                 accept=".txt,.csv,.json,text/plain,text/csv,application/json"
@@ -1120,7 +1124,7 @@ export function JeaPage() {
                   try {
                     if (editId) {
                       const merge = confirm(
-                        "Объединить с текущими паттернами?\nОК = merge, Отмена = заменить список."
+                        t("jea.mergePatternsConfirm")
                       );
                       const out = await api.importCommandPack(editId, file, merge);
                       setForm({
@@ -1130,41 +1134,41 @@ export function JeaPage() {
                         name: out.pack.name || form.name,
                         description: out.pack.description || form.description,
                       });
-                      setMsg(`Импорт: +${out.added}, всего ${out.total}`);
+                      setMsg(t("jea.importAdded", { added: out.added, total: out.total }));
                       await load();
                     } else {
                       const text = await file.text();
                       const parsed = parseJeaImportText(text, file.name);
                       if (!parsed.length) {
-                        setError("в файле нет паттернов");
+                        setError(t("jea.importNoPatterns"));
                         return;
                       }
                       const merge = form.patterns.trim()
-                        ? confirm("Добавить к полю паттернов? ОК = добавить, Отмена = заменить.")
+                        ? confirm(t("jea.importMergeConfirm"))
                         : false;
                       const next = merge
                         ? `${form.patterns.trim()}\n${parsed.join("\n")}`.trim()
                         : parsed.join("\n");
                       setForm({ ...form, patterns: next });
-                      setMsg(`Загружено ${parsed.length} паттернов в форму — нажмите Создать`);
+                      setMsg(t("jea.loadedIntoForm", { n: parsed.length }));
                     }
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Ошибка импорта");
+                    setError(err instanceof Error ? err.message : t("jea.importFailed"));
                   } finally {
                     setBusy(false);
                   }
                 }}
               />
               <p className="muted" style={{ marginTop: 0 }}>
-                До 10 000 globs (`rm *`, `dd`). Для существующего пакета — сразу в БД; для нового — в форму.
+                {t("jea.importHint")}
               </p>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {editId ? "Сохранить" : "Создать"}
+                  {editId ? t("common.save") : t("common.create")}
                 </button>
                 {editId && (
                   <button className="btn secondary" type="button" onClick={resetForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>
@@ -1176,16 +1180,13 @@ export function JeaPage() {
       {tab === "sql" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>SQL-пакеты</h2>
-            <p className="muted">
-              statements: SELECT/INSERT/UPDATE/DELETE/DDL · tables: glob · mask_columns: колонки → ***
-              · DLP: COPY/OUTFILE всегда запрещены; max_rows / dlp_action — лимит выгрузки
-            </p>
+            <h2>{t("jea.sqlPacksTitle")}</h2>
+            <p className="muted">{t("jea.sqlPackHint")}</p>
             <table>
               <thead>
                 <tr>
-                  <th>Имя</th>
-                  <th>Режим</th>
+                  <th>{t("common.name")}</th>
+                  <th>{t("config.mode")}</th>
                   <th>Statements</th>
                   <th>Tables</th>
                   <th>Mask</th>
@@ -1215,7 +1216,7 @@ export function JeaPage() {
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
                           <button className="btn secondary" type="button" onClick={() => startSqlEdit(p)}>
-                            Изменить
+                            {t("jea.edit")}
                           </button>
                           <button
                             className="btn danger"
@@ -1223,7 +1224,7 @@ export function JeaPage() {
                             disabled={busy}
                             onClick={() => void onSqlDelete(p)}
                           >
-                            Удалить
+                            {t("common.delete")}
                           </button>
                         </div>
                       )}
@@ -1235,20 +1236,20 @@ export function JeaPage() {
           </div>
           {canWrite && (
             <form className="card" onSubmit={onSqlSubmit} style={{ maxWidth: 560 }}>
-              <h2>{sqlEditId ? "Редактировать SQL-пакет" : "Новый SQL-пакет"}</h2>
-              <label>Имя</label>
+              <h2>{sqlEditId ? t("jea.editSqlPack") : t("jea.newSqlPack")}</h2>
+              <label>{t("common.name")}</label>
               <input
                 required
                 value={sqlForm.name}
                 onChange={(e) => setSqlForm({ ...sqlForm, name: e.target.value })}
                 disabled={!!sqlEditId}
               />
-              <label>Описание</label>
+              <label>{t("common.description")}</label>
               <input
                 value={sqlForm.description}
                 onChange={(e) => setSqlForm({ ...sqlForm, description: e.target.value })}
               />
-              <label>Режим</label>
+              <label>{t("config.mode")}</label>
               <select value={sqlForm.mode} onChange={(e) => setSqlForm({ ...sqlForm, mode: e.target.value })}>
                 <option value="allowlist">allowlist</option>
                 <option value="denylist">denylist</option>
@@ -1260,7 +1261,7 @@ export function JeaPage() {
                 onChange={(e) => setSqlForm({ ...sqlForm, statements: e.target.value })}
                 style={{ fontFamily: "ui-monospace, monospace", width: "100%" }}
               />
-              <label>Tables (glob, по одному в строке)</label>
+              <label>{t("jea.tablesGlob")}</label>
               <textarea
                 rows={4}
                 value={sqlForm.tables}
@@ -1289,21 +1290,21 @@ export function JeaPage() {
                 value={sqlForm.max_rows}
                 onChange={(e) => setSqlForm({ ...sqlForm, max_rows: e.target.value })}
               />
-              <label>При превышении max_rows</label>
+              <label>{t("jea.maxRowsExceeded")}</label>
               <select
                 value={sqlForm.dlp_action}
                 onChange={(e) => setSqlForm({ ...sqlForm, dlp_action: e.target.value })}
               >
-                <option value="truncate">truncate — обрезать результат</option>
-                <option value="deny">deny — запретить запрос</option>
+                <option value="truncate">{t("jea.onMaxRowsTruncate")}</option>
+                <option value="deny">{t("jea.onMaxRowsDeny")}</option>
               </select>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {sqlEditId ? "Сохранить" : "Создать"}
+                  {sqlEditId ? t("common.save") : t("common.create")}
                 </button>
                 {sqlEditId && (
                   <button className="btn secondary" type="button" onClick={resetSqlForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>
@@ -1315,18 +1316,14 @@ export function JeaPage() {
       {tab === "http" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>HTTP / URL-пакеты</h2>
-            <p className="muted">
-              Правило: METHOD PATH. METHOD = GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS/*. PATH glob, * совпадает с /.
-              Allowlist — только совпавшие; denylist — запрет совпавших. Без пакета на ACL URL не режется.
-              Isolated browser ходит через reverse-proxy KeepPAM — тот же HTTP ACL, что у recording_mode=full.
-            </p>
+            <h2>{t("jea.httpPacksTitle")}</h2>
+            <p className="muted">{t("jea.httpPackHint")}</p>
             <table>
               <thead>
                 <tr>
-                  <th>Имя</th>
-                  <th>Режим</th>
-                  <th>Правила</th>
+                  <th>{t("common.name")}</th>
+                  <th>{t("config.mode")}</th>
+                  <th>{t("jea.rules")}</th>
                   <th />
                 </tr>
               </thead>
@@ -1350,7 +1347,7 @@ export function JeaPage() {
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
                           <button className="btn secondary" type="button" onClick={() => startHttpEdit(p)}>
-                            Изменить
+                            {t("jea.edit")}
                           </button>
                           <button
                             className="btn danger"
@@ -1358,7 +1355,7 @@ export function JeaPage() {
                             disabled={busy}
                             onClick={() => void onHttpDelete(p)}
                           >
-                            Удалить
+                            {t("common.delete")}
                           </button>
                         </div>
                       )}
@@ -1370,25 +1367,25 @@ export function JeaPage() {
           </div>
           {canWrite && (
             <form className="card" onSubmit={onHttpSubmit} style={{ maxWidth: 560 }}>
-              <h2>{httpEditId ? "Редактировать HTTP-пакет" : "Новый HTTP-пакет"}</h2>
-              <label>Имя</label>
+              <h2>{httpEditId ? t("jea.editHttpPack") : t("jea.newHttpPack")}</h2>
+              <label>{t("common.name")}</label>
               <input
                 required
                 value={httpForm.name}
                 onChange={(e) => setHttpForm({ ...httpForm, name: e.target.value })}
                 disabled={!!httpEditId}
               />
-              <label>Описание</label>
+              <label>{t("common.description")}</label>
               <input
                 value={httpForm.description}
                 onChange={(e) => setHttpForm({ ...httpForm, description: e.target.value })}
               />
-              <label>Режим</label>
+              <label>{t("config.mode")}</label>
               <select value={httpForm.mode} onChange={(e) => setHttpForm({ ...httpForm, mode: e.target.value })}>
                 <option value="allowlist">allowlist</option>
                 <option value="denylist">denylist</option>
               </select>
-              <label>Правила (по одному в строке)</label>
+              <label>{t("jea.rulesPerLine")}</label>
               <textarea
                 rows={8}
                 value={httpForm.rules}
@@ -1398,11 +1395,11 @@ export function JeaPage() {
               />
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {httpEditId ? "Сохранить" : "Создать"}
+                  {httpEditId ? t("common.save") : t("common.create")}
                 </button>
                 {httpEditId && (
                   <button className="btn secondary" type="button" onClick={resetHttpForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>
@@ -1414,18 +1411,14 @@ export function JeaPage() {
       {tab === "objects" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>Объекты приложения</h2>
-            <p className="muted">
-              Правило: METHOD PATH OBJECT ACTION. ACTION = allow / deny / approval. Первое совпадение побеждает.
-              unmatched=deny — allowlist функций (как CRM). APPROVAL держит HTTPS/isolated/kubectl до 60 с. Isolated
-              browser ходит через тот же reverse-proxy.
-            </p>
+            <h2>{t("jea.appObjectsTitle")}</h2>
+            <p className="muted">{t("jea.appPackHint")}</p>
             <table>
               <thead>
                 <tr>
-                  <th>Имя</th>
+                  <th>{t("common.name")}</th>
                   <th>unmatched</th>
-                  <th>Правила</th>
+                  <th>{t("jea.rules")}</th>
                   <th />
                 </tr>
               </thead>
@@ -1449,7 +1442,7 @@ export function JeaPage() {
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
                           <button className="btn secondary" type="button" onClick={() => startAppEdit(p)}>
-                            Изменить
+                            {t("jea.edit")}
                           </button>
                           <button
                             className="btn danger"
@@ -1457,7 +1450,7 @@ export function JeaPage() {
                             disabled={busy}
                             onClick={() => void onAppDelete(p)}
                           >
-                            Удалить
+                            {t("common.delete")}
                           </button>
                         </div>
                       )}
@@ -1468,10 +1461,10 @@ export function JeaPage() {
             </table>
           </div>
           <form className="card" onSubmit={tryAppObject} style={{ maxWidth: 560, marginBottom: "1.25rem" }}>
-            <h2>Проверить запрос</h2>
-            <label>Пакет</label>
+            <h2>{t("jea.tryRequestTitle")}</h2>
+            <label>{t("jea.pack")}</label>
             <select value={tryAppPack} onChange={(e) => setTryAppPack(e.target.value)}>
-              <option value="">— выбрать —</option>
+              <option value="">{t("jea.selectPlaceholder")}</option>
               {appPacks.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -1480,7 +1473,7 @@ export function JeaPage() {
             </select>
             <div className="row" style={{ gap: "0.5rem" }}>
               <div style={{ flex: "0 0 8rem" }}>
-                <label>Метод</label>
+                <label>{t("jea.method")}</label>
                 <input
                   value={tryAppMethod}
                   onChange={(e) => setTryAppMethod(e.target.value)}
@@ -1488,7 +1481,7 @@ export function JeaPage() {
                 />
               </div>
               <div style={{ flex: 1 }}>
-                <label>Путь</label>
+                <label>{t("jea.path")}</label>
                 <input
                   value={tryAppPath}
                   onChange={(e) => setTryAppPath(e.target.value)}
@@ -1496,7 +1489,7 @@ export function JeaPage() {
                 />
               </div>
             </div>
-            <label>GraphQL query (опц. — верхнеуровневые поля)</label>
+            <label>{t("jea.graphqlQuery")}</label>
             <textarea
               rows={4}
               value={tryAppQuery}
@@ -1506,7 +1499,7 @@ export function JeaPage() {
               style={{ width: "100%" }}
             />
             <button className="btn" type="submit" disabled={busy || !tryAppPath.trim()} style={{ marginTop: "0.75rem" }}>
-              Проверить
+              {t("jea.check")}
             </button>
             {tryAppOut && (
               <p className="mono" style={{ marginTop: "0.75rem" }}>
@@ -1522,28 +1515,28 @@ export function JeaPage() {
           </form>
           {canWrite && (
             <form className="card" onSubmit={onAppSubmit} style={{ maxWidth: 560 }}>
-              <h2>{appEditId ? "Редактировать пакет объектов" : "Новый пакет объектов"}</h2>
-              <label>Имя</label>
+              <h2>{appEditId ? t("jea.editAppPack") : t("jea.newAppPack")}</h2>
+              <label>{t("common.name")}</label>
               <input
                 required
                 value={appForm.name}
                 onChange={(e) => setAppForm({ ...appForm, name: e.target.value })}
                 disabled={!!appEditId}
               />
-              <label>Описание</label>
+              <label>{t("common.description")}</label>
               <input
                 value={appForm.description}
                 onChange={(e) => setAppForm({ ...appForm, description: e.target.value })}
               />
-              <label>Несовпавшее</label>
+              <label>{t("jea.unmatched")}</label>
               <select
                 value={appForm.unmatched}
                 onChange={(e) => setAppForm({ ...appForm, unmatched: e.target.value })}
               >
-                <option value="allow">allow — overlay, остальное не режется</option>
-                <option value="deny">deny — allowlist функций</option>
+                <option value="allow">{t("jea.appModeAllow")}</option>
+                <option value="deny">{t("jea.appModeDeny")}</option>
               </select>
-              <label>Правила (METHOD PATH OBJECT ACTION). GraphQL: OBJECT — glob полей (`delete*`, `*`)</label>
+              <label>{t("jea.appRulesLabelFull")}</label>
               <textarea
                 rows={9}
                 value={appForm.rules}
@@ -1553,11 +1546,11 @@ export function JeaPage() {
               />
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {appEditId ? "Сохранить" : "Создать"}
+                  {appEditId ? t("common.save") : t("common.create")}
                 </button>
                 {appEditId && (
                   <button className="btn secondary" type="button" onClick={resetAppForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>
@@ -1569,16 +1562,13 @@ export function JeaPage() {
       {tab === "policy" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>Access Policy</h2>
-            <p className="muted" style={{ fontSize: "0.9rem" }}>
-              Именованный набор ограничений. На ACL актива выбираете политику + пользователя/роль. Пустые поля ACL
-              берутся из политики; ticket/reason политика может только ужесточить.
-            </p>
+            <h2>{t("jea.policyTitle")}</h2>
+            <p className="muted" style={{ fontSize: "0.9rem" }}>{t("jea.policyLead")}</p>
             <table>
               <thead>
                 <tr>
-                  <th>Имя</th>
-                  <th>Ограничения</th>
+                  <th>{t("common.name")}</th>
+                  <th>{t("jea.restrictions")}</th>
                   <th />
                 </tr>
               </thead>
@@ -1600,7 +1590,7 @@ export function JeaPage() {
                       {canWrite && (
                         <div className="row" style={{ gap: "0.4rem" }}>
                           <button className="btn secondary" type="button" onClick={() => startPolicyEdit(p)}>
-                            Изменить
+                            {t("jea.edit")}
                           </button>
                           <button
                             className="btn danger"
@@ -1608,7 +1598,7 @@ export function JeaPage() {
                             disabled={busy}
                             onClick={() => void onPolicyDelete(p)}
                           >
-                            Удалить
+                            {t("common.delete")}
                           </button>
                         </div>
                       )}
@@ -1618,7 +1608,7 @@ export function JeaPage() {
                 {policies.length === 0 && (
                   <tr>
                     <td colSpan={3} className="muted">
-                      Политик нет
+                      {t("jea.noPolicies")}
                     </td>
                   </tr>
                 )}
@@ -1627,22 +1617,22 @@ export function JeaPage() {
           </div>
           {canWrite && (
             <form className="card" onSubmit={onPolicySubmit} style={{ maxWidth: 560 }}>
-              <h2>{policyEditId ? "Редактировать политику" : "Новая политика"}</h2>
-              <label>Имя</label>
+              <h2>{policyEditId ? t("jea.editPolicy") : t("jea.newPolicy")}</h2>
+              <label>{t("common.name")}</label>
               <input
                 required
                 value={policyForm.name}
                 onChange={(e) => setPolicyForm({ ...policyForm, name: e.target.value })}
                 disabled={!!policyEditId}
               />
-              <label>Описание</label>
+              <label>{t("common.description")}</label>
               <input
                 value={policyForm.description}
                 onChange={(e) => setPolicyForm({ ...policyForm, description: e.target.value })}
               />
               <div className="row" style={{ alignItems: "flex-end" }}>
                 <div style={{ flex: 1 }}>
-                  <label>С (HH:MM)</label>
+                  <label>{t("jea.timeFrom")}</label>
                   <input
                     placeholder="09:00"
                     value={policyForm.time_start}
@@ -1650,7 +1640,7 @@ export function JeaPage() {
                   />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label>До (HH:MM)</label>
+                  <label>{t("jea.timeTo")}</label>
                   <input
                     placeholder="18:00"
                     value={policyForm.time_end}
@@ -1658,9 +1648,9 @@ export function JeaPage() {
                   />
                 </div>
               </div>
-              <label>Дни недели</label>
+              <label>{t("jea.daysOfWeek")}</label>
               <div className="row" style={{ marginBottom: "0.9rem" }}>
-                {DAY_LABELS.map((label, i) => {
+                {dayLabels.map((label, i) => {
                   const bit = 1 << i;
                   const on = (policyForm.days_of_week & bit) !== 0;
                   return (
@@ -1687,7 +1677,7 @@ export function JeaPage() {
                   checked={policyForm.require_ticket}
                   onChange={(e) => setPolicyForm({ ...policyForm, require_ticket: e.target.checked })}
                 />
-                Требовать ticket_id
+                {t("jea.requireTicket")}
               </label>
               <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
                 <input
@@ -1695,7 +1685,7 @@ export function JeaPage() {
                   checked={policyForm.require_reason}
                   onChange={(e) => setPolicyForm({ ...policyForm, require_reason: e.target.checked })}
                 />
-                Требовать reason
+                {t("jea.requireReason")}
               </label>
               <label>Allowed CIDR</label>
               <input
@@ -1720,27 +1710,27 @@ export function JeaPage() {
                 value={policyForm.allowed_namespaces}
                 onChange={(e) => setPolicyForm({ ...policyForm, allowed_namespaces: e.target.value })}
               />
-              <label>Allowed egress (SSH -L; пусто = туннели запрещены)</label>
+              <label>{t("jea.allowedEgress")}</label>
               <input
                 value={policyForm.allowed_egress}
                 onChange={(e) => setPolicyForm({ ...policyForm, allowed_egress: e.target.value })}
                 placeholder="10.1.2.0/24:5432, db.prod.local:5432"
               />
-              <label>PII в ответе SQL/HTTP</label>
+              <label>{t("jea.piiInResponse")}</label>
               <select
                 value={policyForm.pii_action}
                 onChange={(e) => setPolicyForm({ ...policyForm, pii_action: e.target.value })}
               >
-                <option value="">выкл.</option>
+                <option value="">{t("assets.off")}</option>
                 <option value="mask">mask</option>
                 <option value="deny">deny</option>
               </select>
-              <label>NLP/DLP классификатор</label>
+              <label>{t("jea.nlpDlpClassifier")}</label>
               <select
                 value={policyForm.nlp_dlp_action}
                 onChange={(e) => setPolicyForm({ ...policyForm, nlp_dlp_action: e.target.value })}
               >
-                <option value="">выкл.</option>
+                <option value="">{t("assets.off")}</option>
                 <option value="audit">audit</option>
                 <option value="mask">mask</option>
                 <option value="deny">deny</option>
@@ -1754,7 +1744,7 @@ export function JeaPage() {
                 <option value="audit">audit</option>
                 <option value="capture">capture</option>
               </select>
-              <label>OCR RDP/VNC (язык)</label>
+              <label>{t("jea.ocrLang")}</label>
               <select
                 value={policyForm.ocr_lang}
                 onChange={(e) => setPolicyForm({ ...policyForm, ocr_lang: e.target.value })}
@@ -1763,7 +1753,7 @@ export function JeaPage() {
                 <option value="eng">eng</option>
                 <option value="rus">rus</option>
               </select>
-              <label>OCR интервал кадров (сек, 5–120)</label>
+              <label>{t("jea.ocrInterval")}</label>
               <input
                 type="number"
                 min={5}
@@ -1771,7 +1761,7 @@ export function JeaPage() {
                 value={policyForm.ocr_interval_sec}
                 onChange={(e) => setPolicyForm({ ...policyForm, ocr_interval_sec: e.target.value })}
               />
-              <label>OCR макс. кадров (1–120)</label>
+              <label>{t("jea.ocrMaxFrames")}</label>
               <input
                 type="number"
                 min={1}
@@ -1780,7 +1770,7 @@ export function JeaPage() {
                 onChange={(e) => setPolicyForm({ ...policyForm, ocr_max_frames: e.target.value })}
               />
               <p className="muted" style={{ marginTop: "-0.5rem" }}>
-                Не live OCR каждого кадра. Post-session Tesseract, индекс screen_text.
+                {t("jea.ocrHint")}
               </p>
               <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                 <input
@@ -1812,9 +1802,9 @@ export function JeaPage() {
                   checked={!!policyForm.rdp_native}
                   onChange={(e) => setPolicyForm({ ...policyForm, rdp_native: e.target.checked })}
                 />
-                Native mstsc path (нужен KEEPPAM_RDP_PUBLIC_HOST + freerdp-proxy)
+                {t("jea.nativeMstsc")}
               </label>
-              <label>DLP regex (имя и паттерн на строку, до 16)</label>
+              <label>{t("jea.dlpRegex")}</label>
               <textarea
                 rows={4}
                 value={policyForm.dlp_patterns}
@@ -1823,20 +1813,17 @@ export function JeaPage() {
                 spellCheck={false}
               />
               <p className="muted" style={{ marginTop: "-0.5rem" }}>
-                Встроенные kind: email, pan, phone, snils. Свои regex + PII в SSH stdout, keystroke, OCR screen_text.
+                {t("jea.piiBuiltinHint")}
               </p>
-              <label>NLP классификаторы (имя, min=N, ключевые слова)</label>
+              <label>{t("jea.nlpClassifiers")}</label>
               <textarea
                 rows={4}
                 value={policyForm.dlp_classifiers}
                 onChange={(e) => setPolicyForm({ ...policyForm, dlp_classifiers: e.target.value })}
-                placeholder={"trade_secret min=2 alpha|beta|roadmap\nhr_data salary bonus увольнение"}
+                placeholder={"trade_secret min=2 alpha|beta|roadmap\nhr_data salary bonus termination"}
                 spellCheck={false}
               />
-              <p className="muted" style={{ marginTop: "-0.5rem" }}>
-                Встроенные: nlp_credentials, nlp_financial, nlp_personal_id, nlp_health, nlp_legal, nlp_private_key.
-                SQL/HTTP/SSH stdout/keystroke/OCR — не live ML, on-prem keyword classifier.
-              </p>
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>{t("jea.nlpBuiltins")}</p>
               <label>SSH JEA pack</label>
               <select
                 value={policyForm.command_policy_pack_id}
@@ -1897,7 +1884,7 @@ export function JeaPage() {
                   />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label>Если выше порога</label>
+                  <label>{t("jea.ifAboveThreshold")}</label>
                   <select
                     value={policyForm.risk_action}
                     onChange={(e) => setPolicyForm({ ...policyForm, risk_action: e.target.value })}
@@ -1910,11 +1897,11 @@ export function JeaPage() {
               </div>
               <div className="row" style={{ gap: "0.5rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {policyEditId ? "Сохранить" : "Создать"}
+                  {policyEditId ? t("common.save") : t("common.create")}
                 </button>
                 {policyEditId && (
                   <button className="btn secondary" type="button" onClick={resetPolicyForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>
@@ -1926,24 +1913,18 @@ export function JeaPage() {
       {tab === "tags" && (
         <>
           <div className="card" style={{ marginBottom: "1.25rem" }}>
-            <h2>ACL на теги активов</h2>
-            <p className="muted">
-              WHO (пользователь / роль / группа) + теги WHAT. Путь <span className="mono">prod/linux</span> —
-              потомок покрывает предка (ACL на <span className="mono">prod</span> видит хост с{" "}
-              <span className="mono">prod/linux</span>). Режим <strong>все</strong> — каждый тег селектора;
-              <strong> любой</strong> — достаточно одного. Прямой ACL на карточке актива побеждает. Нужны права
-              assets.read / assets.acl.
-            </p>
-            {!canSeeACL && <p className="error">Нужно право assets.read</p>}
+            <h2>{t("jea.tagAclTitle")}</h2>
+            <p className="muted">{t("jea.tagAclLeadFull")} {t("jea.needAssetsRead")}</p>
+            {!canSeeACL && <p className="error">{t("jea.needAssetsRead")}</p>}
             {canSeeACL && (
               <table>
                 <thead>
                   <tr>
-                    <th>Субъект</th>
-                    <th>Теги активов</th>
-                    <th>Совпадение</th>
+                    <th>{t("jea.subject")}</th>
+                    <th>{t("jea.tabTags")}</th>
+                    <th>{t("jea.matchMode")}</th>
                     <th>Policy</th>
-                    <th>Истекает</th>
+                    <th>{t("jea.expires")}</th>
                     <th />
                   </tr>
                 </thead>
@@ -1976,10 +1957,10 @@ export function JeaPage() {
                           .filter(Boolean)
                           .join(" · ") || "—"}
                       </td>
-                      <td>{b.asset_match_mode === "any" ? "любой" : "все"}</td>
+                      <td>{b.asset_match_mode === "any" ? t("jea.any") : t("common.all")}</td>
                       <td className="mono">{b.access_policy_name || "—"}</td>
                       <td className="mono">
-                        {b.expires_at ? new Date(b.expires_at).toLocaleString() : "постоянно"}
+                        {b.expires_at ? new Date(b.expires_at).toLocaleString() : t("jea.permanent")}
                       </td>
                       <td>
                         {canACL && (
@@ -1990,7 +1971,7 @@ export function JeaPage() {
                               disabled={busy}
                               onClick={() => void startTagEdit(b)}
                             >
-                              Изменить
+                              {t("jea.edit")}
                             </button>
                             <button
                               className="btn danger"
@@ -1998,7 +1979,7 @@ export function JeaPage() {
                               disabled={busy}
                               onClick={() => void onDeleteTagACL(b)}
                             >
-                              Отозвать
+                              {t("jea.revoke")}
                             </button>
                           </div>
                         )}
@@ -2008,7 +1989,7 @@ export function JeaPage() {
                   {tagBindings.length === 0 && (
                     <tr>
                       <td colSpan={6} className="muted">
-                        Нет tag ACL
+                        {t("jea.noTagAcl")}
                       </td>
                     </tr>
                   )}
@@ -2018,24 +1999,24 @@ export function JeaPage() {
           </div>
           {canACL && (
             <form className="card" style={{ maxWidth: 560 }} onSubmit={(e) => void onTagSubmit(e)}>
-              <h2>{tagEditId ? "Изменить tag ACL" : "Новый tag ACL"}</h2>
+              <h2>{tagEditId ? t("jea.editTagAcl") : t("jea.newTagAcl")}</h2>
               {tagEditId && (
                 <p className="muted">
-                  WHO нельзя сменить. Остальные ограничения (время, JEA, ABAC) сохраняются; меняются теги, Policy и TTL.
+                  {t("jea.tagAclEditLead")}
                   {tagRaw?.expires_at
-                    ? ` Сейчас истекает ${new Date(tagRaw.expires_at).toLocaleString()}.`
-                    : " Сейчас без TTL."}
+                    ? t("jea.expiresNow", { at: new Date(tagRaw.expires_at).toLocaleString() })
+                    : t("jea.tagAclNoTtl")}
                 </p>
               )}
-              <label>WHO</label>
+              <label>{t("jea.who")}</label>
               <select
                 value={tagForm.who}
                 disabled={!!tagEditId}
                 onChange={(e) => setTagForm({ ...tagForm, who: e.target.value as typeof tagForm.who })}
               >
-                <option value="group">Группа</option>
-                <option value="role">Роль</option>
-                <option value="user">Пользователь</option>
+                <option value="group">{t("common.group")}</option>
+                <option value="role">{t("jea.role")}</option>
+                <option value="user">{t("common.user")}</option>
               </select>
               {tagForm.who === "group" && (
                 <select
@@ -2043,7 +2024,7 @@ export function JeaPage() {
                   disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, group_id: e.target.value })}
                 >
-                  <option value="">выберите группу</option>
+                  <option value="">{t("jea.selectGroup")}</option>
                   {tagGroups.map((g) => (
                     <option key={g.id} value={g.id}>
                       {g.parent_name ? `${g.parent_name} / ${g.name}` : g.name}
@@ -2057,7 +2038,7 @@ export function JeaPage() {
                   disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, role_id: e.target.value })}
                 >
-                  <option value="">выберите роль</option>
+                  <option value="">{t("jea.selectRole")}</option>
                   {tagRoles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -2071,7 +2052,7 @@ export function JeaPage() {
                   disabled={!!tagEditId}
                   onChange={(e) => setTagForm({ ...tagForm, user_id: e.target.value })}
                 >
-                  <option value="">выберите пользователя</option>
+                  <option value="">{t("jea.selectUser")}</option>
                   {tagUsers.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.username}
@@ -2079,52 +2060,49 @@ export function JeaPage() {
                   ))}
                 </select>
               )}
-              <label>Теги активов (через запятую)</label>
+              <label>{t("jea.assetTags")}</label>
               <input
                 required
                 value={tagForm.asset_match_tags}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_tags: e.target.value })}
                 placeholder="prod/linux, pci"
               />
-              <label>Совпадение</label>
+              <label>{t("jea.matchMode")}</label>
               <select
                 value={tagForm.asset_match_mode}
                 onChange={(e) =>
                   setTagForm({ ...tagForm, asset_match_mode: e.target.value as "all" | "any" })
                 }
               >
-                <option value="all">Все перечисленные (AND)</option>
-                <option value="any">Любой из перечисленных (OR)</option>
+                <option value="all">{t("jea.matchAllAnd")}</option>
+                <option value="any">{t("jea.matchAnyOr")}</option>
               </select>
-              <label>Имя актива (glob)</label>
+              <label>{t("jea.assetNameGlob")}</label>
               <input
                 value={tagForm.asset_match_name}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_name: e.target.value })}
                 placeholder="prod-*"
               />
-              <label>Hostname (glob)</label>
+              <label>{t("jea.hostnameGlob")}</label>
               <input
                 value={tagForm.asset_match_hostname}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_hostname: e.target.value })}
                 placeholder="*.corp.local"
               />
-              <label>Типы активов</label>
+              <label>{t("jea.assetTypes")}</label>
               <input
                 value={tagForm.asset_match_types}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_types: e.target.value })}
                 placeholder="ssh, rdp"
               />
-              <label>CIDR адреса</label>
+              <label>{t("jea.cidrAddresses")}</label>
               <input
                 value={tagForm.asset_match_cidrs}
                 onChange={(e) => setTagForm({ ...tagForm, asset_match_cidrs: e.target.value })}
                 placeholder="10.1.0.0/16"
               />
-              <p className="muted" style={{ marginTop: "-0.5rem" }}>
-                Хотя бы одно поле WHAT. Непустые комбинируются через AND — новый актив покрывается без
-                ручного bind.
-              </p>
-              <label>Policy (опц.)</label>
+              <p className="muted" style={{ marginTop: "-0.5rem" }}>{t("jea.whatFieldsHint")}</p>
+              <label>{t("jea.policyOptional")}</label>
               <select
                 value={tagForm.access_policy_id}
                 onChange={(e) => setTagForm({ ...tagForm, access_policy_id: e.target.value })}
@@ -2136,7 +2114,7 @@ export function JeaPage() {
                   </option>
                 ))}
               </select>
-              <label>TTL минут (опц., пусто = {tagEditId ? "оставить" : "постоянно"})</label>
+              <label>{t("jea.ttlMinutesLabel", { mode: tagEditId ? t("jea.leaveTtl") : t("jea.permanent") })}</label>
               <input
                 type="number"
                 min={1}
@@ -2157,16 +2135,16 @@ export function JeaPage() {
                       if (e.target.checked) setTagForm({ ...tagForm, duration_minutes: "" });
                     }}
                   />
-                  Постоянно (снять TTL)
+                  {t("jea.permanentRemoveTtl")}
                 </label>
               )}
               <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
                 <button className="btn" type="submit" disabled={busy}>
-                  {tagEditId ? "Сохранить" : "Создать"}
+                  {tagEditId ? t("common.save") : t("common.create")}
                 </button>
                 {tagEditId && (
                   <button className="btn secondary" type="button" disabled={busy} onClick={resetTagForm}>
-                    Отмена
+                    {t("common.cancel")}
                   </button>
                 )}
               </div>

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/keeppam/auth/internal/buildinfo"
 )
 
 // State is shared by API and SSH-worker for /livez /readyz and SIGTERM drain.
@@ -37,12 +39,12 @@ func (s *State) SetCheck(fn func(context.Context) error) {
 }
 
 func (s *State) ServeLive(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": buildinfo.Version})
 }
 
 func (s *State) ServeReady(w http.ResponseWriter, r *http.Request) {
 	if s.Draining() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "version": buildinfo.Version})
 		return
 	}
 	fn, _ := s.check.Load().(func(context.Context) error)
@@ -50,11 +52,11 @@ func (s *State) ServeReady(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := fn(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready", "error": err.Error()})
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready", "error": err.Error(), "version": buildinfo.Version})
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "version": buildinfo.Version})
 }
 
 func (s *State) Handler() http.Handler {

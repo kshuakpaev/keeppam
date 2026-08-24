@@ -1,0 +1,9 @@
+# Runtime image for api / session-worker when shipping offline bundles.
+# Binary is built on the host: make api-build → deploy/auth-server
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+COPY auth-server /app/auth-server
+RUN chmod +x /app/auth-server
+EXPOSE 8080
+ENTRYPOINT ["/app/auth-server"]

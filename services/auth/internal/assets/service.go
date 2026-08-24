@@ -244,8 +244,19 @@ func (s *Service) CountActive(ctx context.Context) (int, error) {
 	return n, err
 }
 
+func (s *Service) CountAll(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets`).Scan(&n)
+	return n, err
+}
+
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
-	rows, err := s.db.Pool.Query(ctx, `
+	return s.ListLimited(ctx, 0)
+}
+
+// ListLimited returns assets ordered by name. If limit > 0, only the first limit rows.
+func (s *Service) ListLimited(ctx context.Context, limit int) ([]Asset, error) {
+	q := `
 		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
 			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
@@ -258,7 +269,14 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
-		ORDER BY a.name`)
+		ORDER BY a.name, a.id`
+	var rows pgx.Rows
+	var err error
+	if limit > 0 {
+		rows, err = s.db.Pool.Query(ctx, q+` LIMIT $1`, limit)
+	} else {
+		rows, err = s.db.Pool.Query(ctx, q)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +305,22 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 		out[i].Accounts = acctMap[out[i].ID]
 	}
 	return out, nil
+}
+
+// IsVisibleUnderLimit reports whether asset id is among the first limit assets (ORDER BY name, id).
+// limit <= 0 means all assets are visible.
+func (s *Service) IsVisibleUnderLimit(ctx context.Context, id uuid.UUID, limit int) (bool, error) {
+	if limit <= 0 {
+		return true, nil
+	}
+	var ok bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM (
+				SELECT id FROM assets ORDER BY name, id LIMIT $1
+			) v WHERE v.id = $2
+		)`, limit, id).Scan(&ok)
+	return ok, err
 }
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {

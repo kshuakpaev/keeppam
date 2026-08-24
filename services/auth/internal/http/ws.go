@@ -71,6 +71,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid asset_id")
 		return
 	}
+	if !s.ensureAssetLicenseVisible(w, r, assetID) {
+		return
+	}
 	accountID, err := uuid.Parse(body.AccountID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid account_id")

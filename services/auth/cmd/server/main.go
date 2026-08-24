@@ -21,6 +21,7 @@ import (
 	"github.com/keeppam/auth/internal/attacksim"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
+	"github.com/keeppam/auth/internal/buildinfo"
 	"github.com/keeppam/auth/internal/castindex"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
@@ -536,7 +537,7 @@ func main() {
 				}
 				srv.TLSConfig = tlsCfg
 				slog.Info("listening tls", "addr", cfg.HTTPAddr, "mode", cfg.Mode, "mtls", cfg.MTLSMode(),
-					"data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
+					"version", buildinfo.Version, "data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
 					"spiffe_id", loadSPIFFEID(cfg), "spiffe_domain", cfg.SPIFFETrustDomain,
 					"fips", fips.Backend())
 				if err := srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && err != http.ErrServerClosed {
@@ -546,7 +547,7 @@ func main() {
 				return
 			}
 			slog.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode,
-				"data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
+				"version", buildinfo.Version, "data_key", cfg.DataKeySource, "recordings", recStore.Backend(),
 				"fips", fips.Backend())
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("http", "err", err)

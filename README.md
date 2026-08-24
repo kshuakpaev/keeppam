@@ -12,6 +12,21 @@ make up
 # bootstrap admin / ChangeMeNow!1
 ```
 
+### Дистрибутив для другого сервера
+
+```bash
+make dist
+# → dist/keeppam-<ver>-offline-core.tar.gz  (VERSION автоматически +patch)
+
+# на целевом хосте:
+tar -xzf keeppam-*-offline-core.tar.gz
+cd keeppam-*-offline-core && ./install.sh
+```
+
+Версия: `./scripts/keeppam-version.sh show` · bump: `make bump` / `BUMP=minor make dist`.
+Требования к серверу: `docs/system-requirements.txt`.
+Подробнее: `docs/install.txt`.
+
 Фронтенд и API собираются на хосте (`npm` / `go`), Docker только запускает контейнеры. Это не требует доступа к Docker Hub для `node`/`golang` образов (актуально при проблемах с IPv6).
 
 Первый запуск API-образа `deploy-api:latest` нужен при наличии сети; дальше `make up` обновляет бинарник через volume.

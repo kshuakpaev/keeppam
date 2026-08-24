@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, hasPerm, type PamGroup, type User } from "../api";
 import { useAuth } from "../auth";
+import { useI18n } from "../i18n";
 
 export function GroupsPage() {
   const { user } = useAuth();
+  const { t, te } = useI18n();
   const canRead = hasPerm(user, "users.read");
   const canWrite = hasPerm(user, "users.write");
   const [groups, setGroups] = useState<PamGroup[]>([]);
@@ -21,7 +23,7 @@ export function GroupsPage() {
       setGroups(g.groups || []);
       setUsers(u.users || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки");
+      setError(te(err, "groups.loadError"));
     }
   }
 
@@ -47,7 +49,7 @@ export function GroupsPage() {
         member_ids: (g.members || []).map((m) => m.id),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка загрузки группы");
+      setError(te(err, "groups.loadGroupError"));
     }
   }
 
@@ -67,22 +69,22 @@ export function GroupsPage() {
     try {
       if (editId) {
         await api.updateGroup(editId, form);
-        setMsg("Группа сохранена");
+        setMsg(t("groups.saved"));
       } else {
         await api.createGroup(form);
-        setMsg("Группа создана");
+        setMsg(t("groups.created"));
         startCreate();
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка сохранения");
+      setError(te(err, "groups.saveError"));
     } finally {
       setBusy(false);
     }
   }
 
   async function onDelete(id: string) {
-    if (!canWrite || !confirm("Удалить группу? ACL на эту группу снимутся. Дочерние станут корневыми.")) return;
+    if (!canWrite || !confirm(t("groups.deleteConfirm"))) return;
     setBusy(true);
     setError("");
     try {
@@ -90,22 +92,22 @@ export function GroupsPage() {
       if (editId === id) startCreate();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка удаления");
+      setError(te(err, "groups.deleteError"));
     } finally {
       setBusy(false);
     }
   }
 
   if (!canRead) {
-    return <p className="error">Недостаточно прав</p>;
+    return <p className="error">{t("common.forbidden")}</p>;
   }
 
   return (
     <div>
       <div className="toolbar">
         <div>
-          <h1>Группы</h1>
-          <p className="muted">WHO на ACL. Дочерняя группа наследует ACL родителя (как тег prod/linux).</p>
+          <h1>{t("groups.title")}</h1>
+          <p className="muted">{t("groups.lead")}</p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -115,10 +117,10 @@ export function GroupsPage() {
           <table>
             <thead>
               <tr>
-                <th>Имя</th>
-                <th>Родитель</th>
-                <th>Описание</th>
-                <th>Участники</th>
+                <th>{t("common.name")}</th>
+                <th>{t("groups.parent")}</th>
+                <th>{t("common.description")}</th>
+                <th>{t("groups.members")}</th>
                 <th />
               </tr>
             </thead>
@@ -132,11 +134,11 @@ export function GroupsPage() {
                   <td>
                     <div className="row" style={{ gap: "0.4rem" }}>
                       <button className="btn secondary" type="button" onClick={() => void startEdit(g.id)}>
-                        Открыть
+                        {t("common.open")}
                       </button>
                       {canWrite && (
                         <button className="btn danger" type="button" disabled={busy} onClick={() => void onDelete(g.id)}>
-                          Удалить
+                          {t("common.delete")}
                         </button>
                       )}
                     </div>
@@ -148,25 +150,25 @@ export function GroupsPage() {
         </div>
         {canWrite && (
           <form className="card" onSubmit={(e) => void onSave(e)}>
-            <h2>{editId ? "Редактировать" : "Новая группа"}</h2>
-            <label>Имя</label>
+            <h2>{editId ? t("groups.edit") : t("groups.new")}</h2>
+            <label>{t("common.name")}</label>
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
               placeholder="dba"
             />
-            <label>Описание</label>
+            <label>{t("common.description")}</label>
             <input
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
-            <label>Родитель (опц.)</label>
+            <label>{t("groups.parentOpt")}</label>
             <select
               value={form.parent_id}
               onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
             >
-              <option value="">— корень</option>
+              <option value="">{t("groups.root")}</option>
               {groups
                 .filter((g) => g.id !== editId)
                 .map((g) => (
@@ -175,7 +177,7 @@ export function GroupsPage() {
                   </option>
                 ))}
             </select>
-            <label>Участники</label>
+            <label>{t("groups.members")}</label>
             <div style={{ maxHeight: 240, overflow: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.5rem" }}>
               {users.map((u) => (
                 <label key={u.id} className="row" style={{ gap: 8, alignItems: "center", marginBottom: 4 }}>
@@ -191,11 +193,11 @@ export function GroupsPage() {
             </div>
             <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
               <button className="btn" type="submit" disabled={busy}>
-                {editId ? "Сохранить" : "Создать"}
+                {editId ? t("common.save") : t("common.create")}
               </button>
               {editId && (
                 <button className="btn secondary" type="button" onClick={startCreate}>
-                  Отмена
+                  {t("common.cancel")}
                 </button>
               )}
             </div>
