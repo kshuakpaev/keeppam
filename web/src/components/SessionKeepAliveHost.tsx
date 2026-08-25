@@ -20,7 +20,7 @@ export function SessionKeepAliveHost() {
   if (tabs.length === 0) return null;
 
   return (
-    <div className={`session-keepalive${viewingSession ? " viewing" : ""}`} aria-hidden={!viewingSession}>
+    <div className={`session-keepalive${viewingSession ? " viewing" : ""}`}>
       {tabs.map((t) => {
         const visible = viewingSession && routeId === t.id;
         return (

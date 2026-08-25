@@ -32,6 +32,7 @@ import { GroupsPage } from "./pages/GroupsPage";
 import { UserEditPage } from "./pages/UserEditPage";
 import { PasswordSetsPage } from "./pages/PasswordSetsPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { HelpPage } from "./pages/HelpPage";
 import { UsersPage } from "./pages/UsersPage";
 import "./styles.css";
 
@@ -46,6 +47,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/setup" element={<SetupPage />} />
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomePage />} />
+              <Route path="/help" element={<HelpPage />} />
               <Route path="/assets" element={<AssetsPage />} />
               <Route path="/assets/:id" element={<AssetEditPage />} />
               <Route path="/password-sets" element={<PasswordSetsPage />} />

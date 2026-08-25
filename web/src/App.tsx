@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, useMatch, useNavigate } from "react-router-dom";
+import { Link, Navigate, Outlet, useMatch, useNavigate } from "react-router-dom";
 import { api, hasPerm, type AccessRequest, type InboxNotification, type LicenseStatus } from "./api";
 import { useAuth } from "./auth";
 import { ProfileMenu } from "./components/ProfileMenu";
@@ -8,6 +8,7 @@ import { SessionTabBar } from "./components/SessionTabBar";
 import { LangSwitch, notifyTitle, useI18n } from "./i18n";
 import brandMark from "./assets/keeppam-mark.png";
 import { licenseStatusText } from "./licenseStatus";
+import { SidebarNav } from "./components/SidebarNav";
 
 const SEEN_DECISIONS_KEY = "kp_seen_access_decisions";
 
@@ -268,35 +269,7 @@ export function AppLayout() {
             </Link>
           </div>
         )}
-        <nav className="nav">
-          <NavLink to="/" end>
-            {t("nav.overview")}
-          </NavLink>
-          {hasPerm(user, "assets.read") && <NavLink to="/assets">{t("nav.assets")}</NavLink>}
-          {hasPerm(user, "assets.read") && <NavLink to="/password-sets">{t("nav.passwordSets")}</NavLink>}
-          {hasPerm(user, "discovery.read") && <NavLink to="/discovery">{t("nav.discovery")}</NavLink>}
-          {hasPerm(user, "access.request") ||
-          hasPerm(user, "access.approve") ||
-          hasPerm(user, "access.approve.security") ||
-          hasPerm(user, "access.breakglass") ||
-          hasPerm(user, "assets.write") ||
-          hasPerm(user, "sessions.supervise") ? (
-            <NavLink to="/access-requests">
-              {t("nav.requests")}
-              {badge > 0 && <span className="nav-badge">{badge > 99 ? "99+" : badge}</span>}
-            </NavLink>
-          ) : null}
-          {hasPerm(user, "sessions.read") && <NavLink to="/sessions">{t("nav.sessions")}</NavLink>}
-          {hasPerm(user, "sessions.read") && <NavLink to="/forensic">{t("nav.forensic")}</NavLink>}
-          {hasPerm(user, "users.read") && <NavLink to="/users">{t("nav.users")}</NavLink>}
-          {hasPerm(user, "users.read") && <NavLink to="/groups">{t("nav.groups")}</NavLink>}
-          {hasPerm(user, "audit.read") && <NavLink to="/analytics">{t("nav.analytics")}</NavLink>}
-          {hasPerm(user, "compliance.read") && <NavLink to="/compliance">{t("nav.compliance")}</NavLink>}
-          {hasPerm(user, "jea.read") && <NavLink to="/jea">{t("nav.jea")}</NavLink>}
-          {hasPerm(user, "attacksim.read") && <NavLink to="/attack-sim">{t("nav.attacksim")}</NavLink>}
-          {hasPerm(user, "audit.read") && <NavLink to="/audit">{t("nav.audit")}</NavLink>}
-          {hasPerm(user, "settings.write") && <NavLink to="/config">{t("nav.config")}</NavLink>}
-        </nav>
+        <SidebarNav user={user} requestsBadge={badge} />
         <ProfileMenu
           name={user.display_name || user.username}
           onLogout={() => void logout()}

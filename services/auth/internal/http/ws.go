@@ -937,6 +937,25 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		return conn.WriteMessage(mt, data)
 	}
+	safePing := func() error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+	}
+
+	// Keep idle SSH websockets alive through proxies/NAT (same pattern as live watch).
+	const wsReadIdle = 90 * time.Second
+	_ = conn.SetReadDeadline(time.Now().Add(wsReadIdle))
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadIdle))
+		return nil
+	})
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadIdle))
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
+	})
 
 	done := make(chan struct{})
 	go func() {
@@ -955,15 +974,39 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		_ = safeWrite(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session ended"))
 	}()
 
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go func() {
+		ticker := time.NewTicker(25 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingStop:
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := safePing(); err != nil {
+					_ = conn.Close()
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(wsReadIdle))
 		if mt == websocket.TextMessage {
 			var msg wsClientMsg
 			if json.Unmarshal(data, &msg) == nil {
 				switch msg.Type {
+				case "ping":
+					_ = safeWrite(websocket.TextMessage, []byte(`{"type":"pong"}`))
+					continue
 				case "resize":
 					if msg.Cols > 0 && msg.Rows > 0 {
 						_ = bridge.Resize(msg.Cols, msg.Rows)
