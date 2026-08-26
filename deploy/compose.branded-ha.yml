@@ -1,0 +1,11 @@
+# Branded image overrides for HA overlay (compose.ha.yml / compose.ha3.yml).
+# Applied only when KEEPPAM_HA!=0 and KEEPPAM_BRAND!=0 — see scripts/keeppam-compose.inc.sh.
+services:
+  api-b:
+    image: keeppam-api:latest
+  session-worker-b:
+    image: keeppam-api:latest
+  edge:
+    image: keeppam-edge:2.9-alpine
+  postgres-replica:
+    image: keeppam-db:16-alpine

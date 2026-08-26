@@ -12,10 +12,11 @@
 |----------|------------|
 | `deploy/image-brand-map.txt` | upstream → `keeppam-*` |
 | `scripts/keeppam-retag.sh` | `docker tag` после `docker load` / локальной сборки |
-| `deploy/compose.branded.yml` | overlay имён образов |
+| `deploy/compose.branded.yml` | overlay имён образов (core + obs profiles) |
+| `deploy/compose.branded-ha.yml` | brand для HA (`edge` / `api-b`); только при `KEEPPAM_HA=1` |
 | `KEEPPAM_BRAND` | `1` (default в install/upgrade) — brand on; `0` — upstream-имена для `make up` |
 
-`keeppam-install.sh` / `keeppam-upgrade.sh` / `keeppam-rollback.sh`: load → retag → `compose … -f compose.branded.yml … --pull never`.
+`keeppam-install.sh` / `keeppam-upgrade.sh` / `keeppam-rollback.sh`: load → retag → `compose … -f compose.branded.yml` (+ `compose.branded-ha.yml` при HA) `… --pull never`.
 
 Локальная разработка без brand:
 

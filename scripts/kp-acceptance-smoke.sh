@@ -112,6 +112,25 @@ else
   bad "branded config still shows upstream vendor tags"
 fi
 
+# brand overlay must not invent HA edge without KEEPPAM_HA
+if ROOT="$ROOT" KEEPPAM_BRAND=1 KEEPPAM_HA= bash -c '
+  source "$ROOT/scripts/keeppam-compose.inc.sh"
+  ! keeppam_compose config --services 2>/dev/null | grep -qx edge
+'; then
+  ok "no edge service without KEEPPAM_HA"
+else
+  bad "compose.branded invents edge without HA"
+fi
+
+if ROOT="$ROOT" KEEPPAM_BRAND=1 KEEPPAM_HA=1 bash -c '
+  source "$ROOT/scripts/keeppam-compose.inc.sh"
+  keeppam_compose config 2>/dev/null | grep -q keeppam-edge
+'; then
+  ok "HA brand → keeppam-edge"
+else
+  bad "HA brand missing keeppam-edge"
+fi
+
 # NOTICE brand names
 if grep -q 'keeppam-session-gateway' "$ROOT/NOTICE"; then
   ok "NOTICE lists keeppam-session-gateway"

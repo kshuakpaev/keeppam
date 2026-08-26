@@ -1267,15 +1267,17 @@ export const api = {
   sealAudit: () =>
     request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
-  listAssets: () =>
-    request<{
+  listAssets: (opts?: { status?: "listed" | "archived" | "all" }) => {
+    const q = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+    return request<{
       assets: Asset[];
       total?: number;
       hidden?: number;
       visible_limit?: number;
       license_expired?: boolean;
       license_unlicensed?: boolean;
-    }>("/api/v1/admin/assets"),
+    }>(`/api/v1/admin/assets${q}`);
+  },
   getLicense: () =>
     request<LicenseStatus>("/api/v1/admin/license"),
   getLicenseFingerprint: () =>

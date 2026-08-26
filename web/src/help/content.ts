@@ -97,6 +97,11 @@ export const HELP_TOPICS: HelpTopic[] = [
         "Тізім аты/мекенжайы бойынша ізделеді. Құруға assets.write және бос лицензия слоты керек (hard_blocked құруды тыяды).",
       ),
       t(
+        "Вкладки «Активные» и «Архив»: сначала актив уходит в архив; из архива — восстановление или безвозвратное удаление (история сессий сохраняется).",
+        "Active and Archive tabs: first move an asset to the archive; from the archive restore or permanently delete (session history is kept).",
+        "«Белсенді» және «Мұрағат» қойындылары: алдымен мұрағат; мұрағаттан қалпына келтіру немесе толығымен жою (сеанс тарихы сақталады).",
+      ),
+      t(
         "«Подключить» / «Открыть SSH» / SQL / kubectl создаёт PAM-сессию с учётом ACL, JIT и Access Policy. Если нужен тикет или reason — форма запросит их до connect. При four-eyes сессия ждёт супервайзера.",
         "Connect / Open SSH / SQL / kubectl creates a PAM session under ACL, JIT, and Access Policy. Ticket/reason prompts appear before connect when required. With four-eyes the session waits for a supervisor.",
         "Қосу / SSH / SQL / kubectl ACL, JIT және Access Policy бойынша PAM-сеанс құрады. Тикет/reason қажет болса — connect алдында сұралады. Four-eyes кезінде супервайзер күтіледі.",
@@ -156,8 +161,12 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
     actions: [
       {
-        name: t("Сохранить / Удалить", "Save / Delete", "Сақтау / Жою"),
-        desc: t("Пишет карточку; удаление необратимо для актива.", "Persists the card; delete removes the asset.", "Карточканы сақтайды; жою қайтарымсыз."),
+        name: t("В архив / Восстановить / Удалить навсегда", "Archive / Restore / Delete forever", "Мұрағат / Қалпына / Толығымен жою"),
+        desc: t(
+          "Сначала актив уходит в архив (без подключений). Из архива можно восстановить или удалить навсегда; история сессий сохраняется.",
+          "First move the asset to the archive (no connections). From the archive you can restore or permanently delete; session history is kept.",
+          "Алдымен актив мұрағатқа өтеді (қосылымсыз). Мұрағаттан қалпына келтіру немесе толығымен жоюға болады; сеанс тарихы сақталады.",
+        ),
       },
       {
         name: t("Ротировать", "Rotate", "Ротация"),

@@ -1,4 +1,6 @@
 # KeepPAM branded image names (T-03). Applied when KEEPPAM_BRAND!=0 (default on install/upgrade).
+# Only overrides services that exist in docker-compose.yml.
+# HA-only services → compose.branded-ha.yml (do NOT list edge/api-b here — Compose would create stubs).
 # Requires scripts/keeppam-retag.sh after docker load / local build.
 services:
   postgres:
@@ -7,11 +9,7 @@ services:
     image: keeppam-cache:7-alpine
   api:
     image: keeppam-api:latest
-  api-b:
-    image: keeppam-api:latest
   session-worker:
-    image: keeppam-api:latest
-  session-worker-b:
     image: keeppam-api:latest
   guacd:
     image: keeppam-session-gateway:1.5.5
@@ -37,7 +35,3 @@ services:
     image: keeppam-curl:8.5.0
   grafana:
     image: keeppam-grafana:11.4.0
-  edge:
-    image: keeppam-edge:2.9-alpine
-  postgres-replica:
-    image: keeppam-db:16-alpine

@@ -512,9 +512,37 @@ export function AssetEditPage() {
     }
   }
 
-  async function onDelete() {
+  async function onArchive() {
     if (!id || !canWrite) return;
-    if (!confirm(t("assets.deleteConfirm"))) return;
+    if (!confirm(t("assets.archiveConfirm", { name: asset?.name || "" }))) return;
+    setError("");
+    try {
+      const updated = await api.updateAsset(id, { status: "archived" });
+      setAsset(updated);
+      setForm((f) => ({ ...f, status: "archived" }));
+      setMsg(t("assets.archivedOk"));
+      nav("/assets");
+    } catch (err) {
+      setError(te(err, "assets.archiveError"));
+    }
+  }
+
+  async function onRestore() {
+    if (!id || !canWrite) return;
+    setError("");
+    try {
+      const updated = await api.updateAsset(id, { status: "active" });
+      setAsset(updated);
+      setForm((f) => ({ ...f, status: "active" }));
+      setMsg(t("assets.restoredOk"));
+    } catch (err) {
+      setError(te(err, "assets.restoreError"));
+    }
+  }
+
+  async function onDeleteForever() {
+    if (!id || !canWrite) return;
+    if (!confirm(t("assets.deleteForeverConfirm", { name: asset?.name || "" }))) return;
     try {
       await api.deleteAsset(id);
       nav("/assets");
@@ -1154,12 +1182,18 @@ export function AssetEditPage() {
         )}
         <label>{t("common.status")}</label>
         <select
-          value={form.status}
+          value={form.status === "archived" ? "archived" : form.status}
           onChange={(e) => setForm({ ...form, status: e.target.value })}
-          disabled={!canWrite}
+          disabled={!canWrite || form.status === "archived"}
         >
-          <option value="active">active</option>
-          <option value="disabled">disabled</option>
+          {form.status === "archived" ? (
+            <option value="archived">archived</option>
+          ) : (
+            <>
+              <option value="active">active</option>
+              <option value="disabled">disabled</option>
+            </>
+          )}
         </select>
         <label>{t("common.tags")}</label>
         <input
@@ -1433,15 +1467,25 @@ export function AssetEditPage() {
           disabled={!canWrite}
         />
         <div className="row" style={{ marginTop: "0.5rem" }}>
-          {canWrite && (
+          {canWrite && form.status !== "archived" && (
             <button className="btn" type="submit">
               {t("common.save")}
             </button>
           )}
-          {canWrite && (
-            <button className="btn danger" type="button" onClick={() => void onDelete()}>
-              {t("common.delete")}
+          {canWrite && form.status !== "archived" && (
+            <button className="btn secondary" type="button" onClick={() => void onArchive()}>
+              {t("assets.archive")}
             </button>
+          )}
+          {canWrite && form.status === "archived" && (
+            <>
+              <button className="btn" type="button" onClick={() => void onRestore()}>
+                {t("assets.restore")}
+              </button>
+              <button className="btn danger" type="button" onClick={() => void onDeleteForever()}>
+                {t("assets.deleteForever")}
+              </button>
+            </>
           )}
         </div>
       </form>

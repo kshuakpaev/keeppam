@@ -238,9 +238,36 @@ type UpdateAccountInput struct {
 	ADUserDN             *string `json:"ad_user_dn"`
 }
 
+// StatusFilter selects which assets ListLimited returns.
+type StatusFilter string
+
+const (
+	StatusFilterListed   StatusFilter = "listed"   // active + disabled (not archived)
+	StatusFilterArchived StatusFilter = "archived" // archive only
+	StatusFilterAll      StatusFilter = "all"
+)
+
+var (
+	ErrNotArchived    = errors.New("asset must be archived before permanent delete")
+	ErrActiveSessions = errors.New("asset has active or pending sessions; end them before delete")
+)
+
 func (s *Service) CountActive(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets WHERE status='active'`).Scan(&n)
+	return n, err
+}
+
+// CountListed counts assets on the main Assets tab (excludes archive).
+func (s *Service) CountListed(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets WHERE status <> 'archived'`).Scan(&n)
+	return n, err
+}
+
+func (s *Service) CountArchived(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets WHERE status='archived'`).Scan(&n)
 	return n, err
 }
 
@@ -251,11 +278,22 @@ func (s *Service) CountAll(ctx context.Context) (int, error) {
 }
 
 func (s *Service) List(ctx context.Context) ([]Asset, error) {
-	return s.ListLimited(ctx, 0)
+	return s.ListLimited(ctx, 0, StatusFilterListed)
 }
 
 // ListLimited returns assets ordered by name. If limit > 0, only the first limit rows.
-func (s *Service) ListLimited(ctx context.Context, limit int) ([]Asset, error) {
+func (s *Service) ListLimited(ctx context.Context, limit int, filter StatusFilter) ([]Asset, error) {
+	where := ""
+	switch filter {
+	case StatusFilterArchived:
+		where = ` WHERE a.status = 'archived'`
+	case StatusFilterAll:
+		where = ""
+	case StatusFilterListed, "":
+		where = ` WHERE a.status <> 'archived'`
+	default:
+		return nil, fmt.Errorf("invalid status filter")
+	}
 	q := `
 		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
 			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
@@ -268,7 +306,7 @@ func (s *Service) ListLimited(ctx context.Context, limit int) ([]Asset, error) {
 			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
-		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
+		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id` + where + `
 		ORDER BY a.name, a.id`
 	var rows pgx.Rows
 	var err error
@@ -307,8 +345,8 @@ func (s *Service) ListLimited(ctx context.Context, limit int) ([]Asset, error) {
 	return out, nil
 }
 
-// IsVisibleUnderLimit reports whether asset id is among the first limit assets (ORDER BY name, id).
-// limit <= 0 means all assets are visible.
+// IsVisibleUnderLimit reports whether asset id is among the first limit listed assets (ORDER BY name, id).
+// Archived assets are excluded. limit <= 0 means all listed assets are visible.
 func (s *Service) IsVisibleUnderLimit(ctx context.Context, id uuid.UUID, limit int) (bool, error) {
 	if limit <= 0 {
 		return true, nil
@@ -317,7 +355,7 @@ func (s *Service) IsVisibleUnderLimit(ctx context.Context, id uuid.UUID, limit i
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM (
-				SELECT id FROM assets ORDER BY name, id LIMIT $1
+				SELECT id FROM assets WHERE status <> 'archived' ORDER BY name, id LIMIT $1
 			) v WHERE v.id = $2
 		)`, limit, id).Scan(&ok)
 	return ok, err
@@ -466,9 +504,10 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.Description != nil {
 		a.Description = *in.Description
 	}
+	prevStatus := a.Status
 	if in.Status != nil {
 		switch *in.Status {
-		case "active", "disabled":
+		case "active", "disabled", "archived":
 			a.Status = *in.Status
 		default:
 			return Asset{}, fmt.Errorf("invalid status")
@@ -591,8 +630,15 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 		return Asset{}, err
 	}
 	action := "asset.updated"
-	if in.Status != nil && *in.Status == "disabled" {
-		action = "asset.disabled"
+	if in.Status != nil {
+		switch {
+		case *in.Status == "archived" && prevStatus != "archived":
+			action = "asset.archived"
+		case *in.Status == "active" && prevStatus == "archived":
+			action = "asset.restored"
+		case *in.Status == "disabled":
+			action = "asset.disabled"
+		}
 	}
 	payload := map[string]any{"name": a.Name, "status": a.Status}
 	if endpointChanged {
@@ -606,6 +652,19 @@ func (s *Service) Delete(ctx context.Context, actorID, id uuid.UUID, ip, ua stri
 	a, err := s.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	if a.Status != "archived" {
+		return ErrNotArchived
+	}
+	var live int
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sessions
+		WHERE asset_id=$1 AND status IN ('pending','active')`, id).Scan(&live)
+	if err != nil {
+		return err
+	}
+	if live > 0 {
+		return ErrActiveSessions
 	}
 	_, err = s.db.Pool.Exec(ctx, `DELETE FROM assets WHERE id=$1`, id)
 	if err != nil {

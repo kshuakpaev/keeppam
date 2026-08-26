@@ -297,11 +297,13 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 	offP := add(f.Offset)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT e.id, e.session_id, e.ts, e.event_type, e.payload,
-			u.username, a.name, s.asset_id, s.protocol, s.status, COALESCE(s.break_glass,false)
+			u.username, COALESCE(a.name, '(deleted)'),
+			COALESCE(s.asset_id, '00000000-0000-0000-0000-000000000000'::uuid),
+			s.protocol, s.status, COALESCE(s.break_glass,false)
 		FROM session_events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN users u ON u.id = s.user_id
-		JOIN assets a ON a.id = s.asset_id
+		LEFT JOIN assets a ON a.id = s.asset_id
 		WHERE `+clause+`
 		ORDER BY e.ts DESC
 		LIMIT `+limitP+` OFFSET `+offP, args...)

@@ -234,7 +234,7 @@ func timelineUnionSQL(userID uuid.UUID, from, to time.Time, src string, includeO
 		SELECT e.id, e.ts, 'session'::text AS source, e.event_type AS kind, e.payload,
 			e.session_id,
 			s.asset_id,
-			a.name AS asset_name,
+			COALESCE(a.name, '(deleted)') AS asset_name,
 			s.protocol,
 			s.client_ip AS ip,
 			COALESCE(s.labels,'{}') AS labels,
@@ -242,7 +242,7 @@ func timelineUnionSQL(userID uuid.UUID, from, to time.Time, src string, includeO
 			COALESCE(s.ticket_id,'') AS ticket_id
 		FROM session_events e
 		JOIN sessions s ON s.id = e.session_id
-		JOIN assets a ON a.id = s.asset_id
+		LEFT JOIN assets a ON a.id = s.asset_id
 		WHERE s.user_id=$1 AND e.ts >= $2 AND e.ts <= $3` + outFilter
 	auditPart := `
 		SELECT ae.id, ae.ts, 'audit'::text AS source, ae.action AS kind,

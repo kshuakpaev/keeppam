@@ -675,6 +675,11 @@ th {
   border-color: #d65a5a55;
 }
 
+.badge.archived {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;

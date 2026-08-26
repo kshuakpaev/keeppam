@@ -41,6 +41,7 @@ export function AssetsPage() {
   } | null>(null);
   const [rdpResolutionId, setRdpResolutionId] = useState(loadRdpResolutionId);
   const [showCreate, setShowCreate] = useState(false);
+  const [tab, setTab] = useState<"listed" | "archived">("listed");
   const [form, setForm] = useState({
     name: "",
     asset_type: "host",
@@ -55,7 +56,7 @@ export function AssetsPage() {
 
   const canWrite = hasPerm(user, "assets.write");
   const canRead = hasPerm(user, "assets.read");
-  const canConnect = hasPerm(user, "sessions.connect");
+  const canConnect = hasPerm(user, "sessions.connect") && tab === "listed";
   const hasRdpAssets = assets.some((a) => a.protocol === "rdp" && a.status === "active");
 
   function rdpSizeForConnect(protocol: string) {
@@ -69,13 +70,13 @@ export function AssetsPage() {
 
   async function load() {
     try {
-      const res = await api.listAssets();
+      const res = await api.listAssets({ status: tab });
       setAssets(res.assets || []);
       setHiddenAssets(res.hidden || 0);
-      if (res.license_expired) {
+      if (tab === "listed" && res.license_expired) {
         setLicenseRestricted(true);
         setLicenseRestrictReason("expired");
-      } else if (res.license_unlicensed) {
+      } else if (tab === "listed" && res.license_unlicensed) {
         setLicenseRestricted(true);
         setLicenseRestrictReason("unlicensed");
       } else {
@@ -89,7 +90,45 @@ export function AssetsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [tab]);
+
+  async function onArchive(asset: Asset) {
+    if (!canWrite) return;
+    if (!confirm(t("assets.archiveConfirm", { name: asset.name }))) return;
+    setError("");
+    try {
+      await api.updateAsset(asset.id, { status: "archived" });
+      setMsg(t("assets.archivedOk"));
+      await load();
+    } catch (err) {
+      setError(te(err, "assets.archiveError"));
+    }
+  }
+
+  async function onRestore(asset: Asset) {
+    if (!canWrite) return;
+    setError("");
+    try {
+      await api.updateAsset(asset.id, { status: "active" });
+      setMsg(t("assets.restoredOk"));
+      await load();
+    } catch (err) {
+      setError(te(err, "assets.restoreError"));
+    }
+  }
+
+  async function onDeleteForever(asset: Asset) {
+    if (!canWrite) return;
+    if (!confirm(t("assets.deleteForeverConfirm", { name: asset.name }))) return;
+    setError("");
+    try {
+      await api.deleteAsset(asset.id);
+      setMsg(t("assets.deletedOk"));
+      await load();
+    } catch (err) {
+      setError(te(err, "assets.deleteError"));
+    }
+  }
 
   async function onConnect(asset: Asset, acc: AssetAccount, stepUpToken?: string) {
     setError("");
@@ -165,11 +204,33 @@ export function AssetsPage() {
           <h1>{t("assets.title")}</h1>
           <p className="muted">{t("assets.lead")}</p>
         </div>
-        {canWrite && (
+        {canWrite && tab === "listed" && (
           <button className="btn" type="button" onClick={() => setShowCreate((v) => !v)}>
             {showCreate ? t("common.cancel") : t("common.create")}
           </button>
         )}
+      </div>
+      <div className="row" style={{ gap: "0.5rem", marginBottom: "1rem" }}>
+        <button
+          className={`btn secondary${tab === "listed" ? " active" : ""}`}
+          type="button"
+          onClick={() => {
+            setShowCreate(false);
+            setTab("listed");
+          }}
+        >
+          {t("assets.tabActive")}
+        </button>
+        <button
+          className={`btn secondary${tab === "archived" ? " active" : ""}`}
+          type="button"
+          onClick={() => {
+            setShowCreate(false);
+            setTab("archived");
+          }}
+        >
+          {t("assets.tabArchive")}
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
       {msg && <p className="muted">{msg}</p>}
@@ -213,7 +274,7 @@ export function AssetsPage() {
           </p>
         </div>
       )}
-      {showCreate && (
+      {showCreate && tab === "listed" && (
         <form className="card" onSubmit={onCreate} style={{ marginBottom: "1rem", maxWidth: 560 }}>
           <h2>{t("assets.new")}</h2>
           <label>{t("common.name")}</label>
@@ -366,7 +427,8 @@ export function AssetsPage() {
                   <td className="mono">{(a.tags || []).join(", ") || "—"}</td>
                   <td>
                     <div className="row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
-                      {canConnect &&
+                      {tab === "listed" &&
+                        canConnect &&
                         accounts.map((acc) => {
                           const key = connectKey(a.id, acc.id);
                           return (
@@ -389,6 +451,21 @@ export function AssetsPage() {
                           {t("common.open")}
                         </Link>
                       )}
+                      {canWrite && tab === "listed" && (
+                        <button className="btn secondary" type="button" onClick={() => void onArchive(a)}>
+                          {t("assets.archive")}
+                        </button>
+                      )}
+                      {canWrite && tab === "archived" && (
+                        <>
+                          <button className="btn" type="button" onClick={() => void onRestore(a)}>
+                            {t("assets.restore")}
+                          </button>
+                          <button className="btn danger" type="button" onClick={() => void onDeleteForever(a)}>
+                            {t("assets.deleteForever")}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -397,7 +474,7 @@ export function AssetsPage() {
             {assets.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  {t("assets.empty")}
+                  {tab === "archived" ? t("assets.archiveEmpty") : t("assets.empty")}
                 </td>
               </tr>
             )}

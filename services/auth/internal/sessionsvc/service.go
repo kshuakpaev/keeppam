@@ -465,7 +465,9 @@ func (s *Service) ListEvents(ctx context.Context, sessionID uuid.UUID, limit int
 }
 
 const sessionSelect = `
-		SELECT s.id, s.user_id, s.asset_id, s.account_id, s.protocol, s.status, s.client_ip,
+		SELECT s.id, s.user_id, COALESCE(s.asset_id, '00000000-0000-0000-0000-000000000000'::uuid),
+			COALESCE(s.account_id, '00000000-0000-0000-0000-000000000000'::uuid),
+			s.protocol, s.status, s.client_ip,
 			s.recording_path, s.error_message, s.started_at, s.ended_at, s.last_seen_at, s.created_at,
 			s.ticket_id, s.reason, COALESCE(s.db_privilege,''), COALESCE(s.database_name,''),
 			s.sql_policy_pack_id, s.http_policy_pack_id, s.app_object_pack_id,
@@ -474,14 +476,14 @@ const sessionSelect = `
 			s.access_policy_id, COALESCE(s.client_country,''), s.policy_snapshot,
 			COALESCE(s.require_supervisor, FALSE), s.supervisor_group_id, COALESCE(sg.name,''),
 			s.supervisor_id, COALESCE(su.username,''), s.supervisor_approved_at,
-			u.username, a.name, aa.username, a.address,
+			u.username, COALESCE(a.name, '(deleted)'), COALESCE(aa.username, ''), COALESCE(a.address, ''),
 			(s.recording_path <> '' AND (s.status IN ('ended','failed','active') OR COALESCE(s.archived, FALSE))),
 			COALESCE(s.archived, FALSE), COALESCE(s.archive_sha256,''), COALESCE(s.archive_backend,''), s.archived_at,
 			COALESCE(s.rdp_width, 0), COALESCE(s.rdp_height, 0)
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
-		JOIN assets a ON a.id = s.asset_id
-		JOIN asset_accounts aa ON aa.id = s.account_id
+		LEFT JOIN assets a ON a.id = s.asset_id
+		LEFT JOIN asset_accounts aa ON aa.id = s.account_id
 		LEFT JOIN groups sg ON sg.id = s.supervisor_group_id
 		LEFT JOIN users su ON su.id = s.supervisor_id`
 
@@ -526,8 +528,8 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 	var total int
 	countQ := `SELECT COUNT(*) FROM sessions s
 		JOIN users u ON u.id = s.user_id
-		JOIN assets a ON a.id = s.asset_id
-		JOIN asset_accounts aa ON aa.id = s.account_id` + where
+		LEFT JOIN assets a ON a.id = s.asset_id
+		LEFT JOIN asset_accounts aa ON aa.id = s.account_id` + where
 	if err := s.db.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}

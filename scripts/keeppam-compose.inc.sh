@@ -2,6 +2,8 @@
 # Sourced by install/upgrade/rollback. Requires ROOT and optionally KEEPPAM_HA, KEEPPAM_OBS, KEEPPAM_BRAND.
 
 # KEEPPAM_BRAND=1 (default): compose.branded.yml + retag upstream → keeppam-* (T-03).
+# HA brand overrides: compose.branded-ha.yml (only with KEEPPAM_HA) — never put edge/api-b
+# into compose.branded.yml or Compose invents those services without the HA overlay.
 # KEEPPAM_BRAND=0: upstream image names from docker-compose.yml (local make up).
 
 keeppam_brand_on() {
@@ -20,14 +22,18 @@ keeppam_retag() {
 
 keeppam_compose() {
   local args=()
+  local ha="${KEEPPAM_HA:-}"
   args+=(-f "$ROOT/deploy/docker-compose.yml")
-  if [[ "${KEEPPAM_HA:-}" == "1" ]]; then
+  if [[ "$ha" == "1" ]]; then
     args+=(-f "$ROOT/deploy/compose.ha.yml")
-  elif [[ "${KEEPPAM_HA:-}" == "3" ]]; then
+  elif [[ "$ha" == "3" ]]; then
     args+=(-f "$ROOT/deploy/compose.ha.yml" -f "$ROOT/deploy/compose.ha3.yml")
   fi
   if keeppam_brand_on && [[ -f "$ROOT/deploy/compose.branded.yml" ]]; then
     args+=(-f "$ROOT/deploy/compose.branded.yml")
+  fi
+  if keeppam_brand_on && [[ "$ha" == "1" || "$ha" == "3" ]] && [[ -f "$ROOT/deploy/compose.branded-ha.yml" ]]; then
+    args+=(-f "$ROOT/deploy/compose.branded-ha.yml")
   fi
   if [[ "${KEEPPAM_OBS:-}" == "1" ]]; then
     args+=(--profile obs)

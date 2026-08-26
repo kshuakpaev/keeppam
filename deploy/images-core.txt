@@ -23,8 +23,8 @@ keeppam-demo-ssh:local
 # opensearchproject/opensearch-dashboards:2.18.0
 # curlimages/curl:8.5.0
 
-# --- ha overlay ---
-# haproxy:2.9-alpine
+# --- ha overlay (retag → keeppam-edge; needed for KEEPPAM_HA=1 offline) ---
+haproxy:2.9-alpine
 
 # --- optional ---
 # keeppam-iso-browser:local

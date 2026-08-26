@@ -998,13 +998,37 @@ func (s *Server) ensureAssetLicenseVisible(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	lic := s.currentLicense()
-	limit := lic.VisibleLimit(now)
-	total, err := s.assets.CountAll(r.Context())
+	statusQ := strings.TrimSpace(r.URL.Query().Get("status"))
+	filter := assets.StatusFilterListed
+	switch statusQ {
+	case "", "listed":
+		filter = assets.StatusFilterListed
+	case "archived":
+		filter = assets.StatusFilterArchived
+	case "all":
+		filter = assets.StatusFilterAll
+	default:
+		writeErr(w, http.StatusBadRequest, "invalid status filter")
+		return
+	}
+	var total int
+	var err error
+	if filter == assets.StatusFilterArchived {
+		total, err = s.assets.CountArchived(r.Context())
+	} else if filter == assets.StatusFilterAll {
+		total, err = s.assets.CountAll(r.Context())
+	} else {
+		total, err = s.assets.CountListed(r.Context())
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	list, err := s.assets.ListLimited(r.Context(), limit)
+	limit := 0
+	if filter == assets.StatusFilterListed {
+		limit = lic.VisibleLimit(now)
+	}
+	list, err := s.assets.ListLimited(r.Context(), limit, filter)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1121,6 +1145,10 @@ func (s *Server) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
 	if err := s.assets.Delete(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		if errors.Is(err, assets.ErrNotArchived) || errors.Is(err, assets.ErrActiveSessions) {
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
