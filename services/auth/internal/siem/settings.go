@@ -33,7 +33,7 @@ type Settings struct {
 	HasNATSToken         bool       `json:"has_nats_token"`
 	OpenSearchURL        string     `json:"opensearch_url"`
 	OpenSearchIndex      string     `json:"opensearch_index"`
-	Format               string     `json:"format"` // json|cef|ecs
+	Format               string     `json:"format"` // json|cef|ecs|leef
 	BatchSize            int        `json:"batch_size"`
 	PollIntervalSec      int        `json:"poll_interval_sec"`
 	CursorTS             *time.Time `json:"cursor_ts,omitempty"`
@@ -108,7 +108,7 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in Settings, ip
 	if format == "" {
 		format = "json"
 	}
-	if format != "json" && format != "cef" && format != "ecs" {
+	if format != "json" && format != "cef" && format != "ecs" && format != "leef" {
 		return Settings{}, fmt.Errorf("invalid format")
 	}
 	batch := in.BatchSize

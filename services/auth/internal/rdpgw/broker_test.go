@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/policy"
 )
 
@@ -45,6 +46,24 @@ func TestBuildRDPFileRemoteApp(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
+		}
+	}
+}
+
+func TestBuildProxyINISessionCapture(t *testing.T) {
+	creds := assets.TargetCreds{}
+	creds.Asset.Address = "10.0.0.8"
+	creds.Asset.Port = 3389
+	creds.Account.Username = "adm"
+	creds.Secret = "x"
+	ini := buildProxyINI(3390, creds, policy.RDPRedir{}, "", "", "/rec/rdp-native/abc")
+	for _, want := range []string{
+		"[SessionCapture]",
+		"Enabled = TRUE",
+		`CapturesDirectory = "/rec/rdp-native/abc"`,
+	} {
+		if !strings.Contains(ini, want) {
+			t.Fatalf("missing %q in:\n%s", want, ini)
 		}
 	}
 }

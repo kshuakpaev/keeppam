@@ -95,6 +95,23 @@ func (s *Service) DeleteHDXScreenText(ctx context.Context, sessionID uuid.UUID) 
 	return err
 }
 
+func (s *Service) DeleteSSHScreenText(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM session_events
+		WHERE session_id=$1 AND event_type='screen_text' AND COALESCE(payload->>'source','')='ssh_stdout'`, sessionID)
+	return err
+}
+
+func (s *Service) MaxEventOffset(ctx context.Context, sessionID uuid.UUID, eventType, source string) (float64, error) {
+	var off float64
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX((payload->>'offset')::float8), -1)
+		FROM session_events
+		WHERE session_id=$1 AND event_type=$2 AND COALESCE(payload->>'source','')=$3`,
+		sessionID, eventType, source).Scan(&off)
+	return off, err
+}
+
 func (s *Service) CountScreenText(ctx context.Context, sessionID uuid.UUID) (int, error) {
 	var n int
 	err := s.db.Pool.QueryRow(ctx, `
@@ -145,7 +162,7 @@ func (s *Service) ListOutputTranscript(ctx context.Context, sessionID uuid.UUID)
 		SELECT ts, event_type, payload FROM session_events
 		WHERE session_id=$1 AND event_type='output'
 		ORDER BY ts ASC
-		LIMIT 500`, sessionID)
+		LIMIT 2000`, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +232,7 @@ func (s *Service) ListScreenTextTranscript(ctx context.Context, sessionID uuid.U
 		SELECT ts, event_type, payload FROM session_events
 		WHERE session_id=$1 AND event_type='screen_text'
 		ORDER BY ts ASC
-		LIMIT 500`, sessionID)
+		LIMIT 2000`, sessionID)
 	if err != nil {
 		return nil, err
 	}

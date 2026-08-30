@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/keeppam/auth/internal/assets"
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 // ResolveDatabase picks session override, then asset field, then protocol default.
@@ -21,6 +22,9 @@ func ResolveDatabase(protocol, sessionDB, assetDB string) string {
 	}
 	if protocol == "mssql" {
 		return "master"
+	}
+	if protocol == "oracle" {
+		return "ORCL"
 	}
 	return ""
 }
@@ -67,6 +71,22 @@ func MSSQLDSN(creds assets.TargetCreds, database string) string {
 	q.Set("dial timeout", "15")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func OracleDSN(creds assets.TargetCreds, service string) string {
+	svc := strings.TrimSpace(service)
+	if svc == "" {
+		svc = "ORCL"
+	}
+	port := creds.Asset.Port
+	if port <= 0 {
+		port = 1521
+	}
+	opts := map[string]string{}
+	if strings.EqualFold(strings.TrimSpace(creds.Account.Username), "sys") {
+		opts["dba privilege"] = "sysdba"
+	}
+	return go_ora.BuildUrl(creds.Asset.Address, port, svc, creds.Account.Username, creds.Secret, opts)
 }
 
 func MySQLDSNMulti(creds assets.TargetCreds, database string) string {

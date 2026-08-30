@@ -33,6 +33,8 @@ Composite score — weighted sum features (new_asset, spread, failed_logins, pee
 
 Live worker: background goroutine, сканирует `status=active` RDP/VNC/https/citrix с recording, один alert `ueba_live_fast` на сессию.
 
+Если после ML-надбавки score > `max_risk`, срабатывает тот же `risk_action` ACL (включая `terminate` / `lock_account`).
+
 Notify: те же каналы что T-51 (`OnUEBAAnomaly`) для live hits.
 
 ## API

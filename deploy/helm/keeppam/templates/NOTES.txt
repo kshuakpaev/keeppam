@@ -3,12 +3,17 @@ KeepPAM {{ .Chart.AppVersion }} (2 API + 2 session-worker).
   Portal:  svc {{ include "keeppam.fullname" . }}-web
   API:     svc {{ include "keeppam.fullname" . }}-api:8080  (/livez /readyz)
   SSH:     svc {{ include "keeppam.fullname" . }}-ssh:2222
+  FTP:     svc {{ include "keeppam.fullname" . }}-ssh:2121
 
-Postgres HA (Patroni / CloudNativePG) задаётся снаружи: values.postgres.ha=true только как пометка,
-DSN — Secret database-url. См. docs/ha.txt.
+Postgres HA: kubectl apply -f deploy/helm/cnpg-cluster.yaml (CloudNativePG, instances: 2, auto-failover).
+values.postgres.ha=true — пометка; DSN Secret database-url → keeppam-pg-rw. См. docs/ha.txt.
 
-Rolling:
+Rolling (maxUnavailable=0):
+  kubectl scale deploy/{{ include "keeppam.fullname" . }}-api --replicas=N
   kubectl rollout restart deploy/{{ include "keeppam.fullname" . }}-api
   kubectl rollout restart deploy/{{ include "keeppam.fullname" . }}-worker
+
+NIT §4 (1000 sessions): -f deploy/helm/keeppam/values-nit-p4.yaml  (api=6 worker=20 guacd=8)
+docs/nit-p4.txt
 
 SIGTERM → /readyz=503 → LB снимает под; SSH drain до KEEPPAM_DRAIN_TIMEOUT.

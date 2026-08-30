@@ -29,6 +29,8 @@ func (s *Server) handleAuthMethods(w http.ResponseWriter, r *http.Request) {
 		"saml_ready":     m.SAMLReady,
 		"saml_idps":      m.SAMLIdPs,
 		"radius_ready":   m.RADIUSReady,
+		"oauth_ready":    m.OAuthReady,
+		"digitalid_lab":  s.didLab != nil,
 		"cert_login":     certReady,
 		"cert_presented": certPresented,
 	})
@@ -263,6 +265,78 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.auth.LoginOIDC(r.Context(), claims, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, err.Error()), http.StatusFound)
+		return
+	}
+	if res.SessionToken != "" {
+		_ = s.completeLogin(w, r, res.SessionToken)
+	}
+	if res.Status == "mfa_required" && res.ChallengeToken != "" {
+		http.Redirect(w, r, base+"/login?mfa="+res.ChallengeToken, http.StatusFound)
+		return
+	}
+	dest := settings.OIDCSuccessRedirect(base)
+	if res.Status == "must_setup" {
+		dest = base + "/setup"
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	cfg, oidcSec, _, err := s.settings.Get(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Mode != "oauth" {
+		writeErr(w, http.StatusBadRequest, "oauth is not enabled")
+		return
+	}
+	secret, err := s.settings.DecryptSecret(oidcSec)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	url, err := s.settings.OAuthAuthCodeURL(r.Context(), s.sessions.Redis(), cfg, secret)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	cfg, oidcSec, _, err := s.settings.Get(r.Context())
+	base := cfg.PublicBaseURL
+	if base == "" {
+		base = s.cfg.CORSOrigin
+	}
+	if err != nil {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, "settings error"), http.StatusFound)
+		return
+	}
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, errMsg), http.StatusFound)
+		return
+	}
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, "missing code"), http.StatusFound)
+		return
+	}
+	secret, err := s.settings.DecryptSecret(oidcSec)
+	if err != nil {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, "secret error"), http.StatusFound)
+		return
+	}
+	claims, err := s.settings.OAuthExchange(r.Context(), s.sessions.Redis(), cfg, secret, code, state)
+	if err != nil {
+		http.Redirect(w, r, settings.OIDCErrorRedirect(base, err.Error()), http.StatusFound)
+		return
+	}
+	res, err := s.auth.LoginOAuth(r.Context(), claims, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		http.Redirect(w, r, settings.OIDCErrorRedirect(base, err.Error()), http.StatusFound)
 		return

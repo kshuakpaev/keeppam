@@ -21,7 +21,7 @@ Deny-by-default: нет совпавшей привязки — отказ.
 
 ## Risk-based access
 
-На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval` | `require_mfa`).
+На ACL: `max_risk` (0 = выкл.) + `risk_action` (`deny` | `require_approval` | `require_mfa` | `terminate` | `lock_account`).
 
 Score 0–100 (сумма, cap 100). **Connect / JIT request** — факторы окружения. **Операция внутри сессии** — те же факторы + баллы операции (JIT-окно connect-риск не отменяет).
 
@@ -34,6 +34,8 @@ Score 0–100 (сумма, cap 100). **Connect / JIT request** — фактор�
 | `anom_brute` | ≥8 fail за 24ч | 20 |
 | `anom_multi` | ≥4 разных актива за 24ч | 15 |
 | `ueba_new_asset` | актив вне 30-дневного набора (≥3 обычных) | 25 |
+| `ueba_new_ip` | исходный IP вне 30-дневного набора (≥3 host) | 20 |
+| `ueba_new_subnet` | подсеть /24 IPv4 или /64 IPv6 вне набора (≥3) | 25 |
 | `ueba_spread` | за 24ч целей ≥2× от 30-дневного набора и ≥6 | 20 |
 | `op:sql.insert` / `update` / `delete` / `ddl` / `drop` / `export` | SQL DML/DDL/`DROP DATABASE`/COPY | 15 / 20 / 30 / 45 / 100 / 50 |
 | `op:k8s.write` / `delete` / `exec` | kubectl create/patch; delete; exec | 20 / 35 / 45 |
@@ -46,6 +48,8 @@ Score 0–100 (сумма, cap 100). **Connect / JIT request** — фактор�
 - `deny` — отказ (в т.ч. создать JIT; операция в сессии — отказ без нового JIT)
 - `require_approval` — отказ на connect, нужен JIT; после approve **вход** без порога, **операции** (DDL, delete, …) порог всё ещё действует
 - `require_mfa` — повторный TOTP/Passkey на connect (см. `docs/adaptive-mfa.txt`); операции внутри сессии как `deny`
+- `terminate` — отказ + kill текущей сессии (`docs/ueba.txt`)
+- `lock_account` — отказ + `users.status=locked` на 24ч и kill всех сессий пользователя
 
 Break-glass и admin bypass риск не применяют. JIT-binding (`expires_at`) пропускает только **connect**-риск.
 

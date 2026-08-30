@@ -455,6 +455,14 @@ func (s *Service) Evaluate(ctx context.Context, in AccessCheck) (AccessResult, e
 	if err := rows.Err(); err != nil {
 		return AccessResult{}, err
 	}
+	if meta.OwnerUserID != nil && *meta.OwnerUserID == in.UserID {
+		res := AccessResult{OK: true}
+		s.applyRisk(ctx, in, &res, nil)
+		if res.OK {
+			s.applyOPA(ctx, in, userTags, &res)
+		}
+		return res, nil
+	}
 	return AccessResult{OK: false}, nil
 }
 

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { api } from "../api";
 import { useI18n } from "../i18n";
 import {
   HELP_GROUPS,
@@ -10,10 +11,14 @@ import {
 } from "../help/content";
 
 export function HelpPage() {
-  const { t, lang } = useI18n();
+  const { t, te, lang } = useI18n();
   const location = useLocation();
   const [query, setQuery] = useState("");
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set(["workflows", "overview"]));
+  const [askQ, setAskQ] = useState("");
+  const [askA, setAskA] = useState("");
+  const [askErr, setAskErr] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -24,6 +29,9 @@ export function HelpPage() {
         helpText(lang, topic.summary),
         ...topic.body.map((p) => helpText(lang, p)),
         ...(topic.actions ?? []).flatMap((a) => [helpText(lang, a.name), helpText(lang, a.desc)]),
+        ...(topic.table
+          ? [helpText(lang, topic.table.headers[0]), helpText(lang, topic.table.headers[1]), ...topic.table.rows.flatMap((r) => [helpText(lang, r[0]), helpText(lang, r[1])])]
+          : []),
       ]
         .join("\n")
         .toLowerCase();
@@ -65,6 +73,23 @@ export function HelpPage() {
     setOpenIds(new Set());
   }
 
+  async function onAsk(e: FormEvent) {
+    e.preventDefault();
+    const q = askQ.trim();
+    if (!q) return;
+    setAskBusy(true);
+    setAskErr("");
+    setAskA("");
+    try {
+      const res = await api.helpAsk(q);
+      setAskA(res.answer || "");
+    } catch (err) {
+      setAskErr(te(err, "help.askHint"));
+    } finally {
+      setAskBusy(false);
+    }
+  }
+
   return (
     <div className="help-page">
       <div className="toolbar">
@@ -81,6 +106,22 @@ export function HelpPage() {
           </button>
         </div>
       </div>
+
+      <form className="card" style={{ marginBottom: "1rem", maxWidth: 640 }} onSubmit={(e) => void onAsk(e)}>
+        <p className="muted">{t("help.askHint")}</p>
+        <label>{t("help.ask")}</label>
+        <input
+          value={askQ}
+          onChange={(e) => setAskQ(e.target.value)}
+          placeholder={t("help.searchPh")}
+          autoComplete="off"
+        />
+        <button className="btn" type="submit" disabled={askBusy || !askQ.trim()} style={{ marginTop: "0.5rem" }}>
+          {t("help.ask")}
+        </button>
+        {askErr ? <p className="error">{askErr}</p> : null}
+        {askA ? <p style={{ marginTop: "0.75rem", whiteSpace: "pre-wrap" }}>{askA}</p> : null}
+      </form>
 
       <div className="help-layout">
         <aside className="help-toc card">
@@ -163,6 +204,24 @@ function HelpArticle({
           {topic.body.map((p, i) => (
             <p key={i}>{helpText(lang, p)}</p>
           ))}
+          {topic.table ? (
+            <table className="help-table">
+              <thead>
+                <tr>
+                  <th>{helpText(lang, topic.table.headers[0])}</th>
+                  <th>{helpText(lang, topic.table.headers[1])}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topic.table.rows.map((row, i) => (
+                  <tr key={i}>
+                    <td>{helpText(lang, row[0])}</td>
+                    <td>{helpText(lang, row[1])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
           {topic.actions && topic.actions.length > 0 ? (
             <div className="help-actions">
               <h3>{t("help.actions")}</h3>

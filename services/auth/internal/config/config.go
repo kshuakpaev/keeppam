@@ -34,6 +34,8 @@ type Config struct {
 	SSHAddr                string
 	SSHHostKeyPath         string
 	TelnetAddr             string // native telnet gateway; empty/off = disabled
+	FTPAddr                string // native FTP gateway; empty/off = disabled
+	FTPPublicHost          string // PASV advertised address
 	TN3270Addr             string // native TN3270 gateway; empty/off = disabled
 	CitrixSocksAddr        string // SOCKS5 for Citrix ICA; empty/off = disabled
 	CitrixPublicHost       string // hostname in .ica ProxyHost; empty = localhost
@@ -46,6 +48,7 @@ type Config struct {
 	PostgresWireAddr       string
 	MySQLWireAddr          string
 	MSSQLWireAddr          string
+	OracleWireAddr         string
 	K8sAPIAddr             string
 	K8sTLSCertFile         string
 	K8sTLSKeyFile          string
@@ -88,6 +91,9 @@ type Config struct {
 	RDPProxyBin            string // freerdp-proxy binary; empty = issue .rdp/token only
 	RDPProxyCertFile       string
 	RDPProxyKeyFile        string
+	RDPNativeDefault       bool   // if true, mstsc path without rdp_native checkbox when broker is on
+	SSHLegacy              bool   // old KEX/cipher/hostkey (group1, ssh-dss); off when FIPS
+	DigitalIDLab           bool   // in-process Digital ID OAuth IdP (offline lab)
 	LicenseFile            string // path to license.json or ex2 .lic blob (T-52)
 	LicenseEncryptionKey   string // AES key for ex2 generator format
 	LicenseSkipHW          bool   // dev: skip hardware fingerprint check on upload/load
@@ -131,18 +137,21 @@ func Load() (Config, error) {
 		SSHAddr:                env("KEEPPAM_SSH_ADDR", ":2222"),
 		SSHHostKeyPath:         env("KEEPPAM_SSH_HOST_KEY", "/tmp/keeppam-ssh-hostkey"),
 		TelnetAddr:             env("KEEPPAM_TELNET_ADDR", ":2323"),
+		FTPAddr:                env("KEEPPAM_FTP_ADDR", ":2121"),
+		FTPPublicHost:          env("KEEPPAM_FTP_PUBLIC_HOST", ""),
 		TN3270Addr:             env("KEEPPAM_TN3270_ADDR", ":2324"),
 		CitrixSocksAddr:        env("KEEPPAM_CITRIX_SOCKS_ADDR", ":1081"),
 		CitrixPublicHost:       env("KEEPPAM_CITRIX_PUBLIC_HOST", ""),
 		CitrixHDXPluginURL:     env("KEEPPAM_CITRIX_HDX_PLUGIN_URL", ""),
 		CitrixHDXCallbackBase:  env("KEEPPAM_CITRIX_HDX_CALLBACK_BASE", env("KEEPPAM_PUBLIC_URL", "")),
 		Mode:                   env("KEEPPAM_MODE", "all"),
-		GuacdAddr:              env("KEEPPAM_GUACD_ADDR", "127.0.0.1:4822"),
+		GuacdAddr:              env("KEEPPAM_GUACD_ADDR", "127.0.0.1:4822"), // host:port or a:4822,b:4822
 		GuacencURL:             env("KEEPPAM_GUACENC_URL", ""),
 		AccessRequestTTL:       durationEnv("KEEPPAM_ACCESS_REQUEST_TTL", 24*time.Hour),
 		PostgresWireAddr:       env("KEEPPAM_PG_WIRE_ADDR", ":15432"),
 		MySQLWireAddr:          env("KEEPPAM_MYSQL_WIRE_ADDR", ":13306"),
 		MSSQLWireAddr:          env("KEEPPAM_MSSQL_WIRE_ADDR", ":11433"),
+		OracleWireAddr:         env("KEEPPAM_ORACLE_WIRE_ADDR", ":11521"),
 		K8sAPIAddr:             env("KEEPPAM_K8S_API_ADDR", ":16443"),
 		K8sTLSCertFile:         env("KEEPPAM_K8S_TLS_CERT_FILE", ""),
 		K8sTLSKeyFile:          env("KEEPPAM_K8S_TLS_KEY_FILE", ""),
@@ -182,6 +191,9 @@ func Load() (Config, error) {
 		RDPProxyBin:            env("KEEPPAM_RDP_PROXY_BIN", ""),
 		RDPProxyCertFile:       env("KEEPPAM_RDP_PROXY_CERT_FILE", ""),
 		RDPProxyKeyFile:        env("KEEPPAM_RDP_PROXY_KEY_FILE", ""),
+		RDPNativeDefault:       boolEnv("KEEPPAM_RDP_NATIVE_DEFAULT", true),
+		SSHLegacy:              boolEnv("KEEPPAM_SSH_LEGACY", true),
+		DigitalIDLab:           boolEnv("KEEPPAM_DIGITALID_LAB", false),
 		LicenseFile:            env("KEEPPAM_LICENSE_FILE", ""),
 		LicenseEncryptionKey:   env("KEEPPAM_LICENSE_ENCRYPTION_KEY", "your-32-byte-encryption-key-change-me!!"),
 		LicenseSkipHW:          boolEnv("KEEPPAM_LICENSE_SKIP_HW", false),
@@ -203,9 +215,9 @@ func Load() (Config, error) {
 	cfg.WebAuthnRPID = env("KEEPPAM_WEBAUTHN_RP_ID", hostFromURL(cfg.CORSOrigin))
 	cfg.TrustedProxies = splitCSV(env("KEEPPAM_TRUSTED_PROXIES", ""))
 	switch cfg.Mode {
-	case "all", "api", "ssh":
+	case "all", "api", "ssh", "ai":
 	default:
-		return Config{}, fmt.Errorf("KEEPPAM_MODE must be all|api|ssh")
+		return Config{}, fmt.Errorf("KEEPPAM_MODE must be all|api|ssh|ai")
 	}
 	if cfg.Mode == "api" {
 		cfg.SSHAddr = "off"
@@ -258,6 +270,9 @@ func Load() (Config, error) {
 	}
 	if cfg.PDFLTA && !cfg.PDFLTV {
 		return Config{}, fmt.Errorf("KEEPPAM_PDF_LTA requires KEEPPAM_PDF_LTV")
+	}
+	if cfg.FIPSRequired {
+		cfg.SSHLegacy = false
 	}
 	return cfg, nil
 }

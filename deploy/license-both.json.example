@@ -1,0 +1,11 @@
+{
+  "issued": "2026-01-01",
+  "customer": "KeepPAM",
+  "model": "both",
+  "max_assets": 100,
+  "max_users": 200,
+  "soft_warn_pct": 90,
+  "ha": true,
+  "ai_copilot": true,
+  "expires": ""
+}

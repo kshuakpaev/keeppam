@@ -73,6 +73,7 @@ export function CompliancePage() {
   });
   const [reportTo, setReportTo] = useState(() => isoDate(new Date()));
   const [reportFw, setReportFw] = useState("all");
+  const [reportProse, setReportProse] = useState(false);
   const [report, setReport] = useState<ComplianceReport | null>(null);
 
   async function load() {
@@ -224,6 +225,7 @@ export function CompliancePage() {
         to: reportTo,
         framework: reportFw,
         limit: 200,
+        prose: reportProse,
       });
       setReport(r);
     } catch (err) {
@@ -347,6 +349,10 @@ export function CompliancePage() {
               <option value="nist">NIST</option>
             </select>
           </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            <input type="checkbox" checked={reportProse} onChange={(e) => setReportProse(e.target.checked)} />
+            {t("compliance.prose")}
+          </label>
           <button className="btn" type="submit" disabled={busy}>
             {t("compliance.generate")}
           </button>
@@ -380,6 +386,11 @@ export function CompliancePage() {
                 </div>
               ))}
             </div>
+            {report.prose ? (
+              <p className="muted" style={{ marginBottom: "0.75rem", whiteSpace: "pre-wrap" }}>
+                {report.prose}
+              </p>
+            ) : null}
             <p className="muted" style={{ marginBottom: "0.75rem" }}>
               {t("compliance.liveSnapshot", {
                 acl: report.snapshot.acl_live,

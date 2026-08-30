@@ -12,7 +12,7 @@
 |-----------------|-----|
 | Полный аналог CyberArk/Fudo «буква в букву» | Пилот / mid-market: jump + vault + JIT + forensic |
 | Citrix HDX terminate + STA + StoreFront + запись HDX | Citrix SOCKS + `.ica` MVP; HTML5 RDP/VNC; RemoteApp |
-| Multi-site async geo-HA; Oracle thick sync; EAP/RadSec | HA 2+2 / 3+2; RADIUS PAP; password sync SSH/AD/PG/MySQL/MSSQL |
+| Multi-site async geo-HA; Oracle thick sync | HA 2+2 / 3+2; RADIUS PAP/EAP/RadSec; password sync SSH/AD/PG/MySQL/MSSQL |
 | UEBA-ML / NAC / eIDAS qualified | UEBA heuristics + notify; PAdES до B-LTA |
 
 Дистрибутив: Compose / Helm; Virtual Appliance — **pipeline** OVA/VHDX (`docs/appliance-ova.txt`), сборка на KVM host.
@@ -26,7 +26,7 @@
 - Веб-портал **EN+RU** (сценарий JIT+replay и админ-консоль).
 - Доступ к целям **без раскрытия пароля** (inject из vault).
 - MFA: TOTP, WebAuthn; step-up на операцию.
-- IdP: локальные учётки, LDAP/AD, OIDC, SAML (несколько IdP), SCIM inbound; **RADIUS PAP** (консоль + SSH); **x509 client cert → user** (`docs/x509-auth.txt`).
+- IdP: локальные учётки, LDAP/AD, OIDC, **OAuth 2.0 / Digital ID** (`docs/digitalid.txt`), SAML (несколько IdP), SCIM inbound; **RADIUS PAP/EAP/RadSec** (консоль + SSH); **x509 client cert → user** (`docs/x509-auth.txt`).
 - RBAC + ABAC (теги, CIDR, GeoIP, ticket, reason, device); **dynamic WHAT ACL**.
 - JIT: sequential (руководитель → ИБ) **или кворум N из M** (2 из 3, 3 из 5).
 - «Четыре глаза»: супервайзер до старта сессии.
@@ -37,15 +37,15 @@
 - Vault: checkout, dual-control, ротация; **password sync** SSH / AD/LDAP / PG / MySQL / MSSQL (не Oracle).
 - **AD privileged group JIT** (add на сессию + rotate после disconnect).
 - JEA + import black/white lists; DLP PII (SQL/HTTP/SSH/OCR/keystroke).
-- Forensic search; Audit HMAC-chain; SIEM ECS; compliance PDF + PAdES до B-LTA.
+- Forensic search; Audit HMAC-chain; SIEM JSON/CEF/LEEF/ECS; compliance PDF + PAdES до B-LTA.
 - HA **2+2** и **3+2** (compose/Helm); drain; archive SMB/NFS; offline update.
 - OCR RDP rus+eng (выборочные кадры); charset CP1251/KOI8-R/UTF-8 на терминале.
-- Wire: PostgreSQL / MySQL / **MSSQL** / kubectl; **Telnet** `:2323`; **TN3270** `:2324`.
+- Wire: PostgreSQL / MySQL / **MSSQL** / **Oracle** `:11521` / kubectl; **Telnet** `:2323`; **TN3270** `:2324`.
 - Citrix: **SOCKS + `.ica`** (`:1081`) — транспортный MVP, не HDX.
-- UEBA: baseline + **keystroke/mouse** anomaly + notify.
-- License soft/hard cap активов (`license.json`, default ≥100 ИС).
+- UEBA: baseline (актив/IP/подсеть) + **keystroke/mouse** + `terminate`/`lock_account` + notify.
+- License: три SKU (`assets` / `users` concurrent / `both`). Для NIT — `users` безлимит хостов.
 - Account discovery (SSH passwd + AD LDAP); без агентов на целях.
-- Native RDP (mstsc `.rdp`) — при `rdp_native` + `freerdp-proxy` на площадке (бинарь не в бандле).
+- Native RDP (mstsc `.rdp`) — при `KEEPPAM_RDP_PUBLIC_HOST` + `freerdp-proxy` (бинарь не в бандле); галка `rdp_native` для новых политик не обязательна.
 
 ### Уровень B — «В контракте с оговоркой / дозакрытие»
 
@@ -63,11 +63,12 @@
 
 - Citrix **HDX** terminate, CGP full, **STA**, StoreFront broker, запись экрана ICA.
 - Multi-site **async** geo-репликация.
-- Oracle password / thick-client sync.
+- Oracle SQL Developer Object Explorer / полный TTC.
 - RADIUS **EAP / RadSec**.
 - RDP clipboard **file capture** (как SCP); метаданные **процессов Windows** без агента.
 - Полный NLP/DLP-классификатор; NAC-клиент; eIDAS / ФСТЭК qualified.
 - UEBA-ML / peer-group / live mid-session scoring.
+- ИИ-copilot (сводка сессий / NL-поиск / карточка согласующего) — **в коде как SOW**, не в базовой цене; `docs/ai-plan.txt`.
 - Лицензия «неограниченно пользователей / 12 мес поддержки» — **коммерческие условия**.
 
 ## Матрица main22 → КП (краткая)
@@ -124,7 +125,7 @@
 - `docs/kp-acceptance.txt` — чек-лист приёмки
 - `docs/sow-backlog.txt` — модули уровня C (только с «SOW: id»)
 - `docs/demo-45min.txt` — демо 45 мин
-- `docs/appliance-ova.txt`, `docs/ha.txt`, `docs/native-rdp.txt`, `docs/remoteapp.txt`
+- `docs/appliance-ova.txt`, `docs/ha.txt`, `docs/nit-p4.txt`, `docs/nit-bom.txt`, `docs/native-rdp.txt`, `docs/remoteapp.txt`
 - `docs/telnet.txt`, `docs/tn3270.txt`, `docs/citrix-socks.txt`, `docs/mssql-wire.txt`
-- `docs/ueba.txt`, `docs/license.txt`, `docs/arch.txt`, `docs/prod-infra.txt`
+- `docs/ueba.txt`, `docs/license.txt`, `docs/arch.txt`, `docs/prod-infra.txt`, `docs/data-residency.txt`
 - `docs/main22.txt` — исходное ТЗ

@@ -289,7 +289,8 @@ export function AppLayout() {
             }}
           >
             {t("license.prefix")} {licenseStatusText(license, t)}
-            {license.hard_blocked ? ` ${t("license.createForbidden")}` : ""}
+            {license.hard_blocked_assets ? ` ${t("license.createForbidden")}` : ""}
+            {license.hard_blocked_users ? ` ${t("license.connectForbidden")}` : ""}
           </div>
         )}
         <div className="main-body">

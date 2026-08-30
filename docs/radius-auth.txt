@@ -22,7 +22,7 @@
 
 В Access-Accept атрибут Filter-Id:
 
-`admin` / `operator` / `auditor` / `security`, либо с префиксом `keeppam-` (`keeppam-admin`). Иначе — роль по умолчанию. Смена Filter-Id у уже существующего пользователя роль не меняет.
+`admin` / `operator` / `auditor` / `security` / `owner`, либо с префиксом `keeppam-` (`keeppam-admin`). Иначе — роль по умолчанию. Смена Filter-Id у уже существующего пользователя роль не меняет.
 
 ## DoD
 

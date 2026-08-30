@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/k8sproxy"
+	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/nac"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
@@ -85,9 +87,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if creds.Asset.Protocol != "ssh" && creds.Asset.Protocol != "rdp" && creds.Asset.Protocol != "vnc" &&
-		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "mssql" && creds.Asset.Protocol != "https" &&
+		creds.Asset.Protocol != "postgres" && creds.Asset.Protocol != "mysql" && creds.Asset.Protocol != "mssql" && creds.Asset.Protocol != "oracle" && creds.Asset.Protocol != "https" &&
 		creds.Asset.Protocol != "kubectl" && creds.Asset.Protocol != "telnet" && creds.Asset.Protocol != "tn3270" &&
-		creds.Asset.Protocol != "citrix" {
+		creds.Asset.Protocol != "citrix" && creds.Asset.Protocol != "ftp" {
 		writeErr(w, http.StatusBadRequest, "unsupported protocol")
 		return
 	}
@@ -100,7 +102,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	check := policy.AccessCheck{
 		UserID: sess.UserID, AssetID: assetID, RoleNames: sess.Roles, Bypass: false, Now: time.Now(),
 		TicketID: body.TicketID, Reason: body.Reason, ClientIP: s.clientIP(r),
-		ClientDevices: s.clientDevices(r),
+		ClientDevices:  s.clientDevices(r),
 		StepUpVerified: s.consumeStepUp(r, sess.UserID, assetID, body.StepUpToken),
 	}
 	ev, err := s.policy.Evaluate(r.Context(), check)
@@ -139,10 +141,25 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if err == nil && mlRes.AddedScore > 0 {
 			ev.RiskScore = score
 			ev.RiskFactors = factors
+			policy.ReapplyRisk(&ev, false, "")
 			_ = s.audit.Record(r.Context(), &sess.UserID, "ueba_ml.connect", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), map[string]any{
 				"ml_score": mlRes.MLScore, "threshold": mlRes.Threshold, "peer_group": mlRes.PeerGroup,
 				"peer_ratio": mlRes.PeerRatio, "added_score": mlRes.AddedScore, "factors": mlRes.AddedFactors,
 			})
+			if !ev.OK {
+				if ev.NeedsStepUp() {
+					s.writeStepUpChallenge(w, r, sess, ev, assetID, uuid.Nil)
+					return
+				}
+				if s.sessionsvc != nil {
+					s.sessionsvc.ApplyRiskBreach(r.Context(), sess.UserID, uuid.Nil, assetID, ev.RiskAction, ev.RiskScore, s.clientIP(r))
+				}
+				payload := map[string]any{"reason": "policy", "ticket_id": body.TicketID}
+				ev.FillDenyPayload(payload)
+				_ = s.audit.Record(r.Context(), &sess.UserID, "session.denied", "asset", assetID.String(), s.clientIP(r), r.UserAgent(), payload)
+				writeErr(w, http.StatusForbidden, ev.DenyMessage())
+				return
+			}
 		}
 	}
 	if s.itsm != nil && !usedBreakGlass && !bypassAdmin {
@@ -228,6 +245,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		PolicySnapshot: snapPtr(snap), RDPWidth: rdpW, RDPHeight: rdpH,
 	}, r.UserAgent())
 	if err != nil {
+		if license.IsCap(err) {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -254,6 +275,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				out["wire_addr"] = s.cfg.PostgresWireAddr
 			case "mysql":
 				out["wire_addr"] = s.cfg.MySQLWireAddr
+			case "oracle":
+				out["wire_addr"] = s.cfg.OracleWireAddr
 			default:
 				out["wire_addr"] = s.cfg.MSSQLWireAddr
 			}
@@ -262,7 +285,20 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			if dbHint == "" {
 				dbHint = "(default)"
 			}
-			out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
+			if created.Protocol == "oracle" {
+				out["wire_hint"] = fmt.Sprintf("SQL Developer/DBeaver: host=PAM port from wire_addr, user=session UUID or pamuser+ASSET, password=wire_token (or CONNECT_DATA KEEPPAM_USER/KEEPPAM_PASS), service=%s. Object Explorer не поддерживается. docs/oracle-wire.txt", dbHint)
+			} else {
+				out["wire_hint"] = fmt.Sprintf("user=session UUID, password=wire_token, dbname=%s, host=PAM, port from wire_addr", dbHint)
+			}
+		}
+	}
+	if !created.WaitingSupervisor && created.Protocol == "ftp" && s.cfg.FTPAddr != "" && s.cfg.FTPAddr != "off" {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err == nil {
+			out["wire_token"] = tok
+			out["wire_addr"] = s.cfg.FTPAddr
+			out["wire_user"] = created.ID.String()
+			out["wire_hint"] = "ftp PAM host (wire_addr); USER=session UUID or pamuser+ASSET, PASS=wire_token or PAM password"
 		}
 	}
 	if !created.WaitingSupervisor && created.Protocol == "telnet" && s.cfg.TelnetAddr != "" && s.cfg.TelnetAddr != "off" {
@@ -479,8 +515,26 @@ func (s *Server) handleSearchSessionEvents(w http.ResponseWriter, r *http.Reques
 			f.Offset = n
 		}
 	}
-	if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		f.OnlyAssetOwner = &sess.UserID
+	} else if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
 		f.OnlyUser = &sess.UserID
+	}
+	if strings.EqualFold(r.URL.Query().Get("nl"), "1") && strings.TrimSpace(f.Q) != "" {
+		if s.ai == nil || !s.ai.Licensed() {
+			writeErrFields(w, http.StatusServiceUnavailable, "ai nl search unavailable", map[string]any{"code": "ai_unavailable"})
+			return
+		}
+		hits, total, _, err := s.ai.SearchNL(r.Context(), f.Q, f)
+		if err != nil {
+			writeErrFields(w, http.StatusServiceUnavailable, err.Error(), map[string]any{"code": "ai_unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"events": hits, "total": total, "ai_query": true,
+			"note": "найдено по смыслу, проверьте сниппеты",
+		})
+		return
 	}
 	list, total, err := s.sessionsvc.SearchEvents(r.Context(), f)
 	if err != nil {
@@ -586,8 +640,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			f.Offset = n
 		}
 	}
-	// Admin/auditor see all; supervisors see waiting four-eyes queue; others see own.
-	if r.URL.Query().Get("waiting_supervisor") == "1" && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
+	// Admin/auditor see all; asset owners see sessions on their assets; others see own.
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		f.OnlyAssetOwner = &sess.UserID
+	} else if r.URL.Query().Get("waiting_supervisor") == "1" && rbac.HasPermission(sess.Permissions, "sessions.supervise") {
 		f.WaitingSupervisor = true
 	} else if !(rbac.HasPermission(sess.Permissions, "users.write") || rbac.HasPermission(sess.Permissions, "audit.read")) {
 		f.OnlyUser = &sess.UserID
@@ -616,7 +672,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -689,7 +745,7 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -735,7 +791,7 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -745,8 +801,18 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if row.Protocol == "rdp" || row.Protocol == "vnc" {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", id.String()+".guac"))
+		name := id.String() + ".guac"
+		ctype := "application/octet-stream"
+		if !sessionsvc.IsGuacamoleRecording(row.Protocol, path) {
+			ext := filepath.Ext(path)
+			if ext == "" {
+				ext = ".pcap"
+			}
+			name = id.String() + ext
+			ctype = "application/vnd.tcpdump.pcap"
+		}
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", name))
 	} else if row.Protocol == "postgres" || row.Protocol == "mysql" || row.Protocol == "mssql" || row.Protocol == "https" || row.Protocol == "kubectl" {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", id.String()+".jsonl"))
@@ -882,6 +948,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	} else {
 		client, err := s.assets.DialSSH(r.Context(), creds)
 		if err != nil {
+			slog.Error("ssh dial", "session", id, "asset", creds.Asset.Name, "err", err)
 			_ = rec.Close()
 			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
 			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
@@ -904,6 +971,7 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		})
 		sb, err := sshproxy.StartSessionWith(client, cols, rows, rec, opts)
 		if err != nil {
+			slog.Error("ssh session", "session", id, "asset", creds.Asset.Name, "err", err)
 			_ = client.Close()
 			_ = rec.Close()
 			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})

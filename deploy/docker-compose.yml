@@ -44,6 +44,7 @@ services:
       - "15432:15432"
       - "13306:13306"
       - "11433:11433"
+      - "11521:11521"
       - "16443:16443"
     healthcheck:
       test: ["CMD", "/app/auth-server", "readyz"]
@@ -57,6 +58,7 @@ services:
       KEEPPAM_PG_WIRE_ADDR: ":15432"
       KEEPPAM_MYSQL_WIRE_ADDR: ":13306"
       KEEPPAM_MSSQL_WIRE_ADDR: ":11433"
+      KEEPPAM_ORACLE_WIRE_ADDR: ":11521"
       KEEPPAM_TELNET_ADDR: ":2323"
       KEEPPAM_TN3270_ADDR: ":2324"
       KEEPPAM_CITRIX_SOCKS_ADDR: ":1081"
@@ -76,6 +78,7 @@ services:
       KEEPPAM_LICENSE_SKIP_HW: "${KEEPPAM_LICENSE_SKIP_HW:-true}"
       KEEPPAM_RECORDINGS_DIR: "/tmp/recordings"
       KEEPPAM_DATA_KEY_SOURCE: "env"
+      KEEPPAM_DIGITALID_LAB: "true"
       KEEPPAM_RECORDINGS_BACKEND: "local"
       # Archive: Config → Архив; mount NFS/CIFS → nfs_path (docs/archive-smb-nfs.txt)
       KEEPPAM_ALERT_WEBHOOK_TOKEN: "keeppam-alert-stand"
@@ -190,6 +193,7 @@ services:
       - sshhost:/var/lib/keeppam/ssh
     ports:
       - "2222:2222"
+      - "2121:2121"
       - "2323:2323"
       - "2324:2324"
       - "1081:1081"
@@ -211,6 +215,8 @@ services:
       # Prod KMS: те же KEEPPAM_DATA_KEY_SOURCE / KEEPPAM_KMS_CIPHERTEXT, что у api (docs/kms.txt)
       KEEPPAM_SSH_ADDR: ":2222"
       KEEPPAM_SSH_HOST_KEY: "/var/lib/keeppam/ssh/hostkey"
+      KEEPPAM_FTP_ADDR: ":2121"
+      KEEPPAM_FTP_PUBLIC_HOST: "${KEEPPAM_FTP_PUBLIC_HOST:-}"
       KEEPPAM_TELNET_ADDR: ":2323"
       KEEPPAM_TN3270_ADDR: ":2324"
       KEEPPAM_CITRIX_SOCKS_ADDR: ":1081"

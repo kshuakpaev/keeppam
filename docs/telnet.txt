@@ -16,6 +16,13 @@ login: <session-uuid>
 Password: <wire_token>
 ```
 
+Либо без портала (как SSH `:2222`):
+
+```text
+login: pamuser+ASSET
+Password: <пароль PAM>
+```
+
 ## Что делает proxy
 
 | Шаг | Поведение |

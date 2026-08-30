@@ -1,0 +1,427 @@
+# KeepPAM: план ИИ-copilot (SOW-AI-COPILOT)
+
+On-prem **помощник расследования и согласования**. Не заменяет JEA / DLP regex / Command Risk / UEBA-score.
+Не облако: записи сессий, stdout, OCR и секреты **не** уходят во внешний LLM.
+
+Источник ценности: транскрипты и `session_events` уже есть (`docs/session-search.txt`, `docs/ocr-rdp.txt`, `docs/forensic.txt`).
+Сейчас поиск — ILIKE, сводки нет, согласующий видит заявку без контекста.
+
+Статус: **в коде** (P0–P9). Не в базовую цену mid-market. Лицензия: `ai_copilot`.
+
+Связано: `docs/sow-backlog.txt`, `docs/ueba-ml.txt` (score без нейросети), `docs/nlp-dlp.txt` (keywords).
+
+---
+
+## 1. Принципы
+
+1. **ИИ рядом, не в горячем пути.** session-worker, SSH `:2222`, guacd, live deny, `max_risk` — без вызова модели.
+2. **Правила — источник истины.** Deny/allow/mask/MFA/JIT quorum считают существующие движки. Модель пишет подсказку, черновик, сводку.
+3. **On-prem only.** Инференс на площадке (отдельный контейнер). Нет OpenAI/Anthropic/YandexGPT по умолчанию. Опциональный HTTP endpoint — только явный opt-in в Config + audit `ai.external.used` (для air-gap заказчиков — выключено и спрятано).
+4. **Те же права, что у данных.** Сводка сессии — `sessions.read` (чужие — `audit.read` / `users.write`). Карточка JIT — `access.approve*`. Промпт не содержит vault-секретов, checkout-паролей, тел Secret k8s.
+5. **Идемпотентность и лимиты.** Одна актуальная сводка на сессию; повтор — кнопка «Пересчитать». Кап токенов / длины транскрипта. Таймаут инференса. Падение модели ≠ падение сессии.
+6. **Каждый срез:** миграция + API + UI + audit + строка приёмки в этом файле.
+
+Порядок фаз (зависимые нельзя параллелить с P0):
+
+```
+P0 каркас (settings + worker + redaction)
+  → P1 сводка сессии          ← первый демо-срез
+  → P2 NL-поиск (эмбеддинги)
+  → P3 карточка согласующего (JIT / 4-eyes / command approval)
+  → P4 текст риска (UEBA explain)
+P5–P8 — опции после P1–P4, отдельными мини-SOW внутри модуля.
+```
+
+Оценка — календарные недели при 1–2 инженерах, без GPU-тюнинга модели.
+
+---
+
+## 2. Что уже закрыто (не дублировать)
+
+| Модуль | Что есть | Чего нет |
+|--------|----------|----------|
+| UEBA + UEBA-ML | факторы, peer-group, composite score, live keystroke | текст «почему подозрительно» |
+| NLP/DLP | keywords + audit/mask/deny | семантика / синонимы |
+| Command Risk | парсер + баллы + live deny | понимание обфускации через LLM **на deny-пути** |
+| OCR | Tesseract rus+eng post-session | смысл кадра, сильный OCR |
+| Forensic | ILIKE по payload | естественный язык, сводка |
+| Compliance | JSON/CSV/PDF evidence | связный текст для аудитора |
+| Help | статичные топики | Q&A по доке |
+
+---
+
+## 3. Куда ИИ не ставить (вне scope всего модуля)
+
+| Место | Почему |
+|--------|--------|
+| Live deny SSH / JEA `MatchCommand` | нужен детерминизм; prompt injection из команды |
+| Автоодобрение JIT / supervisor / op-approve | юридический риск |
+| Чат «помоги на сервере» внутри сессии | утечка контекста на цель |
+| Обучение модели на записях заказчика | PII, объём, нет UI per-tenant training |
+| Live OCR каждого кадра + VLM | CPU/GPU, вне текущих лимитов OCR |
+| Замена `ueba_ml` нейросетью | SOW-UEBA-ML закрыт как on-prem score без GPU |
+
+---
+
+## 4. Архитектура
+
+```
+session ended / OCR done / JIT created
+        ↓
+   ai_jobs (очередь в PG)
+        ↓
+   keeppam-ai-worker          ← отдельный контейнер, KEEPPAM_MODE=ai
+        │  читает session_events + transcript API (внутренний)
+        │  redact: пароли PTY, Secret/, Authorization, BEGIN PRIVATE KEY
+        │  локальный runtime (llama.cpp / Ollama / совместимый HTTP)
+        ↓
+   session_ai_summaries
+   session_event_embeddings
+   access_request_ai / risk_ai_explain
+        ↓
+   API → UI (replay, Расследование, Запросы, Аналитика)
+```
+
+**Состав дистрибутива**
+
+| Сервис | Роль |
+|--------|------|
+| `api` | CRUD настроек, GET сводок, enqueue job, NL-search |
+| `session-worker` | без изменений горячего пути; после index/OCR — `NOTIFY` / insert `ai_jobs` (как `IndexOCRAsync`) |
+| `ai-worker` | consume jobs, инференс, запись результата |
+| `ai-runtime` (опц.) | Ollama или llama.cpp; в core-дистрибутиве **выключен**, в `images-full` / отдельный overlay |
+
+Без `ai-runtime`: mode=`off` или jobs → `skipped` (`reason=no_runtime`). Пилот без GPU живёт: CPU-модель 3–8B только для P1; эмбеддинги (P2) легче генерации.
+
+**Изоляция сети:** ai-runtime слушает только docker-сеть KeepPAM. Исходящие в интернет — запрещены compose (как offline-дистрибутив).
+
+**FIPS / air-gap:** модуль опционален. Appliance без GPU не обязан тащить CUDA-образы. Модель — файл в tarball `keeppam-ai-models/` (offline), не HuggingFace при установке.
+
+---
+
+## 5. Данные и настройки
+
+Миграция (следующий свободный номер после `107`, ориентир **`108_ai_copilot.sql`**).
+
+### `ai_settings` (singleton id=1)
+
+| Поле | Смысл |
+|------|--------|
+| `mode` | `off` / `on` / `external` (`external` только если `KEEPPAM_AI_ALLOW_EXTERNAL=1`) |
+| `endpoint` | URL runtime (`http://ai-runtime:11434` или llama.cpp) |
+| `model` | имя модели сводки |
+| `embed_model` | имя модели эмбеддингов (P2) |
+| `max_input_chars` | кап промпта, default 48_000, max 200_000 |
+| `timeout_s` | 30…300, default 90 |
+| `lang` | `ru` / `en` / `session` (язык UI оператора) |
+| `last_run_at` / `last_error` | как UEBA-ML |
+
+Config → **ИИ-помощник**. Тест: `POST .../ai/test` `{probe:true}` — пинг runtime без сессии.
+
+### `ai_jobs`
+
+`id`, `kind` (`session_summary` / `embed_session` / `approval_brief` / `risk_explain` / `compliance_prose` / `help_ask`), `ref_id` (session / request / …), `status` (`queued`/`running`/`done`/`error`/`skipped`), `attempts`, `created_at`, `finished_at`, `error`.
+
+Уникальность: одна активная (`queued`/`running`) job на `(kind, ref_id)`.
+
+### `session_ai_summaries`
+
+| Поле | Смысл |
+|------|--------|
+| `session_id` PK | |
+| `status` | `pending` / `ready` / `error` / `skipped` |
+| `model` | какая модель |
+| `headline` | ≤ 200 рун |
+| `summary` | 1–3 абзаца |
+| `bullets` jsonb | список действий |
+| `risk_notes` jsonb | ссылки на события DLP/JEA/UEBA (id + kind), без выдуманных фактов |
+| `offsets` jsonb | `{label, offset}` для seek в replay |
+| `input_hash` | hash набора event_id, чтобы не пересчитывать без новых событий |
+| `created_at` / `updated_at` | |
+
+Промпт: «только факты из JSON событий; если не уверен — не выдумывай; укажи offset если есть». Галлюцинация снимается UI: каждая bullet кликабельна к событию/offset; нет события — не показываем как факт.
+
+### `session_event_embeddings` (P2)
+
+`event_id`, `session_id`, `embedding vector(N)`, `model`, `created_at`.
+pgvector **или** float4[] + cosine в worker, если не тащим расширение в core PG.
+Решение на старте P2: предпочтительно pgvector в full-образе Postgres; fallback — отдельный индекс-файл в volume.
+
+Redaction перед моделью (общий пакет `internal/ai/redact`):
+
+- совпадения встроенного PII / `nlp_private_key` / `nlp_credentials` как в DLP;
+- строки `password=` / `Authorization:` / `BEGIN * PRIVATE KEY`;
+- k8s `body_redacted` уже в индексе — не разворачивать.
+
+Audit: `ai.summary.generated` / `ai.job.failed` / `ai.settings.updated` (без тела промпта и без сырого транскрипта в audit payload).
+
+---
+
+## 6. Фазы
+
+### P0 — каркас (1–1.5 нед.)
+
+**Цель:** настройки, worker, очередь, redaction, compose overlay. UI Config. Никакой «магии» в сессиях.
+
+| # | Работа |
+|---|--------|
+| 0.1 | Миграция `ai_settings`, `ai_jobs` |
+| 0.2 | Пакет `internal/ai` (settings, enqueue, redact, HTTP-клиент OpenAI-compatible `/v1/chat/completions`) |
+| 0.3 | `KEEPPAM_MODE=ai` worker: poll `ai_jobs`, retry 3×, backoff |
+| 0.4 | `deploy/compose.ai.yml` + stub runtime (mock, фиксированный JSON) для CI |
+| 0.5 | Config UI + `GET/PUT /api/v1/admin/settings/ai` (`users.write`) + `POST .../ai/test` |
+| 0.6 | Helm/install: сервис выключен по умолчанию; `KEEPPAM_AI=1` поднимает overlay |
+
+**DoD P0**
+
+1. mode=`off` → jobs не создаются, сессии как сейчас.
+2. mock-runtime → `POST .../ai/test` → 200 `{ok:true, model}`.
+3. Audit `ai.settings.updated`.
+4. `make smoke` без AI-образов — зелёный.
+
+---
+
+### P1 — сводка сессии (2–3 нед.) ← первый коммерческий срез
+
+**Цель:** после `ended` + индекс (SSH) / OCR (RDP) — карточка на replay и в Расследовании.
+
+Хук: рядом с `IndexOCRAsync` / конец `castindex` / SSH transcript index — `ai.Enqueue(session_summary)` если mode=`on` и есть ≥N событий (команды / screen_text / sql / file_transfer).
+
+Вход модели (уже redact):
+
+- мета сессии: user, asset, protocol, duration, `risk_score`, `risk_factors`;
+- усечённый transcript: `command`, `command_denied`, `sql`, `file_transfer`, `win_process`, `dlp`, `ueba`, до `max_input_chars`;
+- OCR `screen_text` — последние/уникальные строки, не все 120 кадров сырьём.
+
+Выход: строго JSON-схема (headline, summary, bullets[], risk_notes[], offsets[]) — parse + validate; иначе `status=error`.
+
+**API**
+
+| Метод | Путь | Право |
+|-------|------|--------|
+| GET | `/api/v1/admin/sessions/{id}/ai-summary` | `sessions.read` (+ чужие как transcript) |
+| POST | `/api/v1/admin/sessions/{id}/ai-summary` `{force?}` | то же; enqueue/пересчёт |
+
+**UI**
+
+- Replay SSH/RDP/SQL: блок «Сводка» (skeleton пока pending).
+- Клики bullets → seek offset / подсветка события.
+- Расследование: колонка/превью headline в строке сессии (опц. если ready).
+- i18n RU/EN (+ KK как остальные экраны).
+
+**DoD P1**
+
+1. SSH-сессия: `ls`, `cat /etc/os-release`, `sudo rm -rf /tmp/x` (denied) → сводка упоминает deny и не содержит выдуманный `drop database`.
+2. RDP с OCR «Notepad» → headline/bullet ссылается на `screen_text` или `win_process`, клик ищет offset.
+3. mode=`off` → GET 404/`skipped`, кнопка скрыта.
+4. Нет runtime → `skipped`, сессия и replay работают.
+5. Оператор без `audit.read` не видит сводку чужой сессии.
+6. Демо 45 мин: после forensic — открыть replay → сводка за < timeout_s (mock или CPU-модель).
+
+**Вне P1:** NL-поиск, JIT-карточка, внешний endpoint.
+
+---
+
+### P2 — поиск на естественном языке (2–3 нед., после P1)
+
+**Цель:** поле «Спросить» на **События** / **Расследование** поверх ILIKE.
+
+1. Job `embed_session` после summary (или вместе): эмбеддинги чанков событий (не каждый keystroke по одной букве — группировать).
+2. Query: embed вопрос → top-k cosine → rerank опционально маленькой генерацией «какие id релевантны» **или** только vector hit + ILIKE fallback.
+3. Ответ API: существующий формат `events[]` + `ai_query: true` + `note` («найдено по смыслу, проверьте сниппеты»).
+
+`GET /api/v1/admin/sessions/events?nl=1&q=...` — не ломать текущий `q` ILIKE (`nl` отсутствует = как сейчас).
+
+**DoD P2**
+
+1. Событие «DROP TABLE» / «salary» без точного слова в запросе «удаление схемы» / «данные о зарплате» → hit в top-k (фикстура в test).
+2. `nl` без runtime → 503 с понятным кодом, ILIKE-поиск жив.
+3. Пустой индекс (нет embed jobs) → пустой ai-hit, не 500.
+
+**Вне P2:** полнотекст видео, OpenSearch kNN.
+
+---
+
+### P3 — карточка согласующего (1.5–2 нед., после P1)
+
+**Цель:** JIT / supervisor / SSH command approval — блок фактов, не решение.
+
+Сбор **только SQL/API KeepPAM** (не модель как источник цифр):
+
+- 30д: число сессий, топ активов, были ли `ueba_*`, break-glass;
+- этот актив: ACL, Policy, был ли уже JIT;
+- прошлые заявки того же user→asset (approve/deny);
+- для command approval: parsed command + JEA + risk points (`command-preview`).
+
+Модель **сжимает** этот JSON в 5–8 строк RU/EN. Если runtime нет — показать сырой JSON-brief (всё равно полезно).
+
+Таблица `access_request_ai` / поле на существующих request rows.
+
+UI: **Запросы** — карточка «Контекст». Кнопки Approve/Deny без изменений. Никогда не ставить recommended=approve.
+
+**DoD P3**
+
+1. Заявка JIT на актив вне 30д-baseline пользователя → в тексте «новый актив» (из фактора/SQL, не выдумано).
+2. Approve/Deny работает при `ai_jobs.error`.
+3. Заявитель не видит карточку чужого согласования сверх текущих прав.
+
+---
+
+### P4 — пояснение риска (1 нед., после P1)
+
+**Цель:** на connect-событии и в Аналитике — абзац по **уже посчитанным** `risk_factors`.
+
+Вход: список факторов + баллов (UEBA, geo, off-hours, …). Выход: 3–6 предложений. Score не пересчитывается.
+
+`GET /api/v1/admin/sessions/{id}/ai-risk` или поле в GET session.
+Analytics: при клике на anomaly `ueba_ml` / `ueba` — тот же текст, если сессия известна.
+
+**DoD P4**
+
+1. Сессия с `ueba_new_asset` + `ueba_ml_high` → текст содержит оба фактора дословно/по словарю i18n.
+2. Фактор, которого нет в payload, в тексте не появляется (проверка: запрет неизвестных кодов в post-process).
+
+---
+
+### P5 — черновики Policy / JEA (опция, 2 нед.)
+
+Админ: textarea «DBA SSH на *db* пн–пт 9–18, без rm/dd» → JSON Policy + pack patterns. Сохранение только ручное.
+
+Или: «по сессиям user за 30д предложи allowlist» — globs из фактических `command` events.
+
+`POST /api/v1/admin/jea/ai-draft` (`jea.write` на применение; `jea.read` на preview).
+
+**DoD:** preview не пишет в БД; import существующим API. Live deny по-прежнему glob.
+
+---
+
+### P6 — семантический DLP audit-only (опция, 2 нед.)
+
+Эмбеддинг/маленький классификатор **после** keyword-скана. Новые kinds `nlp_sem_*` только в событии `dlp` с `action=audit`.
+`mask`/`deny` — исключительно текущий `ApplyContentDLP` (regex + keywords).
+
+Не live на каждый чанк SSH до индекса: тот же post-index канал, что NLP-DLP.
+
+---
+
+### P7 — OCR / narrative экрана (опция, 2–4 нед.)
+
+Не VLM на каждый кадр. P1 уже ест `screen_text`. P7 — смена движка OCR (PaddleOCR on-prem) **или** один caption на N ключевых кадров, если runtime умеет vision.
+
+Отдельная оценка GPU. По умолчанию не в SOW-AI-COPILOT phase 1.
+
+---
+
+### P8 — проза compliance (опция, 1 нед.)
+
+`GET .../compliance/report?prose=1` — абзацы по уже посчитанному `summary` + counts. PDF: доп. страница «Narrative (AI, not evidence)». Цифры сверять с JSON; расхождение → без прозы, только таблицы.
+
+---
+
+### P9 — help Q&A (опция, 1 нед., низкий приоритет)
+
+RAG по `web/src/help/content.ts` + выбранным `docs/*.txt` (не session_events). Право: любой authenticated. Не конкурентное преимущество PAM.
+
+---
+
+## 7. API / права (сводка P0–P4)
+
+| Метод | Путь | Право |
+|-------|------|--------|
+| GET/PUT | `/api/v1/admin/settings/ai` | `users.write` |
+| POST | `/api/v1/admin/settings/ai/test` | `users.write` |
+| GET/POST | `/api/v1/admin/sessions/{id}/ai-summary` | `sessions.read` |
+| GET | `/api/v1/admin/sessions/{id}/ai-risk` | `sessions.read` |
+| GET | `/api/v1/admin/sessions/events?nl=1&q=` | `sessions.read` |
+| GET | `/api/v1/admin/access-requests/{id}/ai-brief` | `access.approve` / `access.approve.security` / `sessions.supervise` по типу |
+
+Лицензия: флаг в `license.json` (`ai_copilot`) — как другие SOW-модули; без флага API 403 `license`.
+
+---
+
+## 8. UI
+
+- Config → ИИ-помощник: mode, endpoint, model, test, last_error.
+- Replay: блок сводки.
+- Сессии → События: тумблер «смысловой поиск» (P2).
+- Запросы: «Контекст» (P3).
+- Аналитика: пояснение аномалии (P4).
+- Справка: не смешивать с session copilot.
+
+Не добавлять пункт сайдбара «ИИ» — функции живут в существующих экранах.
+
+---
+
+## 9. Дистрибутив и требования
+
+| Профиль | Что в tarball |
+|---------|----------------|
+| core (`images-core`) | код api/worker + миграции; runtime нет; mode default off |
+| full + AI overlay | образ `keeppam-ai-worker` + `keeppam-ai-runtime` + веса модели (отдельный tar, ≥ несколько ГБ) |
+
+RAM runtime: ориентир 8–16 ГБ для 7B Q4; 32 ГБ комфортнее. GPU не обязателен для P1 на CPU (медленно, ок для post-session).
+
+`docs/system-requirements.txt` — доп. абзац «опция ИИ». Offline: модели в `dist/keeppam-ai-models-*.tar`, install не ходит в интернет.
+
+---
+
+## 10. Демо (добавка к `docs/demo-45min.txt`)
+
+После forensic SSH/RDP:
+
+1. Config → ИИ = on (стенд с mock или CPU-моделью).
+2. Закончить сессию с 1 deny + 1 file/sql.
+3. Replay → сводка за минуты.
+4. (P3) Открыть JIT-заявку → карточка контекста.
+5. Явно сказать заказчику: «модель on-prem, не в deny-пути, не автоapprove».
+
+---
+
+## 11. Приёмка модуля (акт SOW)
+
+Минимум для закрытия **базового SOW** (= P0+P1, остальное — приложения к акту):
+
+- [ ] P0 DoD
+- [ ] P1 DoD (6 пунктов)
+- [ ] Нет вызова модели из SSH PTY / live deny (grep + review)
+- [ ] Redact private key / password в фикстуре → в `session_ai_summaries.summary` нет сырого секрета
+- [ ] mode=off и отсутствие overlay не ломают `make smoke` / `acceptance-smoke`
+- [ ] Audit без промпта/транскрипта
+- [ ] i18n RU/EN на новых строках
+
+P2–P4 — чекбоксы в приложении, если включены в контракт.
+
+---
+
+## 12. Риски
+
+| Риск | Митигация |
+|------|-----------|
+| Галлюцинации | JSON-схема + bullets только с event_id/offset; UI не показывает «голый» абзац без ссылок |
+| Заказчик air-gap | overlay опционален; веса в offline tar |
+| Слабый CPU | mock в CI; сводка async; skipped |
+| Утечка в audit/SIEM | payload audit без transcript |
+| «Сделайте ChatGPT» | `external` спрятан, license + env; default on-prem |
+| Объём PG (эмбеддинги) | P2 TTL/GC старых embed; не core без pgvector |
+
+---
+
+## 13. Порядок работ в чате
+
+Реализовано по запросу «SOW: SOW-AI-COPILOT»: P0–P9 в коде (миграция `108_ai_copilot.sql`, worker, API, UI, overlay). Приёмка — §11; overlay опционален, `make smoke` без AI не ломается.
+
+---
+
+## 14. Связанные документы
+
+- `docs/session-search.txt` — индекс событий
+- `docs/forensic.txt` — лента пользователя
+- `docs/ocr-rdp.txt` — кадры OCR
+- `docs/ueba.txt` / `docs/ueba-ml.txt` — факторы и score
+- `docs/nlp-dlp.txt` / `docs/dlp.txt` — контент
+- `docs/command-risk.txt` — не трогать deny-путь
+- `docs/jit-workflow.txt` / `docs/session-supervisor.txt` — очереди P3
+- `docs/compliance-report.txt` — P8
+- `docs/sow-backlog.txt` — регистрация модуля
+- `docs/demo-45min.txt` — куда вставить демо
+- `docs/system-requirements.txt` — доп. RAM при включении overlay

@@ -43,7 +43,7 @@ func radiusRoleFromFilter(filter, fallback string) string {
 	f := strings.ToLower(strings.TrimSpace(filter))
 	f = strings.TrimPrefix(f, "keeppam-")
 	switch f {
-	case "admin", "operator", "auditor", "security":
+	case "admin", "operator", "auditor", "security", "owner":
 		return f
 	}
 	return fallback

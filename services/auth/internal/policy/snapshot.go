@@ -36,6 +36,9 @@ type Snapshot struct {
 	OCRLang               string       `json:"ocr_lang,omitempty"`
 	OCRIntervalSec        int          `json:"ocr_interval_sec,omitempty"`
 	OCRMaxFrames          int          `json:"ocr_max_frames,omitempty"`
+	OCREveryFrame         bool         `json:"ocr_every_frame,omitempty"`
+	OCRLive               bool         `json:"ocr_live,omitempty"`
+	OCRSSHStdout          bool         `json:"ocr_ssh_stdout,omitempty"`
 	RDPClipboard          bool         `json:"rdp_clipboard,omitempty"`
 	RDPDrive              bool         `json:"rdp_drive,omitempty"`
 	RDPPrinter            bool         `json:"rdp_printer,omitempty"`
@@ -168,12 +171,14 @@ func (s *Service) loadOCRForSnapshot(ctx context.Context, sn *Snapshot) {
 	if sn == nil {
 		return
 	}
-	if sn.AccessPolicyID != nil && (sn.OCRLang == "" || sn.OCRIntervalSec == 0 || sn.OCRMaxFrames == 0) {
+	if sn.AccessPolicyID != nil {
 		var lang string
 		var iv, n int
+		var every, live, sshOut bool
 		err := s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(ocr_lang,''), COALESCE(ocr_interval_sec,0), COALESCE(ocr_max_frames,0)
-			FROM access_policies WHERE id=$1`, *sn.AccessPolicyID).Scan(&lang, &iv, &n)
+			SELECT COALESCE(ocr_lang,''), COALESCE(ocr_interval_sec,0), COALESCE(ocr_max_frames,0),
+			       COALESCE(ocr_every_frame,false), COALESCE(ocr_live,false), COALESCE(ocr_ssh_stdout,true)
+			FROM access_policies WHERE id=$1`, *sn.AccessPolicyID).Scan(&lang, &iv, &n, &every, &live, &sshOut)
 		if err == nil {
 			if sn.OCRLang == "" {
 				sn.OCRLang = lang
@@ -184,8 +189,12 @@ func (s *Service) loadOCRForSnapshot(ctx context.Context, sn *Snapshot) {
 			if sn.OCRMaxFrames == 0 {
 				sn.OCRMaxFrames = n
 			}
+			sn.OCREveryFrame = every
+			sn.OCRLive = live
+			sn.OCRSSHStdout = sshOut
 		}
 	}
 	opt := sn.OCR()
 	sn.OCRLang, sn.OCRIntervalSec, sn.OCRMaxFrames = opt.Lang, opt.IntervalSec, opt.MaxFrames
+	sn.OCREveryFrame, sn.OCRLive, sn.OCRSSHStdout = opt.EveryFrame, opt.Live, opt.SSHStdout
 }

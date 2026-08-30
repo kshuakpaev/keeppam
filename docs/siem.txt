@@ -13,7 +13,9 @@
 | `nats` | Publish на subject | `nats_url`, `nats_subject`, optional token |
 | `opensearch` | HTTP `_bulk` NDJSON | `opensearch_url`, `opensearch_index`, auth как у webhook |
 
-Формат тела: `json` (весь AuditEvent), `cef` или `ecs` (Elastic Common Schema, `docs/opensearch.txt`). Транспорт `opensearch` всегда шлёт ECS.
+Формат тела: `json` (весь AuditEvent), `cef`, `leef` (LEEF 2.0, tab delimiter, IBM QRadar) или `ecs` (Elastic Common Schema, `docs/opensearch.txt`). Транспорт `opensearch` всегда шлёт ECS.
+
+LEEF: `LEEF:2.0|KeepPAM|KeepPAM|1.0|{action}|` + tab-поля `devTime`, `sev`, `cat`, `src`, `usrName`, `identSrc`, `hash`, `msg` (payload JSON).
 
 ## Стенд
 

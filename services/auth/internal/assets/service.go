@@ -102,7 +102,11 @@ type Asset struct {
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 	CreatedBy           *uuid.UUID `json:"created_by,omitempty"`
+	OwnerUserID         *uuid.UUID `json:"owner_user_id,omitempty"`
+	OwnerUsername       string     `json:"owner_username,omitempty"`
 	Accounts            []Account  `json:"accounts,omitempty"`
+	// Entitled is set by the API: user has ACL/ownership (or is an inventory admin).
+	Entitled bool `json:"entitled"`
 }
 
 type Account struct {
@@ -168,6 +172,7 @@ type CreateAssetInput struct {
 	CitrixTransport     string     `json:"citrix_transport"`
 	Tn3270Codepage      string     `json:"tn3270_codepage"`
 	Tn3270TerminalType  string     `json:"tn3270_terminal_type"`
+	OwnerUserID         *uuid.UUID `json:"owner_user_id"`
 }
 
 type UpdateAssetInput struct {
@@ -201,6 +206,7 @@ type UpdateAssetInput struct {
 	CitrixTransport     *string    `json:"citrix_transport"`
 	Tn3270Codepage      *string    `json:"tn3270_codepage"`
 	Tn3270TerminalType  *string    `json:"tn3270_terminal_type"`
+	OwnerUserID         *uuid.UUID `json:"owner_user_id"`
 }
 
 type CreateAccountInput struct {
@@ -281,20 +287,82 @@ func (s *Service) List(ctx context.Context) ([]Asset, error) {
 	return s.ListLimited(ctx, 0, StatusFilterListed)
 }
 
+// ListFilter pages and searches the asset catalog (NIT §2).
+type ListFilter struct {
+	Status      StatusFilter
+	Query       string
+	Limit       int
+	Offset      int
+	OwnerUserID *uuid.UUID
+	MaxVisible  int
+	// IDRestrict limits results to IDs (empty IDs ⇒ no rows). Used for ACL entitlement.
+	IDRestrict bool
+	IDs        []uuid.UUID
+}
+
+func escapeLike(q string) string {
+	q = strings.ReplaceAll(q, `\`, `\\`)
+	q = strings.ReplaceAll(q, `%`, `\%`)
+	q = strings.ReplaceAll(q, `_`, `\_`)
+	return q
+}
+
+func (f ListFilter) where() (string, []any, error) {
+	var parts []string
+	var args []any
+	switch f.Status {
+	case StatusFilterArchived:
+		parts = append(parts, `a.status = 'archived'`)
+	case StatusFilterAll:
+	case StatusFilterListed, "":
+		parts = append(parts, `a.status <> 'archived'`)
+	default:
+		return "", nil, fmt.Errorf("invalid status filter")
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		like := "%" + escapeLike(q) + "%"
+		n := len(args) + 1
+		parts = append(parts, fmt.Sprintf(
+			`(a.name ILIKE $%d ESCAPE '\' OR a.hostname ILIKE $%d ESCAPE '\' OR a.address ILIKE $%d ESCAPE '\' OR COALESCE(a.description,'') ILIKE $%d ESCAPE '\')`,
+			n, n, n, n))
+		args = append(args, like)
+	}
+	if f.OwnerUserID != nil {
+		n := len(args) + 1
+		parts = append(parts, fmt.Sprintf(`a.owner_user_id = $%d`, n))
+		args = append(args, *f.OwnerUserID)
+	}
+	if f.IDRestrict {
+		if len(f.IDs) == 0 {
+			parts = append(parts, `FALSE`)
+		} else {
+			n := len(args) + 1
+			parts = append(parts, fmt.Sprintf(`a.id = ANY($%d)`, n))
+			args = append(args, f.IDs)
+		}
+	}
+	if len(parts) == 0 {
+		return "", args, nil
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args, nil
+}
+
+func (s *Service) CountFiltered(ctx context.Context, f ListFilter) (int, error) {
+	where, args, err := f.where()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assets a`+where, args...).Scan(&n)
+	return n, err
+}
+
 // ListLimited returns assets ordered by name. If limit > 0, only the first limit rows.
 func (s *Service) ListLimited(ctx context.Context, limit int, filter StatusFilter) ([]Asset, error) {
-	where := ""
-	switch filter {
-	case StatusFilterArchived:
-		where = ` WHERE a.status = 'archived'`
-	case StatusFilterAll:
-		where = ""
-	case StatusFilterListed, "":
-		where = ` WHERE a.status <> 'archived'`
-	default:
-		return nil, fmt.Errorf("invalid status filter")
-	}
-	q := `
+	return s.ListPage(ctx, ListFilter{Status: filter, Limit: limit})
+}
+
+const listSelect = `
 		SELECT a.id, a.name, a.asset_type, a.hostname, a.address, a.port, a.protocol, COALESCE(a.database_name,''), a.description, a.status,
 			a.host_key_algo, a.host_key_blob, a.host_key_fp, a.host_key_learned_at,
 			a.created_at, a.updated_at, a.created_by, COALESCE(a.approval_stages, '{manager}'), COALESCE(a.pam_only, TRUE), a.firewall_applied_at,
@@ -303,23 +371,47 @@ func (s *Service) ListLimited(ctx context.Context, limit int, filter StatusFilte
 			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8'),
 			COALESCE(a.rdp_remote_app, ''), COALESCE(a.rdp_remote_app_dir, ''), COALESCE(a.rdp_remote_app_args, ''),
 			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks'),
-			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, '')
+			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, ''),
+			a.owner_user_id, COALESCE(ou.username, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
-		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id` + where + `
-		ORDER BY a.name, a.id`
-	var rows pgx.Rows
-	var err error
-	if limit > 0 {
-		rows, err = s.db.Pool.Query(ctx, q+` LIMIT $1`, limit)
-	} else {
-		rows, err = s.db.Pool.Query(ctx, q)
+		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
+		LEFT JOIN users ou ON ou.id = a.owner_user_id`
+
+// ListPage returns a page of assets; accounts are loaded only for returned IDs.
+func (s *Service) ListPage(ctx context.Context, f ListFilter) ([]Asset, error) {
+	if f.MaxVisible > 0 {
+		if f.Offset >= f.MaxVisible {
+			return []Asset{}, nil
+		}
+		remain := f.MaxVisible - f.Offset
+		if f.Limit <= 0 || f.Limit > remain {
+			f.Limit = remain
+		}
 	}
+	where, args, err := f.where()
+	if err != nil {
+		return nil, err
+	}
+	q := listSelect + where + `
+		ORDER BY a.name, a.id`
+	n := len(args) + 1
+	if f.Limit > 0 {
+		q += fmt.Sprintf(` LIMIT $%d`, n)
+		args = append(args, f.Limit)
+		n++
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(` OFFSET $%d`, n)
+		args = append(args, f.Offset)
+	}
+	rows, err := s.db.Pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Asset
+	ids := make([]uuid.UUID, 0, 32)
 	for rows.Next() {
 		a, err := scanAsset(rows)
 		if err != nil {
@@ -331,11 +423,12 @@ func (s *Service) ListLimited(ctx context.Context, limit int, filter StatusFilte
 		}
 		a.Tags = tags
 		out = append(out, a)
+		ids = append(ids, a.ID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	acctMap, err := s.listAllAccountsByAsset(ctx)
+	acctMap, err := s.listAccountsByAssetIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +436,24 @@ func (s *Service) ListLimited(ctx context.Context, limit int, filter StatusFilte
 		out[i].Accounts = acctMap[out[i].ID]
 	}
 	return out, nil
+}
+
+// FilterOwned keeps assets whose owner_user_id is owner.
+func FilterOwned(list []Asset, owner uuid.UUID) []Asset {
+	var out []Asset
+	for _, a := range list {
+		if a.OwnerUserID != nil && *a.OwnerUserID == owner {
+			out = append(out, a)
+		}
+	}
+	if out == nil {
+		return []Asset{}
+	}
+	return out
+}
+
+func (s *Service) Owns(a Asset, userID uuid.UUID) bool {
+	return a.OwnerUserID != nil && *a.OwnerUserID == userID
 }
 
 // IsVisibleUnderLimit reports whether asset id is among the first limit listed assets (ORDER BY name, id).
@@ -371,10 +482,12 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Asset, error) {
 			COALESCE(a.ad_privileged_group_dn, ''), COALESCE(a.krb_spn, ''), COALESCE(a.terminal_charset, 'utf-8'),
 			COALESCE(a.rdp_remote_app, ''), COALESCE(a.rdp_remote_app_dir, ''), COALESCE(a.rdp_remote_app_args, ''),
 			COALESCE(a.citrix_published_app, ''), COALESCE(a.citrix_storefront_url, ''), COALESCE(a.citrix_sta_urls, ''), COALESCE(a.citrix_transport, 'socks'),
-			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, '')
+			COALESCE(a.tn3270_codepage, 'cp037'), COALESCE(a.tn3270_terminal_type, ''),
+			a.owner_user_id, COALESCE(ou.username, '')
 		FROM assets a
 		LEFT JOIN groups g ON g.id = a.approver_group_id
 		LEFT JOIN groups sg ON sg.id = a.supervisor_group_id
+		LEFT JOIN users ou ON ou.id = a.owner_user_id
 		WHERE a.id=$1`, id)
 	a, err := scanAsset(row)
 	if err != nil {
@@ -444,15 +557,16 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateAssetI
 	a.CitrixTransport = normalizeCitrixTransport(in.CitrixTransport)
 	a.Tn3270Codepage = normalizeTn3270Codepage(in.Tn3270Codepage)
 	a.Tn3270TerminalType = normalizeTn3270TermType(in.Tn3270TerminalType)
+	a.OwnerUserID = in.OwnerUserID
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn, terminal_charset, rdp_remote_app, rdp_remote_app_dir, rdp_remote_app_args, citrix_published_app, citrix_storefront_url, citrix_sta_urls, citrix_transport, tn3270_codepage, tn3270_terminal_type)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
-		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset, a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs, a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType)
+		INSERT INTO assets (id, name, asset_type, hostname, address, port, protocol, database_name, description, status, created_at, updated_at, created_by, approval_stages, pam_only, approval_mode, quorum_n, quorum_m, approver_group_id, require_supervisor, supervisor_group_id, ad_privileged_group_dn, krb_spn, terminal_charset, rdp_remote_app, rdp_remote_app_dir, rdp_remote_app_args, citrix_published_app, citrix_storefront_url, citrix_sta_urls, citrix_transport, tn3270_codepage, tn3270_terminal_type, owner_user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)`,
+		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.CreatedAt, a.UpdatedAt, a.CreatedBy, a.ApprovalStages, a.PamOnly, a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset, a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs, a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType, a.OwnerUserID)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -595,6 +709,14 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 	if in.Tn3270TerminalType != nil {
 		a.Tn3270TerminalType = normalizeTn3270TermType(*in.Tn3270TerminalType)
 	}
+	if in.OwnerUserID != nil {
+		if *in.OwnerUserID == uuid.Nil {
+			a.OwnerUserID = nil
+		} else {
+			idCopy := *in.OwnerUserID
+			a.OwnerUserID = &idCopy
+		}
+	}
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
@@ -611,13 +733,13 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateAs
 			require_supervisor=$24, supervisor_group_id=$25, ad_privileged_group_dn=$26, krb_spn=$27, terminal_charset=$28,
 			rdp_remote_app=$29, rdp_remote_app_dir=$30, rdp_remote_app_args=$31,
 			citrix_published_app=$32, citrix_storefront_url=$33, citrix_sta_urls=$34, citrix_transport=$35,
-			tn3270_codepage=$36, tn3270_terminal_type=$37
+			tn3270_codepage=$36, tn3270_terminal_type=$37, owner_user_id=$38
 		WHERE id=$1`,
 		a.ID, a.Name, a.AssetType, a.Hostname, a.Address, a.Port, a.Protocol, a.DatabaseName, a.Description, a.Status, a.UpdatedAt,
 		a.HostKeyAlgo, a.HostKeyBlob, a.HostKeyFingerprint, a.HostKeyLearnedAt, a.ApprovalStages, a.PamOnly, a.FirewallAppliedAt, endpointChanged,
 		a.ApprovalMode, a.QuorumN, a.QuorumM, a.ApproverGroupID, a.RequireSupervisor, a.SupervisorGroupID, a.ADPrivilegedGroupDN, a.KrbSPN, a.TerminalCharset,
 		a.RDPRemoteApp, a.RDPRemoteAppDir, a.RDPRemoteAppArgs,
-		a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType)
+		a.CitrixPublishedApp, a.CitrixStoreFrontURL, a.CitrixSTAURLs, a.CitrixTransport, a.Tn3270Codepage, a.Tn3270TerminalType, a.OwnerUserID)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -878,7 +1000,11 @@ func (s *Service) DeleteAccount(ctx context.Context, actorID, accountID uuid.UUI
 	})
 }
 
-func (s *Service) listAllAccountsByAsset(ctx context.Context) (map[uuid.UUID][]Account, error) {
+func (s *Service) listAccountsByAssetIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]Account, error) {
+	out := make(map[uuid.UUID][]Account)
+	if len(ids) == 0 {
+		return out, nil
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT a.id, a.asset_id, a.username, a.auth_method, a.secret_enc IS NOT NULL AND length(a.secret_enc)>0,
 			a.description, a.status, a.last_rotated_at, a.created_at, a.updated_at, a.created_by,
@@ -890,12 +1016,12 @@ func (s *Service) listAllAccountsByAsset(ctx context.Context) (map[uuid.UUID][]A
 			COALESCE(a.k8s_bind_user,false), COALESCE(a.ad_user_dn,'')
 		FROM asset_accounts a
 		LEFT JOIN users u ON u.id=a.checkout_user_id
-		ORDER BY a.asset_id, a.username`)
+		WHERE a.asset_id = ANY($1)
+		ORDER BY a.asset_id, a.username`, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[uuid.UUID][]Account)
 	for rows.Next() {
 		acc, err := scanAccountRow(rows)
 		if err != nil {
@@ -1207,7 +1333,7 @@ func scanAsset(row scannable) (Asset, error) {
 		&a.RequireSupervisor, &a.SupervisorGroupID, &a.SupervisorGroupName, &a.ADPrivilegedGroupDN, &a.KrbSPN, &a.TerminalCharset,
 		&a.RDPRemoteApp, &a.RDPRemoteAppDir, &a.RDPRemoteAppArgs,
 		&a.CitrixPublishedApp, &a.CitrixStoreFrontURL, &a.CitrixSTAURLs, &a.CitrixTransport,
-		&a.Tn3270Codepage, &a.Tn3270TerminalType)
+		&a.Tn3270Codepage, &a.Tn3270TerminalType, &a.OwnerUserID, &a.OwnerUsername)
 	if a.Tags == nil {
 		a.Tags = []string{}
 	}
@@ -1322,6 +1448,8 @@ func defaultPort(protocol string) int {
 		return 23
 	case "citrix":
 		return 1494
+	case "ftp":
+		return 21
 	default:
 		return 22
 	}

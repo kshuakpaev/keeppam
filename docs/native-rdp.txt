@@ -21,12 +21,13 @@ HTML5-клиент (`DesktopSession`): при `policy_snapshot.rdp_clipboard` �
 
 ## T-29 — native mstsc path
 
-1. Policy: `rdp_native=true`.
+1. Broker: `KEEPPAM_RDP_PUBLIC_HOST` задан (пусто/`off` = выкл.). Policy `rdp_native` **или** `KEEPPAM_RDP_NATIVE_DEFAULT=true` (default) — mstsc без обязательной галки в JEA.
 2. Env:
-   - `KEEPPAM_RDP_PUBLIC_HOST` — hostname в `.rdp` (пусто/`off` = broker выкл.).
+   - `KEEPPAM_RDP_PUBLIC_HOST` — hostname в `.rdp`.
    - `KEEPPAM_RDP_PROXY_BIN` — путь к `freerdp-proxy` (без бинарника: только `.rdp`/token).
    - `KEEPPAM_RDP_PROXY_CERT_FILE` / `_KEY_FILE` — опционально (иначе TLS API).
-3. Create session → `rdp_token`, `rdp_file`, `rdp_addr`; UI скачивает `.rdp`.
+   - `KEEPPAM_RDP_NATIVE_DEFAULT=false` — снова требовать галку `rdp_native` (HTML5-only при политике off).
+3. Create session → `rdp_token`, `rdp_file`, `rdp_addr`; UI скачивает `.rdp`. Ежедневная работа — mstsc, не браузер.
 4. Broker поднимает **per-session freerdp-proxy** с inject vault-учётки на цель; клиент без пароля цели (NLA к proxy отключён в `.rdp`).
 5. Download: `GET /api/v1/admin/sessions/{id}/rdp.rdp`.
 
@@ -34,7 +35,8 @@ HTML5-клиент (`DesktopSession`): при `policy_snapshot.rdp_clipboard` �
 
 ## Ограничения
 
-- Полная `.guac`-запись — HTML5-путь; native — audit/session + freerdp-proxy (без guacenc MP4).
+- Полная `.guac`-запись и MP4/OCR — HTML5-путь (браузер).
+- Native mstsc: **SessionCapture** freerdp-proxy → `recordings/rdp-native/{id}/` (pcap/PDU). Replay — скачивание файла, не HTML5-плеер. FreeRDP 2.x читает `[SessionCapture]`; 3.x может проигнорировать секцию — тогда остаётся HTML5-путь для полной картинки.
 - freerdp-proxy module API / RD Gateway SSO — вне среза.
 - Citrix — КП-3 SOCKS MVP (`docs/citrix-socks.txt`); HDX — SOW.
 - RDS RemoteApp — `docs/remoteapp.txt` (поля актива → guac / `.rdp`).
@@ -43,4 +45,5 @@ HTML5-клиент (`DesktopSession`): при `policy_snapshot.rdp_clipboard` �
 
 - DLP-strict: clipboard/drive/printer off в HTML5.
 - Full: флаги on → redirect в guac.
-- mstsc → KeepPAM (freerdp-proxy) → target без пароля в клиенте при `rdp_native` + proxy bin.
+- mstsc → KeepPAM (freerdp-proxy) → target без пароля в клиенте при broker (`KEEPPAM_RDP_PUBLIC_HOST`) + proxy bin. Галку `rdp_native` для новых политик не требуется (`KEEPPAM_RDP_NATIVE_DEFAULT`).
+- Native сессия с SessionCapture: файл в `recordings/rdp-native/{id}/`, `recording_path` указывает на захват, если HTML5 `.guac` нет.

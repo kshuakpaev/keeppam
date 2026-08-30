@@ -1,0 +1,55 @@
+# NIT §4 — 1000+ сессий и 200+ операторов
+
+Требование: одновременная маршрутизация и **запись** ≥1000 сессий (SSH/RDP и др.) и ≥200 активных пользователей портала без деградации.
+
+## Профиль в дистрибутиве
+
+| Слой | Helm `values-nit-p4.yaml` | Compose |
+|------|---------------------------|---------|
+| API | 6 | `--scale api=4` + `api-b` (HAProxy DNS, `haproxy-scale.cfg`) |
+| session-worker | 20 | `--scale session-worker=20` + `session-worker-b` |
+| guacd | 8 | `--scale guacd=8` (DNS RR `guacd:4822`) |
+| Postgres | CNPG 2 instance / `compose.pgha.yml` | PgBouncer `MAX_CLIENT_CONN=4000` |
+| Recordings | S3 или PVC 2 TiB RWX | S3 / NFS |
+
+```bash
+# Kubernetes
+helm upgrade --install keeppam deploy/helm/keeppam \
+  -f deploy/helm/keeppam/values.yaml \
+  -f deploy/helm/keeppam/values-nit-p4.yaml
+
+# Compose HA + scale
+cd deploy
+docker compose -f docker-compose.yml -f compose.ha.yml -f compose.scale.yml up -d \
+  --scale session-worker=20 --scale guacd=8
+```
+
+RDP HTML5: API ходит в пул guacd (`KEEPPAM_GUACD_ADDR` — один DNS или список `a:4822,b:4822`, round-robin + skip dead). SSH/Telnet/FTP — HAProxy на worker’ы. Live kill — Redis LiveHub (уже между API и worker).
+
+## Плотность (планирование)
+
+Из `docs/system-requirements.txt`, не замер на этой машине:
+
+| Тип | Доля NIT-микса (по умолчанию) | CPU/сессия | Запись |
+|-----|-------------------------------|------------|--------|
+| SSH / Telnet | 80% (800) | ~0.05 vCPU | десятки МБ/ч |
+| RDP HTML5 | 15% (150) | ~0.4–0.8 vCPU + guacd | 0.4–1.5 ГБ/ч |
+| Прочее (SQL/kubectl) | 5% (50) | среднее | умеренно |
+
+20 worker × ~50 смешанных сессий ≈ 1000. RDP-тяжёлый микс требует больше guacd/CPU, не больше лицензий.
+
+200 операторов портала: сессии `kp_session` в Redis; 6 API; узкое место — живые PAM-сессии, не логин.
+
+## Рецепт нагрузки
+
+`scripts/nit-p4-load.sh` — параллельные `/readyz` и логины портала (200). SSH×N через шлюз — опция `SSH_N` при живом активе (не синтетический 1000 RDP на ноутбуке разработчика).
+
+Алерты: `KeepPAMSessionSpike` (>50, лаб), `KeepPAMSessionHigh` (>800), `KeepPAMSessionCapacity` (>950).
+
+## Чего профиль не обещает
+
+- Замеренный прогон 1000 RDP на стенде KeepPAM CI.
+- 1000 fps «как камера»; native mstsc — SessionCapture, не MP4.
+- Один `docker-compose.yml` без overlay — по-прежнему ~10–100 сессий.
+
+Железо под этот профиль с запасом 30%: `docs/nit-bom.txt` (п. 3, комплект поставки).

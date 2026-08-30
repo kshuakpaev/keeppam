@@ -17,6 +17,7 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/dbproxy"
+	"github.com/keeppam/auth/internal/nativegw"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/telnet"
@@ -29,6 +30,7 @@ type Gateway struct {
 	assets   *assets.Service
 	sessions *sessionsvc.Service
 	audit    *audit.Service
+	starter  *nativegw.Starter
 
 	lnMu     sync.Mutex
 	ln       net.Listener
@@ -38,6 +40,12 @@ type Gateway struct {
 
 func New(addr string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service, aud *audit.Service) *Gateway {
 	return &Gateway{addr: addr, rdb: rdb, assets: assetsSvc, sessions: sess, audit: aud}
+}
+
+func (g *Gateway) SetStarter(st *nativegw.Starter) {
+	if g != nil {
+		g.starter = st
+	}
 }
 
 func (g *Gateway) ListenAndServe(ctx context.Context) error {
@@ -114,11 +122,31 @@ func (g *Gateway) handleConn(client net.Conn) {
 	_, _ = io.WriteString(client, "\r\n")
 
 	sessionID, err := uuid.Parse(strings.TrimSpace(userLine))
+	ctx := context.Background()
+	ip := clientIP(client)
 	if err != nil {
-		_, _ = io.WriteString(client, "access denied\r\n")
+		if g.starter == nil {
+			_, _ = io.WriteString(client, "access denied\r\n")
+			return
+		}
+		login, hint := nativegw.SplitLogin(strings.TrimSpace(userLine))
+		u, aerr := g.starter.Authenticate(ctx, login, strings.TrimSpace(passLine), ip)
+		if aerr != nil {
+			_, _ = io.WriteString(client, "access denied\r\n")
+			return
+		}
+		sess, creds, serr := g.starter.Start(ctx, u, "telnet", hint, ip)
+		if serr != nil {
+			_, _ = io.WriteString(client, serr.Error()+"\r\n")
+			return
+		}
+		if sess.WaitingSupervisor || sess.IsWaitingSupervisor() {
+			_, _ = io.WriteString(client, "waiting for supervisor\r\n")
+			return
+		}
+		g.bridgeSession(ctx, client, sess, creds, ip)
 		return
 	}
-	ctx := context.Background()
 	if !dbproxy.CheckWireToken(ctx, g.rdb, sessionID, strings.TrimSpace(passLine)) {
 		_, _ = io.WriteString(client, "access denied\r\n")
 		return
@@ -144,7 +172,11 @@ func (g *Gateway) handleConn(client net.Conn) {
 		_ = g.sessions.MarkEnded(ctx, sessionID, err.Error())
 		return
 	}
+	g.bridgeSession(ctx, client, row, creds, ip)
+}
 
+func (g *Gateway) bridgeSession(ctx context.Context, client net.Conn, row sessionsvc.Session, creds assets.TargetCreds, ip string) {
+	sessionID := row.ID
 	rec, err := sshproxy.NewRecorder(row.RecordingPath, 120, 40, creds.Asset.Name)
 	if err != nil {
 		_, _ = io.WriteString(client, "recorder failed\r\n")

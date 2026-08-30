@@ -1,0 +1,147 @@
+# Postgres HA with automatic failover (Active-Passive via repmgr + Pgpool).
+# Replaces the single-node `postgres` hostname with Pgpool so DSN
+# postgres://keeppam@postgres:5432/keeppam stays valid.
+#
+#   docker compose -f docker-compose.yml -f compose.ha.yml -f compose.pgha.yml up -d
+#
+# Failover: pg-1 is promoted if pg-0 dies; Pgpool switches writes to the new primary.
+# See docs/ha.txt.
+
+services:
+  pg-0:
+    image: docker.io/bitnami/postgresql-repmgr:16
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: keeppam
+      POSTGRESQL_USERNAME: keeppam
+      POSTGRESQL_PASSWORD: keeppam
+      POSTGRESQL_DATABASE: keeppam
+      REPMGR_PASSWORD: keeppamrepmgr
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PRIMARY_PORT: "5432"
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-0
+      REPMGR_NODE_NETWORK_NAME: pg-0
+      REPMGR_PORT_NUMBER: "5432"
+    volumes:
+      - pg0_data:/bitnami/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keeppam -d keeppam -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+
+  pg-1:
+    image: docker.io/bitnami/postgresql-repmgr:16
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: keeppam
+      POSTGRESQL_USERNAME: keeppam
+      POSTGRESQL_PASSWORD: keeppam
+      POSTGRESQL_DATABASE: keeppam
+      REPMGR_PASSWORD: keeppamrepmgr
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PRIMARY_PORT: "5432"
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+      REPMGR_PORT_NUMBER: "5432"
+    volumes:
+      - pg1_data:/bitnami/postgresql
+    depends_on:
+      pg-0:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keeppam -d keeppam -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+
+  postgres:
+    image: docker.io/bitnami/pgpool:4
+    volumes: !reset []
+    environment: !override
+      PGPOOL_BACKEND_NODES: "0:pg-0:5432,1:pg-1:5432"
+      PGPOOL_SR_CHECK_USER: keeppam
+      PGPOOL_SR_CHECK_PASSWORD: keeppam
+      PGPOOL_ENABLE_LDAP: "no"
+      PGPOOL_POSTGRES_USERNAME: keeppam
+      PGPOOL_POSTGRES_PASSWORD: keeppam
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: keeppamadmin
+      PGPOOL_ENABLE_LOAD_BALANCING: "yes"
+    depends_on:
+      pg-0:
+        condition: service_healthy
+      pg-1:
+        condition: service_healthy
+    healthcheck: !override
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres-replica:
+    profiles: ["disabled-pgha"]
+
+  pgbouncer:
+    profiles: ["disabled-pgha"]
+
+  api:
+    environment:
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api-b:
+    environment:
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  api-c:
+    environment:
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  session-worker:
+    environment:
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  session-worker-b:
+    environment:
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+volumes:
+  pg0_data:
+  pg1_data:

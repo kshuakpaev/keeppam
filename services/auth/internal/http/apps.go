@@ -353,6 +353,7 @@ func (s *Server) denyHTTPRequest(w http.ResponseWriter, req *http.Request, row s
 		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
 		TicketID: row.TicketID, ClientIP: ip, Operation: op, Snapshot: row.PolicySnapshot,
 		StepUpVerified: s.auth != nil && s.auth.HasOpStepUp(req.Context(), row.ID, row.UserID),
+		SessionID:      row.ID,
 	})
 	if err != nil || ev.OK {
 		return false

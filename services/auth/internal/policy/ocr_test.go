@@ -28,4 +28,11 @@ func TestNormalizeOCRBounds(t *testing.T) {
 	if err != nil || n != OCRDefaultFrames {
 		t.Fatalf("frames %d %v", n, err)
 	}
+	n, err = NormalizeOCRMaxFrames(3600)
+	if err != nil || n != 3600 {
+		t.Fatalf("cap ok %d %v", n, err)
+	}
+	if _, err := NormalizeOCRMaxFrames(3601); err == nil {
+		t.Fatal("over cap")
+	}
 }

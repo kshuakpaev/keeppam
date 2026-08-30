@@ -228,6 +228,8 @@ func ApplyContentDLP(c ContentDLP, s string) (out string, deny bool, kinds []str
 			out = nlpOut
 		}
 	}
+	sem := ScanSemantic(out)
+	kinds = mergeKinds(kinds, sem)
 	return out, false, kinds
 }
 
@@ -253,7 +255,16 @@ func ApplyPIIRows(action string, rows [][]string) (out [][]string, deny bool, ki
 // ApplyContentDLPRows scans SQL cells with custom patterns and NLP classifiers.
 func ApplyContentDLPRows(c ContentDLP, rows [][]string) (out [][]string, deny bool, kinds []string) {
 	if !c.active() && !c.NLP.active() {
-		return rows, false, nil
+		var all []string
+		for _, row := range rows {
+			for _, cell := range row {
+				all = mergeKinds(all, ScanSemantic(cell))
+			}
+		}
+		if len(all) == 0 {
+			return rows, false, nil
+		}
+		return rows, false, all
 	}
 	seen := map[string]struct{}{}
 	var order []string
@@ -309,7 +320,7 @@ func DlpEventAction(c ContentDLP, before, after string, deny bool) string {
 	if c.NLP.active() && c.NLP.Action == "audit" {
 		return "audit"
 	}
-	return "mask"
+	return "audit"
 }
 
 func textualContentType(ct string) bool {

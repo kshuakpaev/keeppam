@@ -1087,6 +1087,32 @@ a.btn {
   font-size: 0.92rem;
 }
 
+.help-table {
+  width: 100%;
+  margin: 0.75rem 0 1rem;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.help-table th,
+.help-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+}
+
+.help-table th {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.help-table td:first-child {
+  font-weight: 600;
+  width: 32%;
+}
+
 .help-related {
   color: var(--accent, #2f9e7a);
   text-decoration: none;

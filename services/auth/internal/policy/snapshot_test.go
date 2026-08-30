@@ -39,10 +39,18 @@ func TestSnapshotOCRDefaults(t *testing.T) {
 	if opt.Lang != OCRDefaultLang || opt.IntervalSec != OCRDefaultInterval || opt.MaxFrames != OCRDefaultFrames {
 		t.Fatalf("%+v", opt)
 	}
-	sn := Snapshot{OCRLang: "eng", OCRIntervalSec: 10, OCRMaxFrames: 40}
+	if !opt.SSHStdout {
+		t.Fatal("ssh stdout default")
+	}
+	sn := Snapshot{OCRLang: "eng", OCRIntervalSec: 10, OCRMaxFrames: 40, OCREveryFrame: true, OCRLive: true}
 	opt = sn.OCR()
-	if opt.Lang != "eng" || opt.IntervalSec != 10 || opt.MaxFrames != 40 {
+	if opt.Lang != "eng" || opt.IntervalSec != 10 || opt.MaxFrames != 40 || !opt.EveryFrame || !opt.Live || !opt.SSHStdout {
 		t.Fatalf("%+v", opt)
+	}
+	id := uuid.MustParse("01900000-0000-7000-8000-000000000062")
+	sn2 := Snapshot{AccessPolicyID: &id, OCRSSHStdout: false}
+	if sn2.OCR().SSHStdout {
+		t.Fatal("policy can disable ssh stdout")
 	}
 }
 

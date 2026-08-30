@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type PamSession, type SecretCheckoutRequest } from "../api";
+import { api, hasPerm, type AccessRequest, type BreakGlassEvent, type OpApproval, type PamSession, type SecretCheckoutRequest, type AIBrief } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
@@ -12,6 +12,7 @@ export function AccessRequestsPage() {
   const [glasses, setGlasses] = useState<BreakGlassEvent[]>([]);
   const [ops, setOps] = useState<OpApproval[]>([]);
   const [waitingSessions, setWaitingSessions] = useState<PamSession[]>([]);
+  const [briefs, setBriefs] = useState<Record<string, AIBrief>>({});
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState("pending");
   const [error, setError] = useState("");
@@ -189,6 +190,7 @@ export function AccessRequestsPage() {
             </thead>
             <tbody>
               {waitingSessions.map((s) => (
+                <Fragment key={s.id}>
                 <tr key={s.id}>
                   <td className="mono">{formatDate(s.created_at)}</td>
                   <td>{s.username || s.user_id}</td>
@@ -200,6 +202,18 @@ export function AccessRequestsPage() {
                   <td>{s.supervisor_group_name || t("req.anySupervisor")}</td>
                   <td>
                     <div className="row">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() =>
+                          void api
+                            .getSessionAIBrief(s.id)
+                            .then((b) => setBriefs((m) => ({ ...m, [`sess:${s.id}`]: b })))
+                            .catch(() => undefined)
+                        }
+                      >
+                        {t("req.aiContext")}
+                      </button>
                       {s.user_id !== user?.id && (
                         <>
                           <button className="btn" type="button" onClick={() => void onApproveSupervisor(s.id)}>
@@ -214,6 +228,14 @@ export function AccessRequestsPage() {
                     </div>
                   </td>
                 </tr>
+                {briefs[`sess:${s.id}`] ? (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      {briefs[`sess:${s.id}`].brief}
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
               {waitingSessions.length === 0 && (
                 <tr>
@@ -245,6 +267,7 @@ export function AccessRequestsPage() {
             </thead>
             <tbody>
               {ops.map((o) => (
+                <Fragment key={o.id}>
                 <tr key={o.id}>
                   <td className="mono">{new Date(o.created_at).toLocaleString()}</td>
                   <td>{o.username || o.user_id}</td>
@@ -266,6 +289,18 @@ export function AccessRequestsPage() {
                   <td className="mono">{new Date(o.expires_at).toLocaleString()}</td>
                   <td>
                     <div className="row">
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() =>
+                          void api
+                            .getOpAIBrief(o.id)
+                            .then((b) => setBriefs((m) => ({ ...m, [`op:${o.id}`]: b })))
+                            .catch(() => undefined)
+                        }
+                      >
+                        {t("req.aiContext")}
+                      </button>
                       {o.user_id !== user?.id && (
                         <>
                           <button className="btn" type="button" onClick={() => void onApproveOp(o.id)}>
@@ -280,6 +315,14 @@ export function AccessRequestsPage() {
                     </div>
                   </td>
                 </tr>
+                {briefs[`op:${o.id}`] ? (
+                  <tr>
+                    <td colSpan={7} className="muted">
+                      {briefs[`op:${o.id}`].brief}
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
               {ops.length === 0 && (
                 <tr>
@@ -426,6 +469,7 @@ export function AccessRequestsPage() {
               </thead>
               <tbody>
                 {requests.map((r) => (
+                  <Fragment key={r.id}>
                   <tr key={r.id}>
                     <td className="mono">{new Date(r.created_at).toLocaleString()}</td>
                     <td>{r.requester_username}</td>
@@ -510,6 +554,20 @@ export function AccessRequestsPage() {
                           (r.approvals || []).some((a) => a.actor_id === user?.id) && (
                           <span className="muted">{t("req.yourVote")}</span>
                         )}
+                        {(canApprove || canApproveSecurity) && (
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            onClick={() =>
+                              void api
+                                .getAccessAIBrief(r.id)
+                                .then((b) => setBriefs((m) => ({ ...m, [r.id]: b })))
+                                .catch(() => undefined)
+                            }
+                          >
+                            {t("req.aiContext")}
+                          </button>
+                        )}
                         {r.status === "pending" && r.requester_id === user?.id && (
                           <button className="btn secondary" type="button" onClick={() => void onCancel(r.id)}>
                             {t("req.cancel")}
@@ -521,6 +579,14 @@ export function AccessRequestsPage() {
                       </div>
                     </td>
                   </tr>
+                  {briefs[r.id] ? (
+                    <tr>
+                      <td colSpan={10} className="muted">
+                        {briefs[r.id].brief}
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
                 {requests.length === 0 && (
                   <tr>

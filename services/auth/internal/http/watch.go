@@ -45,7 +45,7 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(authSess.Permissions, authSess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), authSess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}

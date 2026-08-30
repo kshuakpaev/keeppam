@@ -58,6 +58,8 @@ cat ~/KEEP-PAM-README.txt
 - клик в сессию → replay;
 - фраза: «аудитор читает, не ходит на хост».
 
+Опционально (SOW-AI-COPILOT, mock): Config → ИИ on → Replay сводка; Сессии → «По смыслу»; Запросы → «Контекст». Сказать: «модель on-prem, не в deny-пути, не автоapprove».
+
 ## 0:38–0:45  Compliance PDF
 
 **Compliance** (admin или auditor): период сегодня, framework `all` → таблица → **PDF**. Если задан `KEEPPAM_PDF_CERT_FILE` — PAdES в статусе страницы.

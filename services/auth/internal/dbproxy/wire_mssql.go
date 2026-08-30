@@ -13,29 +13,25 @@ import (
 	"github.com/keeppam/auth/internal/assets"
 )
 
-func (g *WireGateway) authMSSQL(c net.Conn) (uuid.UUID, string, string, error) {
+func (g *WireGateway) authMSSQL(c net.Conn) (user, pass, db string, err error) {
 	for {
 		typ, payload, err := readTDSMessage(c)
 		if err != nil {
-			return uuid.Nil, "", "", err
+			return "", "", "", err
 		}
 		switch typ {
 		case tdsPrelogin:
 			if err := writePreloginResponse(c); err != nil {
-				return uuid.Nil, "", "", err
+				return "", "", "", err
 			}
 		case tdsLogin7:
 			user, pass, db, err := parseLogin7(payload)
 			if err != nil {
-				return uuid.Nil, "", "", err
+				return "", "", "", err
 			}
-			id, err := uuid.Parse(user)
-			if err != nil {
-				return uuid.Nil, "", "", fmt.Errorf("user must be session uuid")
-			}
-			return id, pass, db, nil
+			return user, pass, db, nil
 		default:
-			return uuid.Nil, "", "", fmt.Errorf("expected PRELOGIN or LOGIN7, got 0x%02x", typ)
+			return "", "", "", fmt.Errorf("expected PRELOGIN or LOGIN7, got 0x%02x", typ)
 		}
 	}
 }

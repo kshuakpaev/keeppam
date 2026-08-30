@@ -83,6 +83,6 @@ E) Ops/Control
 
 - PostgreSQL 16+
 - PgBouncer для пула соединений
-- Patroni/Cloud managed HA
+- Patroni/CloudNativePG / `deploy/compose.pgha.yml` (repmgr+Pgpool auto-failover)
 - Redis Sentinel/Cluster только для non-critical cache/session
 - S3 Object Lock для immutable-режима артефактов

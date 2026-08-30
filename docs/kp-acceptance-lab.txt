@@ -12,7 +12,7 @@ API: `http://127.0.0.1:8080` · Portal: `http://127.0.0.1:5173`
 ```
 
 Покрывает: readyz/healthz, артефакты КП/T-03, `/auth/methods` (+ `cert_login`),
-порты SSH/portal/wire (Telnet :2323, TN3270 :2324, Citrix :1081, MSSQL :11433),
+порты SSH/portal/wire (Telnet :2323, TN3270 :2324, Citrix :1081, MSSQL :11433, Oracle :11521),
 `compose.branded.yml`.
 
 ## 2. Миграции (перед E2E)
@@ -31,7 +31,7 @@ cd deploy && docker compose restart api session-worker
 |----------|-----------|
 | Admin API routes (assets, sessions, audit, discovery, license, analytics, compliance) | PASS — HTTP 401 (RBAC) |
 | SOW settings routes (eidas, nac, uebaml, geo) | PASS — HTTP 401 |
-| Wire TCP :2323/:2324/:1081/:11433 | PASS |
+| Wire TCP :2323/:2324/:1081/:11433/:11521 | PASS |
 | SSH gateway :2222 banner | PASS — `SSH-2.0-KeepPAM` |
 | Web portal :5173 | PASS — HTTP 200 |
 | DB active assets | 5 |

@@ -100,7 +100,7 @@ func (s *Service) CreateRequest(ctx context.Context, requesterID, assetID uuid.U
 	if !ev.OK && !ev.DeniedByRisk {
 		score, factors = s.ScoreUser(ctx, requesterID, assetID, now)
 	}
-	if ev.DeniedByRisk && ev.RiskAction == "deny" {
+	if ev.DeniedByRisk && (ev.RiskAction == "deny" || IsHardRiskAction(ev.RiskAction)) {
 		return AccessRequest{}, fmt.Errorf("%s", ev.RiskDenyMessage())
 	}
 

@@ -44,7 +44,7 @@
 | Диск (SSD) | **80 GiB** свободно под ОС + Docker + volumes |
 | Сеть | 1 Gbit/s к целевым активам и к пользователям |
 | Одновременные сессии | до **~10** (SSH + несколько RDP) |
-| Активы в каталоге | до лимита лицензии (без лицензии — 5, см. `docs/license.txt`) |
+| Активы в каталоге | безлимит при SKU users; UI — поиск и страницы по 50 (max 200), см. docs/license.txt |
 
 Запас на диске:
 
@@ -107,6 +107,18 @@
 
 HA 2+2 / 3+2: см. `docs/ha.txt`. Одна Virtual Appliance **не** заменяет полноценный HA.
 
+## 4a. Профиль NIT п. 4 (1000 сессий / 200 операторов)
+
+Не лаб-compose. Helm: `values-nit-p4.yaml` (6 API, 20 worker, 8 guacd). Compose: `compose.scale.yml` + `--scale`. Плотность и микс — `docs/nit-p4.txt`. Железо с запасом 30% — `docs/nit-bom.txt`.
+
+| | NIT p.4 |
+|--|---------|
+| session-worker | 20 × 4–8 vCPU / 8–16 GiB |
+| guacd | 8 |
+| API | 6 |
+| Одновременные сессии | **1000** (SSH-heavy 80/15/5) |
+| Операторы портала | **200+** (Redis-сессии, без cap учёток) |
+
 ---
 
 ## 5. Оценка по типу сессий (диск и CPU)
@@ -136,6 +148,8 @@ HA 2+2 / 3+2: см. `docs/ha.txt`. Одна Virtual Appliance **не** заме�
 | 5173 | Web UI |
 | 8080 | API |
 | 2222 | SSH gateway (session-worker) |
+| 2121 | FTP gateway (session-worker) |
+| 2323 | Telnet gateway (session-worker) |
 | 9090+ | только при obs (Prometheus и др.) |
 
 Между нодами HA — внутренняя сеть Docker/K8s; наружу обычно VIP/LB на UI/API/SSH.
@@ -157,11 +171,28 @@ HA 2+2 / 3+2: см. `docs/ha.txt`. Одна Virtual Appliance **не** заме�
 
 ---
 
-## 8. Связанные документы
+## 8. Опция ИИ-copilot (SOW-AI-COPILOT)
+
+Не входит в базовый `SET=core`. Включается overlay `deploy/compose.ai.yml` / Helm `ai.enabled` и лицензией `ai_copilot`.
+
+| Режим | Ресурсы |
+|-------|---------|
+| **mock://local** (стенд, CI) | +0 GPU; worker делит RAM API; сводки без модели |
+| **On-prem runtime (CPU, ~7B Q4)** | +8–16 GiB RAM (лучше 32 GiB), отдельный контейнер `ai-worker`; GPU не обязателен, P1 post-session ок |
+| **Веса моделей offline** | `dist/keeppam-ai-models-*.tar`; install не ходит в интернет |
+
+ИИ **не** в live deny / JEA / SSH PTY. Подробности: `docs/ai-plan.txt`.
+
+---
+
+## 9. Связанные документы
 
 - Установка: `docs/install.txt`
 - Offline-обновление: `docs/offline-update.txt`
 - Appliance: `docs/appliance-ova.txt`
 - HA: `docs/ha.txt`
+- NIT нагрузка 1000/200: `docs/nit-p4.txt`
+- NIT BOM железа: `docs/nit-bom.txt`
 - Прод-инфра (TLS, S3, KMS): `docs/prod-infra.txt`
 - Лицензия активов: `docs/license.txt`
+- ИИ-copilot: `docs/ai-plan.txt`

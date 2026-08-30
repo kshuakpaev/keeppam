@@ -9,7 +9,7 @@ const (
 	OCRDefaultLang     = "rus+eng"
 	OCRDefaultInterval = 15
 	OCRDefaultFrames   = 60
-	OCRMaxFramesCap    = 120
+	OCRMaxFramesCap    = 3600
 	OCRMinInterval     = 5
 	OCRMaxInterval     = 120
 )
@@ -18,6 +18,9 @@ type OCROpts struct {
 	Lang        string `json:"ocr_lang,omitempty"`
 	IntervalSec int    `json:"ocr_interval_sec,omitempty"`
 	MaxFrames   int    `json:"ocr_max_frames,omitempty"`
+	EveryFrame  bool   `json:"ocr_every_frame,omitempty"`
+	Live        bool   `json:"ocr_live,omitempty"`
+	SSHStdout   bool   `json:"ocr_ssh_stdout,omitempty"`
 }
 
 func NormalizeOCRLang(s string) (string, error) {
@@ -71,7 +74,10 @@ func NormalizeOCRMaxFrames(n int) (int, error) {
 
 func (sn *Snapshot) OCR() OCROpts {
 	if sn == nil {
-		return OCROpts{Lang: OCRDefaultLang, IntervalSec: OCRDefaultInterval, MaxFrames: OCRDefaultFrames}
+		return OCROpts{
+			Lang: OCRDefaultLang, IntervalSec: OCRDefaultInterval, MaxFrames: OCRDefaultFrames,
+			SSHStdout: true,
+		}
 	}
 	lang := sn.OCRLang
 	if lang == "" {
@@ -85,5 +91,15 @@ func (sn *Snapshot) OCR() OCROpts {
 	if n == 0 {
 		n = OCRDefaultFrames
 	}
-	return OCROpts{Lang: lang, IntervalSec: iv, MaxFrames: n}
+	if n > OCRMaxFramesCap {
+		n = OCRMaxFramesCap
+	}
+	ssh := true
+	if sn.AccessPolicyID != nil {
+		ssh = sn.OCRSSHStdout
+	}
+	return OCROpts{
+		Lang: lang, IntervalSec: iv, MaxFrames: n,
+		EveryFrame: sn.OCREveryFrame, Live: sn.OCRLive, SSHStdout: ssh,
+	}
 }

@@ -72,14 +72,22 @@ func (b Binding) Selector() AssetSelector {
 }
 
 type Service struct {
-	db  *store.DB
-	aud *audit.Service
-	geo *geoip.Lookup
-	opa *Engine
+	db       *store.DB
+	aud      *audit.Service
+	geo      *geoip.Lookup
+	opa      *Engine
+	onBreach RiskBreachHook
 }
+
+// RiskBreachHook runs after deny when risk_action is terminate or lock_account.
+type RiskBreachHook func(ctx context.Context, userID, sessionID, assetID uuid.UUID, action string, score int, ip string)
 
 func New(db *store.DB, aud *audit.Service) *Service {
 	return &Service{db: db, aud: aud, geo: geoip.New("")}
+}
+
+func (s *Service) SetRiskBreach(h RiskBreachHook) {
+	s.onBreach = h
 }
 
 func (s *Service) SetGeo(l *geoip.Lookup) {
@@ -149,6 +157,7 @@ type AccessCheck struct {
 	StepUpVerified bool   // require_mfa already satisfied (connect or in-session grant)
 	Operation      string // empty = connect; sql.ddl / k8s.delete / ssh.destructive / http.write / …
 	Snapshot       *Snapshot
+	SessionID      uuid.UUID // in-session ops: live session to terminate
 }
 
 func (s *Service) ListByAsset(ctx context.Context, assetID uuid.UUID) ([]Binding, error) {
@@ -912,8 +921,8 @@ func (s *Service) assetTags(ctx context.Context, assetID uuid.UUID) ([]string, e
 func (s *Service) assetMeta(ctx context.Context, assetID uuid.UUID) (AssetMeta, error) {
 	var m AssetMeta
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT name, COALESCE(hostname,''), COALESCE(address,''), COALESCE(asset_type,'')
-		FROM assets WHERE id=$1`, assetID).Scan(&m.Name, &m.Hostname, &m.Address, &m.Type)
+		SELECT name, COALESCE(hostname,''), COALESCE(address,''), COALESCE(asset_type,''), owner_user_id
+		FROM assets WHERE id=$1`, assetID).Scan(&m.Name, &m.Hostname, &m.Address, &m.Type, &m.OwnerUserID)
 	if err != nil {
 		return m, err
 	}

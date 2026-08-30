@@ -37,6 +37,9 @@ func (s *Server) handleComplianceReport(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if strings.EqualFold(q.Get("prose"), "1") && s.ai != nil && s.ai.Licensed() {
+		rep.Prose = s.ai.ComplianceProse(r.Context(), rep.Summary)
+	}
 	switch strings.ToLower(q.Get("format")) {
 	case "csv":
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")

@@ -37,6 +37,9 @@ type RiskInputs struct {
 	UnusualAsset     bool
 	SpreadBurst      bool
 	UEBABaseline     int
+	NewIP            bool
+	NewSubnet        bool
+	ClientIP         string
 }
 
 func computeRisk(in RiskInputs) (score int, factors []string) {
@@ -84,6 +87,13 @@ func computeRisk(in RiskInputs) (score int, factors []string) {
 		score += ueba.SpreadPoints
 		factors = append(factors, ueba.FactorSpread)
 	}
+	if in.NewSubnet {
+		score += ueba.NewSubnetPoints
+		factors = append(factors, ueba.FactorNewSubnet)
+	} else if in.NewIP {
+		score += ueba.NewIPPoints
+		factors = append(factors, ueba.FactorNewIP)
+	}
 	if score > 100 {
 		score = 100
 	}
@@ -98,8 +108,8 @@ func NormalizeRiskAction(s string) (string, error) {
 	if s == "" {
 		s = "deny"
 	}
-	if s != "deny" && s != "require_approval" && s != "require_mfa" {
-		return "", fmt.Errorf("risk_action must be deny, require_approval or require_mfa")
+	if s != "deny" && s != "require_approval" && s != "require_mfa" && s != "terminate" && s != "lock_account" {
+		return "", fmt.Errorf("risk_action must be deny, require_approval, require_mfa, terminate or lock_account")
 	}
 	return s, nil
 }
@@ -147,6 +157,12 @@ func (r AccessResult) RiskDenyMessage() string {
 	if r.RiskAction == "require_mfa" {
 		msg += "; complete step-up MFA"
 	}
+	if r.RiskAction == "terminate" {
+		msg += "; session terminated by risk policy"
+	}
+	if r.RiskAction == "lock_account" {
+		msg += "; account locked by risk policy"
+	}
 	return msg
 }
 
@@ -183,11 +199,24 @@ func (r AccessResult) FillDenyPayload(payload map[string]any) {
 	}
 }
 
-func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID, now time.Time) (RiskInputs, error) {
+func ReapplyRisk(res *AccessResult, stepUpVerified bool, operation string) {
+	if res == nil {
+		return
+	}
+	res.OK = true
+	res.DeniedByRisk = false
+	decideRisk(res, stepUpVerified, operation)
+}
+
+func IsHardRiskAction(action string) bool {
+	return action == "terminate" || action == "lock_account"
+}
+
+func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID, now time.Time, clientIP string) (RiskInputs, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	in := RiskInputs{Now: now}
+	in := RiskInputs{Now: now, ClientIP: strings.TrimSpace(clientIP)}
 	if bg, err := s.HasActiveBreakGlass(ctx, userID, assetID); err == nil {
 		in.BreakGlass = bg
 	}
@@ -225,19 +254,59 @@ func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID,
 	in.AnomBrute = in.FailedLogins24h >= 8
 	in.UnusualAsset = ueba.NewAsset(in.UEBABaseline, seen30)
 	in.SpreadBurst = ueba.Spread(in.UEBABaseline, recent)
+	in.NewIP, in.NewSubnet = s.sourceAnomaly(ctx, userID, baselineFrom, in.ClientIP)
 	return in, nil
+}
+
+func (s *Service) sourceAnomaly(ctx context.Context, userID uuid.UUID, since time.Time, clientIP string) (newIP, newSubnet bool) {
+	host, netKey, ok := ueba.ParseHostNet(clientIP)
+	if !ok {
+		return false, false
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT client_ip FROM sessions
+		WHERE user_id=$1 AND created_at >= $2 AND COALESCE(client_ip,'') <> '' AND `+ueba.SessionSQL, userID, since)
+	if err != nil {
+		return false, false
+	}
+	defer rows.Close()
+	hosts := map[string]struct{}{}
+	nets := map[string]struct{}{}
+	seenHost, seenNet := false, false
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return false, false
+		}
+		h, n, ok := ueba.ParseHostNet(raw)
+		if !ok {
+			continue
+		}
+		hosts[h] = struct{}{}
+		nets[n] = struct{}{}
+		if h == host {
+			seenHost = true
+		}
+		if n == netKey {
+			seenNet = true
+		}
+	}
+	newSubnet = ueba.NewSubnet(len(nets), seenNet)
+	newIP = ueba.NewIP(len(hosts), seenHost) && !newSubnet
+	return newIP, newSubnet
 }
 
 func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResult, expires *time.Time) {
 	if in.SkipRisk || in.Bypass || expires != nil {
 		return
 	}
-	inputs, err := s.loadRiskInputs(ctx, in.UserID, in.AssetID, in.Now)
+	inputs, err := s.loadRiskInputs(ctx, in.UserID, in.AssetID, in.Now, in.ClientIP)
 	if err != nil {
 		return
 	}
 	res.RiskScore, res.RiskFactors = computeRisk(inputs)
 	decideRisk(res, in.StepUpVerified, in.Operation)
+	s.enforceDenied(ctx, in, *res)
 	decision := "allow"
 	if res.DeniedByRisk {
 		decision = res.RiskAction
@@ -249,10 +318,12 @@ func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResu
 		"score": res.RiskScore, "max_risk": res.MaxRisk, "action": res.RiskAction,
 		"factors": res.RiskFactors, "decision": decision, "denied_by_risk": res.DeniedByRisk,
 	}
-	if inputs.UnusualAsset || inputs.SpreadBurst {
+	if inputs.UnusualAsset || inputs.SpreadBurst || inputs.NewIP || inputs.NewSubnet {
 		payload["ueba_baseline"] = inputs.UEBABaseline
 		payload["ueba_new_asset"] = inputs.UnusualAsset
 		payload["ueba_spread"] = inputs.SpreadBurst
+		payload["ueba_new_ip"] = inputs.NewIP
+		payload["ueba_new_subnet"] = inputs.NewSubnet
 	}
 	if res.BindingID != nil {
 		payload["binding_id"] = res.BindingID.String()
@@ -281,7 +352,7 @@ func (s *Service) userRoleNames(ctx context.Context, userID uuid.UUID) ([]string
 }
 
 func (s *Service) ScoreUser(ctx context.Context, userID, assetID uuid.UUID, now time.Time) (int, []string) {
-	inputs, err := s.loadRiskInputs(ctx, userID, assetID, now)
+	inputs, err := s.loadRiskInputs(ctx, userID, assetID, now, "")
 	if err != nil {
 		return 0, []string{}
 	}

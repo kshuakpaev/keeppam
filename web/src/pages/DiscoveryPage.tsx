@@ -46,7 +46,7 @@ export function DiscoveryPage() {
   useEffect(() => {
     if (!canRead) return;
     void loadJobs();
-    void api.listAssets().then((r) => setAssets(r.assets || [])).catch(() => {});
+    void api.listAllAssets().then((r) => setAssets(r.assets || [])).catch(() => {});
     const timer = setInterval(() => {
       void loadJobs();
       if (selected) void loadCandidates(selected);

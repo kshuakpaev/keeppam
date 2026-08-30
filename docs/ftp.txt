@@ -1,0 +1,55 @@
+# KeepPAM: FTP gateway
+
+FileZilla / WinSCP / `ftp` говорят с KeepPAM; пароль цели из vault оператор не видит.
+
+## Актив
+
+| Поле | Значение |
+|------|----------|
+| `protocol` | `ftp` |
+| `port` | `21` (цель) |
+| Учётка | `auth_method=password`, секрет в vault |
+
+## Как подключаться (без портала)
+
+```text
+USER pamuser+ASSET
+PASS <пароль PAM>
+```
+
+или `pamuser+ASSET/account`. Тот же суффикс, что SSH `:2222`.
+
+## Через портал
+
+Connect на учётке создаёт сессию и отдаёт `wire_user` (UUID) + `wire_token`:
+
+```text
+ftp pam.example 2121
+USER <session-uuid>
+PASS <wire_token>
+```
+
+HTML5-клиента FTP нет: запись — команды в `session_events` (`type=ftp`) и `recordings/ftp/<id>.jsonl`.
+
+## PASV
+
+Шлюз поднимает свой listener и сращивает с PASV цели. Рекламируемый адрес:
+
+`KEEPPAM_FTP_PUBLIC_HOST` — IP/имя, которое клиент должен увидеть в `227`. Если пусто — адрес listener'а.
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| Worker | `KEEPPAM_FTP_ADDR` default `:2121` |
+| Цель | `assets.port` default 21 |
+
+HA: HAProxy TCP `:2121` → session-worker. Compose: `2121:2121` на worker.
+
+## Ограничения
+
+- Active PORT (клиент слушает) не поддерживается — только PASV.
+- Тела STOR/RETR проксируются, но не кладутся в `session_files` (команды пишутся в аудит).
+- FTPS/TLS до цели нет.
+
+Миграция `110_nit_p5.sql`. Пакет `internal/ftpgw`.

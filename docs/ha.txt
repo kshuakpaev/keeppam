@@ -14,7 +14,8 @@ docker compose -f docker-compose.yml -f compose.ha.yml up -d
 | `api`, `api-b` | 2 | `GET /readyz` (PG+Redis; при SIGTERM — 503 draining) |
 | `session-worker`, `session-worker-b` | 2 | тот же `/readyz` на `:8080` внутри сети |
 | `edge` | 1 | HAProxy; снимает бэкенд за 2 failed check (~6 с) |
-| `postgres` | 1 | SPOF; см. pg-ha ниже |
+| `postgres` | 1 без overlay | SPOF в базовом compose; HA — ниже |
+| `pgbouncer` | 1 (HA overlay) | session pool, DSN API/worker через `pgbouncer:5432` |
 
 Снаружи: HTTP `:8080`, SSH `:2222`, SQL wire, k8s API — через **edge**.
 
@@ -52,15 +53,48 @@ Default: `replicaCount.api=3`, `worker=2`, PDB `apiMinAvailable=2`. Для 2+2: 
 
 Recordings: PVC RWX или `KEEPPAM_RECORDINGS_BACKEND=s3`. SSH host key — общий PVC.
 
-## Postgres HA (opt)
+Масштаб без простоя: `rollingUpdate.maxUnavailable=0` (новый под Ready до снятия старого).
+`kubectl scale deploy/keeppam-api --replicas=N` — drain через `/readyz` + PDB.
 
-Профиль `pg-ha` — streaming replica без auto-failover:
+NIT §4 (1000 сессий / 200 операторов): `docs/nit-p4.txt`.
+
+```bash
+# Helm
+helm upgrade --install keeppam deploy/helm/keeppam \
+  -f deploy/helm/keeppam/values.yaml \
+  -f deploy/helm/keeppam/values-nit-p4.yaml
+
+# Compose: 20 worker + 8 guacd, HAProxy DNS templates
+docker compose -f docker-compose.yml -f compose.ha.yml -f compose.scale.yml up -d \
+  --scale session-worker=20 --scale guacd=8
+```
+
+## Postgres HA (auto-failover)
+
+Active-Passive с автоматическим failover (repmgr + Pgpool). Имя сервиса `postgres` = Pgpool,
+DSN `postgres://keeppam@postgres:5432/keeppam` не меняется. PgBouncer из HA overlay отключается
+(пул даёт Pgpool).
+
+```bash
+cd deploy
+docker compose -f docker-compose.yml -f compose.ha.yml -f compose.pgha.yml up -d
+```
+
+Отказ `pg-0` → promote `pg-1`, Pgpool переключает запись. Базовый `docker-compose.yml`
+по-прежнему один Postgres (для лаба).
+
+Kubernetes: `kubectl apply -f deploy/helm/cnpg-cluster.yaml` (CloudNativePG, 2 instance,
+`primaryUpdateStrategy: unsupervised`). DSN → `keeppam-pg-rw`.
+
+## Postgres replica без failover (opt)
+
+Профиль `pg-ha` — streaming replica, promote вручную (`docs/dr-runbook.txt`):
 
 ```bash
 docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
 ```
 
-Прод: Patroni / CloudNativePG / VIP. Promote — `docs/dr-runbook.txt`.
+Не сочетать `--profile pg-ha` с `compose.pgha.yml`.
 
 ## Ротация и split-brain (T-18 / T-19)
 
@@ -89,5 +123,5 @@ docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
 ## Чего нет
 
 - Keepalived VIP на bare metal (edge = VIP).
-- Auto Patroni failover в compose.
+- Patroni в docker compose (для k8s — CloudNativePG / внешний Patroni).
 - Oracle password connector.

@@ -23,6 +23,9 @@ func (s *Server) handleCheckoutAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
+		return
+	}
 	var in assets.CheckoutInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -51,6 +54,9 @@ func (s *Server) handleCheckinAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
+		return
+	}
 	var in assets.CheckinInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -76,6 +82,9 @@ func (s *Server) handleForceCheckinAccount(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
+		return
+	}
 	acc, err := s.assets.ForceCheckin(r.Context(), sess.UserID, assetID, accountID, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -94,6 +103,9 @@ func (s *Server) handleRevealAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
 		return
 	}
 	res, err := s.assets.RevealSecret(r.Context(), sess.UserID, assetID, accountID, s.clientIP(r), r.UserAgent())

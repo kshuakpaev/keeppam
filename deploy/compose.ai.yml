@@ -1,0 +1,37 @@
+# KeepPAM AI copilot overlay (SOW-AI-COPILOT)
+#
+#   KEEPPAM_AI=1 docker compose -f docker-compose.yml -f compose.ai.yml up -d
+#
+# Core distro stays unchanged. This overlay adds an in-process-compatible
+# worker (same api image, KEEPPAM_MODE=ai). Runtime defaults to mock://local
+# (no GPU, no outbound LLM). Point Config → ИИ-помощник at
+# http://ai-runtime:11434 for a local OpenAI-compatible server.
+
+services:
+  ai-worker:
+    image: deploy-api:latest
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../deploy/auth-server:/app/auth-server:ro
+      - ../services/auth/migrations:/app/migrations:ro
+    environment:
+      KEEPPAM_MODE: "ai"
+      KEEPPAM_HTTP_ADDR: ":8080"
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
+      KEEPPAM_REDIS_URL: "redis://redis:6379/0"
+      KEEPPAM_DATA_KEY: "${KEEPPAM_DATA_KEY:-a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE=}"
+      KEEPPAM_DATA_KEY_SOURCE: "env"
+      KEEPPAM_COOKIE_SECURE: "false"
+      KEEPPAM_MIGRATIONS_DIR: "/app/migrations"
+      KEEPPAM_AI_ALLOW_EXTERNAL: "${KEEPPAM_AI_ALLOW_EXTERNAL:-0}"
+    healthcheck:
+      test: ["CMD", "/app/auth-server", "readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s

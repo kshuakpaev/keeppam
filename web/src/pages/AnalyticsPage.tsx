@@ -17,6 +17,7 @@ export function AnalyticsPage() {
   const [slo, setSlo] = useState<AnalyticsSLO | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [risks, setRisks] = useState<Record<string, string>>({});
 
   async function load(h: number, sev: string) {
     setLoading(true);
@@ -205,6 +206,28 @@ export function AnalyticsPage() {
                       {a.detail}
                       {a.actor && t("analytics.actorLabel", { actor: a.actor })}
                     </p>
+                    {a.related && /^[0-9a-f-]{36}$/i.test(a.related) ? (
+                      <p>
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() =>
+                            void api
+                              .getSessionAIRisk(a.related as string)
+                              .then((r) => setRisks((m) => ({ ...m, [a.related as string]: r.text })))
+                              .catch(() =>
+                                setRisks((m) => ({
+                                  ...m,
+                                  [a.related as string]: t("analytics.aiRisk"),
+                                })),
+                              )
+                          }
+                        >
+                          {t("analytics.aiRisk")}
+                        </button>
+                        {risks[a.related] ? <span className="muted"> {risks[a.related]}</span> : null}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>

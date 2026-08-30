@@ -16,6 +16,8 @@ WebAuthn/FIDO2 как второй фактор рядом с TOTP.
 
 `users.mfa_enabled=true` при первом Passkey или подтверждённом TOTP. На логине доступны оба метода.
 
+Platform authenticator (Windows Hello, Touch ID, Face ID) — это биометрия NIT: проверка на устройстве пользователя, без облачного API. Отдельного биометрического SDK и хранения отпечатков на сервере PAM нет.
+
 ## Конфиг
 
 | Env | Default |

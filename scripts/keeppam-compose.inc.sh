@@ -38,6 +38,9 @@ keeppam_compose() {
   if [[ "${KEEPPAM_OBS:-}" == "1" ]]; then
     args+=(--profile obs)
   fi
+  if [[ "${KEEPPAM_AI:-}" == "1" ]] && [[ -f "$ROOT/deploy/compose.ai.yml" ]]; then
+    args+=(-f "$ROOT/deploy/compose.ai.yml")
+  fi
   docker compose "${args[@]}" "$@"
 }
 

@@ -2,7 +2,9 @@
 
 Job в API (один replica, `pg_try_advisory_lock`): сессии `ended`/`failed` старше N дней, есть `recording_path`, ещё не `archived`.
 
-Копия на **NFS-каталог** (mount в контейнер) или **SMB2/3** (go-smb2, TCP 445). CIFS v1 нет. «SMB 4» в ТЗ = SMB 3.1.1 на той же шаре.
+Копия на **NFS-каталог** (mount в контейнер) или **SMB2/3 / CIFS** (go-smb2, TCP 445). CIFS v1 (SMB1) нет — небезопасен. «SMB 4» в ТЗ = SMB 3.1.1 на той же шаре. S3/MinIO — primary `KEEPPAM_RECORDINGS_BACKEND=s3` (`docs/prod-infra.txt`), не замена NFS/SMB-архива.
+
+Профиль NIT: `age_days=30` (горячее), `recording_retention_days=90` (суммарно ≥ 3 месяцев вместе с архивом).
 
 SHA-256 основного файла пишется в `sessions.archive_sha256`. Строки сессии и `session_events` **не** удаляются.
 
@@ -19,7 +21,7 @@ Config → **Архив записей**. API:
 |------|--------|
 | `backend=nfs` | `nfs_path` — уже примонтированный каталог |
 | `backend=smb` | host, share, user, domain, password (в Envelope) |
-| `age_days` | 0 = сразу после конца сессии |
+| `age_days` | дней на локальных дисках до архива; **default 30** (NIT: горячее видео 1 месяц). 0 = сразу после конца сессии |
 | `interval_minutes` | 5–1440, default 60 |
 | `delete_local` | после OK удалить локальную копию (S3 WORM не трогает) |
 

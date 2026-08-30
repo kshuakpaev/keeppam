@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/policy"
-	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/rbac"
+	"github.com/keeppam/auth/internal/rdpgw"
 )
 
 func (s *Server) handleDownloadRDP(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ func (s *Server) handleDownloadRDP(w http.ResponseWriter, r *http.Request) {
 	if row.PolicySnapshot != nil {
 		rdp = row.PolicySnapshot.RDP()
 	}
-	if !rdp.Native {
+	if !s.rdp.NativeAllowed(row.PolicySnapshot) {
 		writeErr(w, http.StatusForbidden, "rdp_native not enabled in policy")
 		return
 	}

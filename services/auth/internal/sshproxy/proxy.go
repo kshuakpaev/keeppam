@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/keeppam/auth/internal/sshlegacy"
 	"github.com/keeppam/auth/internal/termcharset"
 )
 
@@ -154,8 +155,42 @@ func Dial(cfg DialConfig) (*ssh.Client, error) {
 		},
 		Timeout: 15 * time.Second,
 	}
+	if sshlegacy.Enabled() {
+		sshlegacy.ApplyClient(sshCfg)
+	}
+	// Pin host-key algorithms to the TOFU key so a later ClientConfig change
+	// cannot make OpenSSH present a different key type (RSA vs ECDSA).
+	if algos := hostKeyAlgorithmsFor(cfg.HostKey); len(algos) > 0 {
+		sshCfg.HostKeyAlgorithms = algos
+	}
 	addr := net.JoinHostPort(cfg.Address, fmt.Sprintf("%d", cfg.Port))
 	return ssh.Dial("tcp", addr, sshCfg)
+}
+
+func hostKeyAlgorithmsFor(blob []byte) []string {
+	if len(blob) == 0 {
+		return nil
+	}
+	pk, err := ssh.ParsePublicKey(blob)
+	if err != nil {
+		return nil
+	}
+	switch pk.Type() {
+	case ssh.KeyAlgoED25519:
+		return []string{ssh.KeyAlgoED25519}
+	case ssh.KeyAlgoECDSA256:
+		return []string{ssh.KeyAlgoECDSA256}
+	case ssh.KeyAlgoECDSA384:
+		return []string{ssh.KeyAlgoECDSA384}
+	case ssh.KeyAlgoECDSA521:
+		return []string{ssh.KeyAlgoECDSA521}
+	case ssh.KeyAlgoRSA:
+		return []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSA}
+	case ssh.InsecureKeyAlgoDSA:
+		return []string{ssh.InsecureKeyAlgoDSA}
+	default:
+		return []string{pk.Type()}
+	}
 }
 
 // Bridge copies between a remote SSH session and local reader/writer, recording I/O.

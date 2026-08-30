@@ -229,7 +229,7 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 	if now.IsZero() {
 		now = time.Now()
 	}
-	inputs, err := s.loadRiskInputs(ctx, in.UserID, in.AssetID, now)
+	inputs, err := s.loadRiskInputs(ctx, in.UserID, in.AssetID, now, in.ClientIP)
 	if err != nil {
 		return
 	}
@@ -243,6 +243,7 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 	res.RiskFactors = factors
 	res.Operation = in.Operation
 	decideRisk(res, in.StepUpVerified, in.Operation)
+	s.enforceDenied(ctx, in, *res)
 	decision := "allow"
 	if res.DeniedByRisk {
 		decision = res.RiskAction
@@ -255,10 +256,12 @@ func (s *Service) applyOpRisk(ctx context.Context, in AccessCheck, res *AccessRe
 		"factors": res.RiskFactors, "decision": decision, "denied_by_risk": res.DeniedByRisk,
 		"operation": in.Operation, "phase": "operation",
 	}
-	if inputs.UnusualAsset || inputs.SpreadBurst {
+	if inputs.UnusualAsset || inputs.SpreadBurst || inputs.NewIP || inputs.NewSubnet {
 		payload["ueba_baseline"] = inputs.UEBABaseline
 		payload["ueba_new_asset"] = inputs.UnusualAsset
 		payload["ueba_spread"] = inputs.SpreadBurst
+		payload["ueba_new_ip"] = inputs.NewIP
+		payload["ueba_new_subnet"] = inputs.NewSubnet
 	}
 	if res.BindingID != nil {
 		payload["binding_id"] = res.BindingID.String()

@@ -533,6 +533,7 @@ func (g *Gateway) denyOpRisk(ctx context.Context, row sessionsvc.Session, call A
 		UserID: row.UserID, AssetID: row.AssetID, RoleNames: roles,
 		TicketID: row.TicketID, ClientIP: ip, Operation: op, Snapshot: row.PolicySnapshot,
 		StepUpVerified: stepOK,
+		SessionID:      row.ID,
 	})
 	if err != nil || ev.OK {
 		return ev, false

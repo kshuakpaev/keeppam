@@ -48,6 +48,8 @@ Line-buffer (QuietEcho) **всегда** на SSH PTY: DLP, JEA pack, live deny,
 | `deny` | DENY, событие `risk` |
 | `require_mfa` | SSH PTY: DENY. HTTP/SQL/kubectl: step-up MFA (`docs/adaptive-mfa.txt`) |
 | `require_approval` | PTY **ждёт** до 60 с: команда не уходит на хост, пока кто-то с `access.approve` (не заявитель) не одобрит. Таймаут/deny — команда не выполняется. Очередь: Запросы доступа → «Операции в сессии», канал `ssh`. |
+| `terminate` | DENY + kill этой сессии |
+| `lock_account` | DENY + lock УЗ 24ч + kill всех сессий пользователя |
 
 Break-glass и admin bypass — wait пропускается, команда выполняется. Аудит: `session.command.approval_required` / `approved` / `denied` / `approval_timeout`. События сессии: `command_approval` / `command_approved` / `command_denied`.
 

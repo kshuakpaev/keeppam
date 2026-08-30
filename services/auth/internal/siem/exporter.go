@@ -317,6 +317,9 @@ func formatEvent(format string, e store.AuditEvent) string {
 		b, _ := json.Marshal(EventECS(e))
 		return string(b)
 	}
+	if format == "leef" {
+		return formatLEEF(e)
+	}
 	if format == "cef" {
 		actor := ""
 		if e.ActorID != nil {
@@ -331,6 +334,38 @@ func formatEvent(format string, e store.AuditEvent) string {
 	}
 	b, _ := json.Marshal(e)
 	return string(b)
+}
+
+func formatLEEF(e store.AuditEvent) string {
+	actor := ""
+	if e.ActorID != nil {
+		actor = e.ActorID.String()
+	}
+	payload, _ := json.Marshal(e.Payload)
+	sev := 5
+	if strings.Contains(e.Action, "denied") || strings.Contains(e.Action, "failure") {
+		sev = 8
+	}
+	if strings.Contains(e.Action, "success") {
+		sev = 3
+	}
+	// LEEF 2.0, tab delimiter (IBM QRadar).
+	ext := strings.Join([]string{
+		"devTime=" + escapeLEEF(e.TS.UTC().Format("2006-01-02T15:04:05.000Z")),
+		"sev=" + fmt.Sprintf("%d", sev),
+		"cat=" + escapeLEEF(e.ResourceType),
+		"src=" + escapeLEEF(e.IP),
+		"usrName=" + escapeLEEF(actor),
+		"identSrc=" + escapeLEEF(e.ResourceID),
+		"hash=" + escapeLEEF(e.Hash),
+		"msg=" + escapeLEEF(string(payload)),
+	}, "\t")
+	return fmt.Sprintf("LEEF:2.0|KeepPAM|KeepPAM|1.0|%s|\t|%s", escapeLEEF(e.Action), ext)
+}
+
+func escapeLEEF(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "\t", "\\t", "\n", "\\n", "\r", "\\r", "=", "\\=")
+	return r.Replace(s)
 }
 
 func escapeCEF(s string) string {

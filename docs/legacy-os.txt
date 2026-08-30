@@ -1,0 +1,21 @@
+# KeepPAM: унаследованные ОС (Windows Server 2008, старый Linux/Unix)
+
+Отдельной матрицы сертификации Win2008 / Solaris 10 / RHEL 5 нет. Шлюз безагентный: к цели идёт стандартный протокол.
+
+## RDP / 2008
+
+HTML5 (guacd) и native RDP-proxy принимают то, что отдаёт цель. Для старых хостов в guacd обычно `security=any` (Negotiate / NLA по возможности, иначе RDP).
+
+Это **не** гарантия DoD/Common Criteria на Win2008: TLS 1.0, NLA, CredSSP, патч-уровень цели остаются зоной заказчика.
+
+## Linux / Unix
+
+SSH `:2222` и Telnet `:2323` — OpenSSH 4.x / dropbear / Solaris sshd. Исходящий Dial и шлюз по умолчанию принимают legacy KEX/cipher/MAC (`diffie-hellman-group1-sha1`, `ssh-dss`, 3DES). Порядок host-key алгоритмов — библиотечный (ECDSA/Ed25519 раньше RSA), иначе TOFU ломается на OpenSSH с несколькими ключами. Выкл.: `KEEPPAM_SSH_LEGACY=false` или `KEEPPAM_FIPS_REQUIRED=true`.
+
+Telnet + `terminal_charset` (KOI8-R, CP866) — `docs/telnet.txt`.
+
+## Что не обещать
+
+- Сертифицированный стенд «Win2008 R2 + KeepPAM = поддерживается вендором».
+- SMBv1 / древний WinRM как протокол актива.
+- FTP active PORT и FTPS на 2008 IIS без PASV.

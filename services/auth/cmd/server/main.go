@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/adjit"
+	"github.com/keeppam/auth/internal/ai"
 	"github.com/keeppam/auth/internal/analytics"
 	"github.com/keeppam/auth/internal/appaccess"
 	"github.com/keeppam/auth/internal/assets"
@@ -23,6 +24,8 @@ import (
 	"github.com/keeppam/auth/internal/auth"
 	"github.com/keeppam/auth/internal/buildinfo"
 	"github.com/keeppam/auth/internal/castindex"
+	"github.com/keeppam/auth/internal/citrix/hdx"
+	"github.com/keeppam/auth/internal/citrixgw"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/crypto"
@@ -34,6 +37,7 @@ import (
 	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/firewall"
+	"github.com/keeppam/auth/internal/ftpgw"
 	"github.com/keeppam/auth/internal/geo"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/health"
@@ -43,28 +47,27 @@ import (
 	"github.com/keeppam/auth/internal/license"
 	"github.com/keeppam/auth/internal/migrate"
 	"github.com/keeppam/auth/internal/nac"
+	"github.com/keeppam/auth/internal/nativegw"
 	"github.com/keeppam/auth/internal/notify"
 	"github.com/keeppam/auth/internal/obs"
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/pades"
 	"github.com/keeppam/auth/internal/policy"
+	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/recstore"
-	"github.com/keeppam/auth/internal/rdpgw"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/settings"
 	"github.com/keeppam/auth/internal/siem"
-	"github.com/keeppam/auth/internal/uebaml"
 	"github.com/keeppam/auth/internal/spiffe"
 	"github.com/keeppam/auth/internal/sshca"
 	"github.com/keeppam/auth/internal/sshgw"
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/telnetgw"
 	"github.com/keeppam/auth/internal/tn3270gw"
-	"github.com/keeppam/auth/internal/citrix/hdx"
-	"github.com/keeppam/auth/internal/citrixgw"
+	"github.com/keeppam/auth/internal/uebaml"
 	"github.com/keeppam/auth/internal/users"
 )
 
@@ -123,6 +126,9 @@ func main() {
 	if cfg.Mode == "ssh" {
 		svcName = "keeppam-ssh"
 	}
+	if cfg.Mode == "ai" {
+		svcName = "keeppam-ai"
+	}
 	traceStop, err := obs.InitTracing(context.Background(), cfg.OTELEndpoint, svcName)
 	if err != nil {
 		slog.Error("tracing", "err", err)
@@ -151,11 +157,12 @@ func main() {
 
 	runHTTP := cfg.Mode == "all" || cfg.Mode == "api"
 	runSSH := cfg.Mode == "all" || cfg.Mode == "ssh"
+	runAI := cfg.Mode == "all" || cfg.Mode == "api" || cfg.Mode == "ai"
 	if cfg.SSHAddr == "" || cfg.SSHAddr == "off" {
 		runSSH = false
 	}
 
-	if runHTTP {
+	if runHTTP || cfg.Mode == "ai" {
 		if err := migrate.Up(ctx, cfg.DatabaseURL, migDir); err != nil {
 			slog.Error("migrate", "err", err)
 			os.Exit(1)
@@ -248,7 +255,7 @@ func main() {
 		}
 		return licFile.AllowCreate(n, time.Now())
 	})
-	slog.Info("license", "max_assets", licFile.MaxAssets, "ha", licFile.HA, "source", licFile.Source)
+	slog.Info("license", "model", licFile.ResolvedModel(), "max_assets", licFile.MaxAssets, "max_users", licFile.MaxUsers, "ha", licFile.HA, "source", licFile.Source)
 	sshCASvc := sshca.New(db, env, auditSvc)
 	assetsSvc.SetSSHCA(sshCASvc)
 	policySvc := policy.New(db, auditSvc)
@@ -269,6 +276,33 @@ func main() {
 	}
 	sessSvc := sessionsvc.New(db, auditSvc, cfg.RecordingsDir)
 	sessSvc.SetRecordingStore(recStore)
+	sessSvc.SetSessionQuota(func(ctx context.Context) error {
+		n, err := sessSvc.CountLive(ctx)
+		if err != nil {
+			return err
+		}
+		return licFile.AllowSession(n, time.Now())
+	})
+	nativeStarter := &nativegw.Starter{Auth: authSvc, Assets: assetsSvc, Policy: policySvc, Sessions: sessSvc}
+	wirePamStart := func(ctx context.Context, protocol, username, password, hint, ip string) (uuid.UUID, string, error) {
+		login, loginHint := nativegw.SplitLogin(username)
+		if loginHint == "" {
+			loginHint = strings.TrimSpace(hint)
+		}
+		u, err := nativeStarter.Authenticate(ctx, login, password, ip)
+		if err != nil {
+			return uuid.Nil, "", err
+		}
+		sess, _, err := nativeStarter.Start(ctx, u, protocol, loginHint, ip)
+		if err != nil {
+			return uuid.Nil, "", err
+		}
+		tok, err := dbproxy.IssueWireToken(ctx, sessions.Redis(), sess.ID, cfg.SessionTTL)
+		if err != nil {
+			return uuid.Nil, "", err
+		}
+		return sess.ID, tok, nil
+	}
 	nacSvc := nac.New(db, auditSvc, env, sessSvc)
 	filesSvc := filexfer.New(db, sessSvc, recStore, cfg.RecordingsDir)
 	castIdx := castindex.New(sessSvc, recStore, cfg.GuacencURL)
@@ -276,6 +310,8 @@ func main() {
 		notifySvc.OnUEBAAnomaly(ctx, row, payload)
 	})
 	live := sessionsvc.NewLiveHub(sessions.Redis())
+	sessSvc.SetLiveHub(live)
+	policySvc.SetRiskBreach(sessSvc.ApplyRiskBreach)
 	var rdpBroker *rdpgw.Broker
 	discoverySvc := discovery.New(db, auditSvc, assetsSvc)
 	analyticsSvc := analytics.New(db)
@@ -308,6 +344,11 @@ func main() {
 	complianceSvc.SetEidas(eidasSvc)
 	uebamlSvc := uebaml.New(db, auditSvc, sessSvc, notifySvc)
 	castIdx.SetUEBAML(uebamlSvc)
+	aiSvc := ai.New(db, auditSvc, sessSvc, policySvc)
+	aiSvc.SetLicense(func() bool { return licFile.AllowAICopilot() })
+	castIdx.SetAfterIndex(func(ctx context.Context, id uuid.UUID) {
+		aiSvc.EnqueueAfterIndex(ctx, id)
+	})
 	drSvc := dr.New(db, auditSvc, cfg.DatabaseURL, cfg.RecordingsDir)
 	dbEphSvc := dbephemeral.New(db, env, assetsSvc, auditSvc, sessSvc)
 	opsSvc := opapprove.New(db, sessions.Redis(), auditSvc)
@@ -371,11 +412,13 @@ func main() {
 				slog.Warn("rotate after session", "session", id.String(), "account", row.AccountID.String(), "err", err)
 			}
 		}
-		if protocol == "ssh" || protocol == "rdp" || protocol == "vnc" || protocol == "https" || protocol == "citrix" {
+		if protocol == "ssh" || protocol == "telnet" || protocol == "rdp" || protocol == "vnc" || protocol == "https" || protocol == "citrix" {
 			castIdx.IndexAsync(id)
 			if protocol == "rdp" || protocol == "vnc" || protocol == "https" || protocol == "citrix" {
 				castIdx.IndexOCRAsync(id)
 			}
+		} else {
+			aiSvc.EnqueueAfterIndex(ctx, id)
 		}
 	})
 	ensureEph := func(ctx context.Context, sessionID uuid.UUID, vault assets.TargetCreds, privilege string) (assets.TargetCreds, string, error) {
@@ -405,6 +448,7 @@ func main() {
 					UserID: row.UserID, AssetID: row.AssetID, TicketID: row.TicketID,
 					ClientIP: row.ClientIP, Operation: policy.SQLOperation(stmt), Snapshot: row.PolicySnapshot,
 					StepUpVerified: authSvc.HasOpStepUp(ctx, sessionID, row.UserID),
+					SessionID:      sessionID,
 				})
 				if err == nil && !ev.OK {
 					if ev.NeedsStepUp() {
@@ -448,6 +492,10 @@ func main() {
 	go live.Listen(runCtx)
 	go auditSvc.RunSealer(runCtx)
 	go uebamlSvc.RunLive(runCtx)
+	go castIdx.RunLive(runCtx)
+	if runAI {
+		go aiSvc.Run(runCtx)
+	}
 	if runHTTP {
 		go firewallSvc.RunProbeScheduler(runCtx)
 	}
@@ -523,10 +571,11 @@ func main() {
 			}
 			rdpBrokerInit = rdpgw.NewBroker(cfg.RDPPublicHost, cfg.RDPProxyBin, cert, key,
 				filepath.Join(cfg.RecordingsDir, "rdp-proxy"), sessions.Redis(), assetsSvc, sessSvc)
+			rdpBrokerInit.NativeDefault = cfg.RDPNativeDefault
 			rdpBroker = rdpBrokerInit
-			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off")
+			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off", "native_default", cfg.RDPNativeDefault)
 		}
-		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, uebamlSvc, archSvc, filesSvc, life, rdpBroker, castIdx)
+		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, uebamlSvc, archSvc, filesSvc, life, rdpBroker, castIdx, aiSvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
 		go func() {
 			if cfg.TLSEnabled() {
@@ -560,6 +609,7 @@ func main() {
 		go archSvc.Run(runCtx)
 		if cfg.PostgresWireAddr != "" && cfg.PostgresWireAddr != "off" {
 			pgWire := dbproxy.NewWireGateway(cfg.PostgresWireAddr, "postgres", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			pgWire.SetPamStart(wirePamStart)
 			go func() {
 				if err := pgWire.ListenAndServe(runCtx); err != nil {
 					slog.Error("postgres wire", "err", err)
@@ -568,6 +618,7 @@ func main() {
 		}
 		if cfg.MySQLWireAddr != "" && cfg.MySQLWireAddr != "off" {
 			myWire := dbproxy.NewWireGateway(cfg.MySQLWireAddr, "mysql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			myWire.SetPamStart(wirePamStart)
 			go func() {
 				if err := myWire.ListenAndServe(runCtx); err != nil {
 					slog.Error("mysql wire", "err", err)
@@ -576,9 +627,19 @@ func main() {
 		}
 		if cfg.MSSQLWireAddr != "" && cfg.MSSQLWireAddr != "off" {
 			msWire := dbproxy.NewWireGateway(cfg.MSSQLWireAddr, "mssql", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			msWire.SetPamStart(wirePamStart)
 			go func() {
 				if err := msWire.ListenAndServe(runCtx); err != nil {
 					slog.Error("mssql wire", "err", err)
+				}
+			}()
+		}
+		if cfg.OracleWireAddr != "" && cfg.OracleWireAddr != "off" {
+			oraWire := dbproxy.NewWireGateway(cfg.OracleWireAddr, "oracle", sessions.Redis(), assetsSvc, sessSvc, auditSvc, live, ensureEph, resolveSQLGuard)
+			oraWire.SetPamStart(wirePamStart)
+			go func() {
+				if err := oraWire.ListenAndServe(runCtx); err != nil {
+					slog.Error("oracle wire", "err", err)
 				}
 			}()
 		}
@@ -634,6 +695,7 @@ func main() {
 	var sshGw *sshgw.Gateway
 	if runSSH {
 		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
+		sshGw.SetLegacy(cfg.SSHLegacy)
 		sshGw.SetSessionFence(func() error {
 			wcfg := geo.WitnessConfig{
 				Mode: cfg.GeoWitnessMode, RedisURL: cfg.GeoWitnessRedisURL,
@@ -652,10 +714,22 @@ func main() {
 
 	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.TelnetAddr != "" && cfg.TelnetAddr != "off" {
 		tnGw := telnetgw.New(cfg.TelnetAddr, sessions.Redis(), assetsSvc, sessSvc, auditSvc)
+		tnGw.SetStarter(nativeStarter)
 		go func() {
 			slog.Info("telnet worker starting", "addr", cfg.TelnetAddr, "mode", cfg.Mode)
 			if err := tnGw.ListenAndServe(runCtx); err != nil {
 				slog.Error("telnet gateway", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if (cfg.Mode == "all" || cfg.Mode == "ssh") && cfg.FTPAddr != "" && cfg.FTPAddr != "off" {
+		ftpGw := ftpgw.New(cfg.FTPAddr, cfg.FTPPublicHost, sessions.Redis(), nativeStarter, assetsSvc, sessSvc, auditSvc, filesSvc)
+		go func() {
+			slog.Info("ftp worker starting", "addr", cfg.FTPAddr, "mode", cfg.Mode)
+			if err := ftpGw.ListenAndServe(runCtx); err != nil {
+				slog.Error("ftp gateway", "err", err)
 				os.Exit(1)
 			}
 		}()
@@ -698,7 +772,22 @@ func main() {
 		}()
 	}
 
-	if !runHTTP && !runSSH {
+	if cfg.Mode == "ai" && !runHTTP {
+		hs := &http.Server{Addr: cfg.HTTPAddr, Handler: life.Handler()}
+		go func() {
+			slog.Info("ai worker health listening", "addr", cfg.HTTPAddr)
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("ai health", "err", err)
+			}
+		}()
+		defer func() {
+			c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = hs.Shutdown(c)
+		}()
+	}
+
+	if !runHTTP && !runSSH && !runAI {
 		slog.Error("nothing to run", "mode", cfg.Mode)
 		os.Exit(1)
 	}

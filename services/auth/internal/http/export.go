@@ -31,7 +31,7 @@ func (s *Server) handleExportMP4(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -46,6 +46,10 @@ func (s *Server) handleExportMP4(w http.ResponseWriter, r *http.Request) {
 	src, err := s.sessionsvc.RecordingFile(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !sessionsvc.IsGuacamoleRecording(row.Protocol, src) {
+		writeErr(w, http.StatusBadRequest, "MP4 export is only for HTML5 Guacamole recordings")
 		return
 	}
 	mp4 := src + ".mp4"
@@ -115,7 +119,7 @@ func (s *Server) handleGetRecordingMP4(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -126,6 +130,10 @@ func (s *Server) handleGetRecordingMP4(w http.ResponseWriter, r *http.Request) {
 	src, err := s.sessionsvc.RecordingFile(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if !sessionsvc.IsGuacamoleRecording(row.Protocol, src) {
+		writeErr(w, http.StatusBadRequest, "MP4 available only for HTML5 Guacamole recordings")
 		return
 	}
 	mp4 := src + ".mp4"

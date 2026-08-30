@@ -127,6 +127,9 @@ func (s *Server) handleMarkFirewallApplied(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, id) {
+		return
+	}
 	if err := s.firewall.MarkApplied(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
 		if errors.Is(err, firewall.ErrNotPamOnly) {
 			writeErr(w, http.StatusNotFound, "not found or not pam_only")

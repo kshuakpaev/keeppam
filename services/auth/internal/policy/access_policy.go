@@ -45,6 +45,9 @@ type AccessPolicy struct {
 	OCRLang               string       `json:"ocr_lang"`
 	OCRIntervalSec        int          `json:"ocr_interval_sec"`
 	OCRMaxFrames          int          `json:"ocr_max_frames"`
+	OCREveryFrame         bool         `json:"ocr_every_frame"`
+	OCRLive               bool         `json:"ocr_live"`
+	OCRSSHStdout          bool         `json:"ocr_ssh_stdout"`
 	RDPClipboard          bool         `json:"rdp_clipboard"`
 	RDPDrive              bool         `json:"rdp_drive"`
 	RDPPrinter            bool         `json:"rdp_printer"`
@@ -81,6 +84,9 @@ type AccessPolicyInput struct {
 	OCRLang             string       `json:"ocr_lang"`
 	OCRIntervalSec      int          `json:"ocr_interval_sec"`
 	OCRMaxFrames        int          `json:"ocr_max_frames"`
+	OCREveryFrame       bool         `json:"ocr_every_frame"`
+	OCRLive             bool         `json:"ocr_live"`
+	OCRSSHStdout        bool         `json:"ocr_ssh_stdout"`
 	RDPClipboard        bool         `json:"rdp_clipboard"`
 	RDPDrive            bool         `json:"rdp_drive"`
 	RDPPrinter          bool         `json:"rdp_printer"`
@@ -143,13 +149,15 @@ func (s *Service) CreateAccessPolicy(ctx context.Context, actorID uuid.UUID, in 
 			allowed_cidrs, allowed_countries, allowed_devices, allowed_namespaces, allowed_egress,
 			command_policy_pack_id, sql_policy_pack_id, http_policy_pack_id, app_object_pack_id,
 			max_risk, risk_action, pii_action, nlp_dlp_action, file_transfer, ocr_lang, ocr_interval_sec, ocr_max_frames,
+			ocr_every_frame, ocr_live, ocr_ssh_stdout,
 			rdp_clipboard, rdp_drive, rdp_printer, rdp_native, created_at, updated_at, created_by)
-		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,NOW(),NOW(),$31)`,
+		VALUES ($1,$2,$3,$4::time,$5::time,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,NOW(),NOW(),$34)`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
 		norm.maxRisk, norm.riskAction, norm.piiAction, norm.nlpDlpAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
+		norm.ocrEveryFrame, norm.ocrLive, norm.ocrSSHStdout,
 		norm.rdpClipboard, norm.rdpDrive, norm.rdpPrinter, norm.rdpNative, actorID)
 	if err != nil {
 		return AccessPolicy{}, err
@@ -199,13 +207,15 @@ func (s *Service) UpdateAccessPolicy(ctx context.Context, actorID, id uuid.UUID,
 			command_policy_pack_id=$15, sql_policy_pack_id=$16, http_policy_pack_id=$17, app_object_pack_id=$18,
 			max_risk=$19, risk_action=$20, pii_action=$21, nlp_dlp_action=$22, file_transfer=$23,
 			ocr_lang=$24, ocr_interval_sec=$25, ocr_max_frames=$26,
-			rdp_clipboard=$27, rdp_drive=$28, rdp_printer=$29, rdp_native=$30, updated_at=NOW()
+			ocr_every_frame=$27, ocr_live=$28, ocr_ssh_stdout=$29,
+			rdp_clipboard=$30, rdp_drive=$31, rdp_printer=$32, rdp_native=$33, updated_at=NOW()
 		WHERE id=$1`,
 		id, norm.name, norm.description, nullStr(norm.timeStart), nullStr(norm.timeEnd), norm.days,
 		norm.tags, norm.requireTicket, norm.requireReason,
 		norm.cidrs, norm.countries, norm.devices, norm.namespaces, norm.egress,
 		norm.cmdPack, norm.sqlPack, norm.httpPack, norm.appPack,
 		norm.maxRisk, norm.riskAction, norm.piiAction, norm.nlpDlpAction, norm.fileTransfer, norm.ocrLang, norm.ocrInterval, norm.ocrFrames,
+		norm.ocrEveryFrame, norm.ocrLive, norm.ocrSSHStdout,
 		norm.rdpClipboard, norm.rdpDrive, norm.rdpPrinter, norm.rdpNative)
 	if err != nil {
 		return AccessPolicy{}, err
@@ -250,6 +260,7 @@ const accessPolicySelect = `
 			p.app_object_pack_id, COALESCE(ao.name,''),
 			p.max_risk, p.risk_action, COALESCE(p.pii_action,''), COALESCE(p.nlp_dlp_action,''), COALESCE(p.file_transfer,'deny'),
 			COALESCE(p.ocr_lang,'rus+eng'), COALESCE(p.ocr_interval_sec,15), COALESCE(p.ocr_max_frames,60),
+			COALESCE(p.ocr_every_frame,false), COALESCE(p.ocr_live,false), COALESCE(p.ocr_ssh_stdout,true),
 			COALESCE(p.rdp_clipboard,false), COALESCE(p.rdp_drive,false), COALESCE(p.rdp_printer,false), COALESCE(p.rdp_native,false),
 			p.created_at, p.updated_at
 		FROM access_policies p
@@ -268,6 +279,7 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 		&p.CommandPolicyPackID, &cmdName, &p.SQLPolicyPackID, &sqlName, &p.HTTPPolicyPackID, &httpName,
 		&p.AppObjectPackID, &appName,
 		&p.MaxRisk, &p.RiskAction, &p.PIIAction, &p.NlpDlpAction, &p.FileTransfer, &p.OCRLang, &p.OCRIntervalSec, &p.OCRMaxFrames,
+		&p.OCREveryFrame, &p.OCRLive, &p.OCRSSHStdout,
 		&p.RDPClipboard, &p.RDPDrive, &p.RDPPrinter, &p.RDPNative, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return AccessPolicy{}, err
@@ -291,11 +303,12 @@ func scanAccessPolicy(row scannable) (AccessPolicy, error) {
 }
 
 type normalizedPolicy struct {
-	name, description, riskAction, piiAction, nlpDlpAction, fileTransfer, ocrLang string
+	name, description, riskAction, piiAction, nlpDlpAction, fileTransfer, 	ocrLang string
 	timeStart, timeEnd                                              *string
 	days, maxRisk, ocrInterval, ocrFrames                           int
 	tags, cidrs, countries, devices, namespaces, egress             []string
 	requireTicket, requireReason                                    bool
+	ocrEveryFrame, ocrLive, ocrSSHStdout                            bool
 	rdpClipboard, rdpDrive, rdpPrinter, rdpNative                   bool
 	cmdPack, sqlPack, httpPack, appPack                             *uuid.UUID
 }
@@ -381,6 +394,7 @@ func normalizeAccessPolicyInput(in AccessPolicyInput, cur AccessPolicy) (normali
 	return normalizedPolicy{
 		name: name, description: strings.TrimSpace(in.Description), riskAction: riskAction, piiAction: piiAction, nlpDlpAction: nlpDlpAction, fileTransfer: fileTransfer,
 		ocrLang: ocrLang, ocrInterval: ocrInterval, ocrFrames: ocrFrames,
+		ocrEveryFrame: in.OCREveryFrame, ocrLive: in.OCRLive, ocrSSHStdout: in.OCRSSHStdout,
 		rdpClipboard: in.RDPClipboard, rdpDrive: in.RDPDrive, rdpPrinter: in.RDPPrinter, rdpNative: in.RDPNative,
 		timeStart: in.TimeStart, timeEnd: in.TimeEnd, days: days, maxRisk: in.MaxRisk,
 		tags: normalizeTags(in.RequiredTags), cidrs: cidrs, countries: countries,

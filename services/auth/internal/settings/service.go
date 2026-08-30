@@ -33,6 +33,13 @@ type AuthSettings struct {
 	OIDCSkipMFA       bool   `json:"oidc_skip_mfa"`
 	OIDCDefaultRole   string `json:"oidc_default_role"`
 
+	OAuthAuthorizeURL  string `json:"oauth_authorize_url"`
+	OAuthTokenURL      string `json:"oauth_token_url"`
+	OAuthUserinfoURL   string `json:"oauth_userinfo_url"`
+	OAuthUsernameClaim string `json:"oauth_username_claim"`
+	OAuthEmailClaim    string `json:"oauth_email_claim"`
+	OAuthNameClaim     string `json:"oauth_name_claim"`
+
 	LDAPURL             string `json:"ldap_url"`
 	LDAPBindDN          string `json:"ldap_bind_dn"`
 	LDAPBindPassword    string `json:"ldap_bind_password,omitempty"`
@@ -48,20 +55,20 @@ type AuthSettings struct {
 	LDAPSkipMFA         bool   `json:"ldap_skip_mfa"`
 	LDAPDefaultRole     string `json:"ldap_default_role"`
 
-	RADIUSHost          string `json:"radius_host"`
-	RADIUSNASID         string `json:"radius_nas_id"`
-	RADIUSTimeoutSec    int    `json:"radius_timeout_sec"`
-	RADIUSSecret        string `json:"radius_secret,omitempty"`
-	HasRADIUSSecret     bool   `json:"has_radius_secret"`
-	RADIUSAutoProvision bool   `json:"radius_auto_provision"`
-	RADIUSSkipMFA       bool   `json:"radius_skip_mfa"`
-	RADIUSDefaultRole   string `json:"radius_default_role"`
-	RADIUSAuthMethod    string `json:"radius_auth_method"`
-	RADIUSEAPCAPEM      string `json:"radius_eap_ca_pem"`
-	RADIUSEAPAnonymous  string `json:"radius_eap_anonymous_user"`
-	RADIUSEAPInsecureTLS bool  `json:"radius_eap_insecure_tls"`
-	RADIUSRadsec        bool   `json:"radius_radsec"`
-	RADIUSRadsecCAPEM   string `json:"radius_radsec_ca_pem"`
+	RADIUSHost            string `json:"radius_host"`
+	RADIUSNASID           string `json:"radius_nas_id"`
+	RADIUSTimeoutSec      int    `json:"radius_timeout_sec"`
+	RADIUSSecret          string `json:"radius_secret,omitempty"`
+	HasRADIUSSecret       bool   `json:"has_radius_secret"`
+	RADIUSAutoProvision   bool   `json:"radius_auto_provision"`
+	RADIUSSkipMFA         bool   `json:"radius_skip_mfa"`
+	RADIUSDefaultRole     string `json:"radius_default_role"`
+	RADIUSAuthMethod      string `json:"radius_auth_method"`
+	RADIUSEAPCAPEM        string `json:"radius_eap_ca_pem"`
+	RADIUSEAPAnonymous    string `json:"radius_eap_anonymous_user"`
+	RADIUSEAPInsecureTLS  bool   `json:"radius_eap_insecure_tls"`
+	RADIUSRadsec          bool   `json:"radius_radsec"`
+	RADIUSRadsecCAPEM     string `json:"radius_radsec_ca_pem"`
 	RADIUSRadsecClientPEM string `json:"radius_radsec_client_pem"`
 
 	SAMLIdPMetadataURL  string            `json:"saml_idp_metadata_url"`
@@ -99,6 +106,7 @@ type PublicAuthMethods struct {
 	SAMLReady   bool            `json:"saml_ready"`
 	SAMLIdPs    []PublicSAMLIdP `json:"saml_idps"`
 	RADIUSReady bool            `json:"radius_ready"`
+	OAuthReady  bool            `json:"oauth_ready"`
 }
 
 type Service struct {
@@ -110,6 +118,8 @@ type Service struct {
 func New(db *store.DB, aud *audit.Service, env *crypto.Envelope) *Service {
 	return &Service{db: db, aud: aud, env: env}
 }
+
+func (s *Service) DB() *store.DB { return s.db }
 
 func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error) {
 	var out AuthSettings
@@ -134,6 +144,8 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			COALESCE(radius_auth_method, 'pap'), COALESCE(radius_eap_ca_pem, ''), COALESCE(radius_eap_anonymous_user, 'anonymous'),
 			COALESCE(radius_eap_insecure_tls, FALSE), COALESCE(radius_radsec, FALSE),
 			COALESCE(radius_radsec_ca_pem, ''), COALESCE(radius_radsec_client_pem, ''),
+			COALESCE(oauth_authorize_url, ''), COALESCE(oauth_token_url, ''), COALESCE(oauth_userinfo_url, ''),
+			COALESCE(oauth_username_claim, 'iin'), COALESCE(oauth_email_claim, 'email'), COALESCE(oauth_name_claim, 'name'),
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -152,6 +164,8 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.RADIUSAutoProvision, &out.RADIUSSkipMFA, &out.RADIUSDefaultRole,
 		&out.RADIUSAuthMethod, &out.RADIUSEAPCAPEM, &out.RADIUSEAPAnonymous,
 		&out.RADIUSEAPInsecureTLS, &out.RADIUSRadsec, &out.RADIUSRadsecCAPEM, &out.RADIUSRadsecClientPEM,
+		&out.OAuthAuthorizeURL, &out.OAuthTokenURL, &out.OAuthUserinfoURL,
+		&out.OAuthUsernameClaim, &out.OAuthEmailClaim, &out.OAuthNameClaim,
 		&updatedAt,
 	)
 	if err != nil {
@@ -254,6 +268,7 @@ func (s *Service) PublicMethods(ctx context.Context) (PublicAuthMethods, error) 
 		SAMLReady:   cfg.Mode == "saml" && cfg.HasSAMLSPKey && len(idps) > 0,
 		SAMLIdPs:    idps,
 		RADIUSReady: RADIUSReady(cfg),
+		OAuthReady:  OAuthReady(cfg),
 	}, nil
 }
 
@@ -271,8 +286,8 @@ func SAMLConfigured(cfg AuthSettings) bool {
 
 func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings, ip, ua string) (AuthSettings, error) {
 	mode := strings.TrimSpace(in.Mode)
-	if mode != "local" && mode != "oidc" && mode != "ldap" && mode != "saml" && mode != "radius" {
-		return AuthSettings{}, fmt.Errorf("mode must be local|oidc|ldap|saml|radius")
+	if mode != "local" && mode != "oidc" && mode != "ldap" && mode != "saml" && mode != "radius" && mode != "oauth" {
+		return AuthSettings{}, fmt.Errorf("mode must be local|oidc|ldap|saml|radius|oauth")
 	}
 	cur, oidcSec, ldapSec, err := s.Get(ctx)
 	if err != nil {
@@ -307,11 +322,20 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		}
 		radiusSec = enc
 	}
-	if in.OIDCScopes == "" {
+	if in.OIDCScopes == "" && mode != "oauth" {
 		in.OIDCScopes = "openid profile email"
 	}
 	if in.OIDCDefaultRole == "" {
 		in.OIDCDefaultRole = "operator"
+	}
+	if in.OAuthUsernameClaim == "" {
+		in.OAuthUsernameClaim = "iin"
+	}
+	if in.OAuthEmailClaim == "" {
+		in.OAuthEmailClaim = "email"
+	}
+	if in.OAuthNameClaim == "" {
+		in.OAuthNameClaim = "name"
 	}
 	if in.LDAPUserFilter == "" {
 		in.LDAPUserFilter = "(uid=%s)"
@@ -401,6 +425,20 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 	if spEntity == "" && publicURL != "" {
 		spEntity = publicURL + "/api/v1/auth/saml/metadata"
 	}
+	if mode == "oauth" {
+		if publicURL == "" {
+			return AuthSettings{}, fmt.Errorf("public_base_url required")
+		}
+		if strings.TrimSpace(in.OAuthAuthorizeURL) == "" || strings.TrimSpace(in.OAuthTokenURL) == "" || strings.TrimSpace(in.OAuthUserinfoURL) == "" {
+			return AuthSettings{}, fmt.Errorf("oauth_authorize_url, oauth_token_url and oauth_userinfo_url required")
+		}
+		if strings.TrimSpace(in.OIDCClientID) == "" {
+			return AuthSettings{}, fmt.Errorf("oidc_client_id required")
+		}
+		if len(oidcSec) == 0 {
+			return AuthSettings{}, fmt.Errorf("oauth client secret required")
+		}
+	}
 
 	if mode == "saml" && (len(samlKeyEnc) == 0 || in.RotateSAMLSPKey) {
 		pemBlob, err := generateSAMLSPKeyPEM(spEntity)
@@ -432,7 +470,9 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			radius_auto_provision=$45, radius_skip_mfa=$46, radius_default_role=$47,
 			radius_auth_method=$48, radius_eap_ca_pem=$49, radius_eap_anonymous_user=$50,
 			radius_eap_insecure_tls=$51, radius_radsec=$52, radius_radsec_ca_pem=$53, radius_radsec_client_pem=$54,
-			updated_at=NOW(), updated_by=$55
+			oauth_authorize_url=$55, oauth_token_url=$56, oauth_userinfo_url=$57,
+			oauth_username_claim=$58, oauth_email_claim=$59, oauth_name_claim=$60,
+			updated_at=NOW(), updated_by=$61
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -450,6 +490,8 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		in.RADIUSAutoProvision, in.RADIUSSkipMFA, strings.TrimSpace(in.RADIUSDefaultRole),
 		in.RADIUSAuthMethod, strings.TrimSpace(in.RADIUSEAPCAPEM), strings.TrimSpace(in.RADIUSEAPAnonymous),
 		in.RADIUSEAPInsecureTLS, in.RADIUSRadsec, strings.TrimSpace(in.RADIUSRadsecCAPEM), strings.TrimSpace(in.RADIUSRadsecClientPEM),
+		strings.TrimSpace(in.OAuthAuthorizeURL), strings.TrimSpace(in.OAuthTokenURL), strings.TrimSpace(in.OAuthUserinfoURL),
+		strings.TrimSpace(in.OAuthUsernameClaim), strings.TrimSpace(in.OAuthEmailClaim), strings.TrimSpace(in.OAuthNameClaim),
 		actorID,
 	)
 	if err != nil {

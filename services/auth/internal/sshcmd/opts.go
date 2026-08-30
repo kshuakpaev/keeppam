@@ -43,6 +43,7 @@ func (d Deps) BuildOpts(ctx context.Context, m Meta) sshproxy.SessionOpts {
 	hasPack := false
 	check := policy.AccessCheck{
 		UserID: m.UserID, AssetID: m.AssetID, RoleNames: m.Roles, Bypass: m.Bypass, TicketID: m.TicketID, Snapshot: m.Snap,
+		SessionID: m.SessionID, ClientIP: m.IP,
 	}
 	if m.Snap != nil {
 		if m.Snap.CommandPolicyPackID != nil {

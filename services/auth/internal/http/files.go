@@ -27,7 +27,7 @@ func (s *Server) handleListSessionFiles(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -60,7 +60,7 @@ func (s *Server) handleGetSessionFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/keeppam/auth/internal/guacindex"
+	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/recstore"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/termcharset"
@@ -20,6 +21,7 @@ type Service struct {
 	guacencURL string
 	uebaHook   UEBAHook
 	uebaml     UEBAMLScorer
+	afterIndex func(ctx context.Context, sessionID uuid.UUID)
 }
 
 // UEBAMLScorer adds peer-group + ML layer (SOW-UEBA-ML).
@@ -56,7 +58,7 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 	if citrixSession(row) {
 		return s.indexCitrix(ctx, sessionID, row, force)
 	}
-	if row.Protocol != "ssh" {
+	if row.Protocol != "ssh" && row.Protocol != "telnet" {
 		return Result{Skipped: "unsupported"}, nil
 	}
 	cmdLines, err := s.sess.ListCommandTranscript(ctx, sessionID)
@@ -71,28 +73,17 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 			break
 		}
 	}
-	outN, _ := s.sess.CountOutput(ctx, sessionID)
-	indexed, _ := s.sess.TranscriptIndexed(ctx, sessionID)
 	needCmd := !pty && (force || !hasCastCmd)
-	needOut := force || outN == 0
-	if !force && indexed && !needCmd && !needOut {
-		return Result{Indexed: true, Source: "cached", Lines: len(cmdLines), Output: outN}, nil
-	}
-
 	if force {
 		_ = s.sess.DeleteAsciicastCommands(ctx, sessionID)
 		_ = s.sess.DeleteAsciicastOutput(ctx, sessionID)
+		_ = s.sess.DeleteSSHScreenText(ctx, sessionID)
 		needCmd = !pty
-		needOut = true
 	}
 
 	if row.RecordingPath == "" {
 		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
 		return s.result(ctx, sessionID, pty, "no_recording")
-	}
-	if !needCmd && !needOut {
-		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
-		return s.result(ctx, sessionID, pty, "")
 	}
 
 	if s.store != nil {
@@ -125,34 +116,51 @@ func (s *Service) Index(ctx context.Context, sessionID uuid.UUID, force bool) (R
 			}
 		}
 	}
-	if needOut {
-		dlp := contentDLP(row)
-		var piiTotal outputPIIStats
-		piiTotal.kinds = map[string]struct{}{}
-		for _, ln := range outLines {
-			text, meta := indexText(ln.Text, cs)
-			text, skip, st := applyContentDLP(dlp, text)
-			if skip {
-				mergePIIStats(&piiTotal, st)
-				continue
-			}
-			if st != nil {
-				mergePIIStats(&piiTotal, st)
-			}
-			ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
-			payload := map[string]any{"line": text, "source": "asciicast", "offset": ln.Offset, "charset": meta.Charset}
-			if meta.RawB64 != "" {
-				payload["raw"] = meta.RawB64
-			}
-			if err := s.sess.AddEventAt(ctx, sessionID, ts, "output", payload); err != nil {
-				return Result{}, err
-			}
-		}
-		if ev := dlpPayload(&piiTotal, "ssh_stdout"); ev != nil {
-			_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
+	lastOut := -1.0
+	if !force {
+		if off, err := s.sess.MaxEventOffset(ctx, sessionID, "output", "asciicast"); err == nil {
+			lastOut = off
 		}
 	}
-	_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+	opt := policy.OCROpts{SSHStdout: true}
+	if row.PolicySnapshot != nil {
+		opt = row.PolicySnapshot.OCR()
+	}
+	dlp := contentDLP(row)
+	var piiTotal outputPIIStats
+	piiTotal.kinds = map[string]struct{}{}
+	for _, ln := range outLines {
+		if ln.Offset <= lastOut {
+			continue
+		}
+		text, meta := indexText(ln.Text, cs)
+		text, skip, st := applyContentDLP(dlp, text)
+		if skip {
+			mergePIIStats(&piiTotal, st)
+			continue
+		}
+		if st != nil {
+			mergePIIStats(&piiTotal, st)
+		}
+		ts := base.Add(time.Duration(ln.Offset * float64(time.Second)))
+		payload := map[string]any{"line": text, "source": "asciicast", "offset": ln.Offset, "charset": meta.Charset}
+		if meta.RawB64 != "" {
+			payload["raw"] = meta.RawB64
+		}
+		if err := s.sess.AddEventAt(ctx, sessionID, ts, "output", payload); err != nil {
+			return Result{}, err
+		}
+		if opt.SSHStdout {
+			scr := map[string]any{"line": text, "source": "ssh_stdout", "offset": ln.Offset}
+			_ = s.sess.AddEventAt(ctx, sessionID, ts, "screen_text", scr)
+		}
+	}
+	if ev := dlpPayload(&piiTotal, "ssh_stdout"); ev != nil {
+		_ = s.sess.AddEventAt(ctx, sessionID, base, "dlp", ev)
+	}
+	if row.Status != "active" && row.Status != "pending" {
+		_ = s.sess.MarkTranscriptIndexed(ctx, sessionID)
+	}
 	return s.result(ctx, sessionID, pty, "")
 }
 
@@ -180,7 +188,7 @@ func (s *Service) result(ctx context.Context, sessionID uuid.UUID, pty bool, ski
 }
 
 func graphicalSession(row sessionsvc.Session) bool {
-	return row.Protocol == "rdp" || row.Protocol == "vnc" || row.Isolated
+	return row.Protocol == "rdp" || row.Protocol == "vnc" || row.Protocol == "https" || row.Isolated
 }
 
 func (s *Service) indexGuac(ctx context.Context, sessionID uuid.UUID, row sessionsvc.Session, force bool) (Result, error) {
@@ -252,6 +260,12 @@ func ptyLogged(lines []sessionsvc.TranscriptLine) bool {
 	return false
 }
 
+func (s *Service) SetAfterIndex(fn func(ctx context.Context, sessionID uuid.UUID)) {
+	if s != nil {
+		s.afterIndex = fn
+	}
+}
+
 func (s *Service) IndexAsync(sessionID uuid.UUID) {
 	if s == nil {
 		return
@@ -260,5 +274,8 @@ func (s *Service) IndexAsync(sessionID uuid.UUID) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_, _ = s.Index(ctx, sessionID, false)
+		if s.afterIndex != nil {
+			s.afterIndex(ctx, sessionID)
+		}
 	}()
 }

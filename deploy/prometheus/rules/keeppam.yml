@@ -58,5 +58,23 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: Active PAM sessions above 50
-          description: keeppam_active_sessions={{ $value }}.
+          summary: Active PAM sessions above lab 50
+          description: keeppam_active_sessions={{ $value }} (lab spike; NIT profile uses 800/950).
+
+      - alert: KeepPAMSessionHigh
+        expr: keeppam_active_sessions > 800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Active PAM sessions above 800 (NIT §4 headroom)
+          description: keeppam_active_sessions={{ $value }}. Scale workers/guacd (docs/nit-p4.txt).
+
+      - alert: KeepPAMSessionCapacity
+        expr: keeppam_active_sessions > 950
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Active PAM sessions above 950 (NIT 1000 cap)
+          description: keeppam_active_sessions={{ $value }}. Add session-worker/guacd replicas.

@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
-import { api, type PamSession, type TranscriptLine, type SessionFile } from "../api";
+import { api, type PamSession, type TranscriptLine, type SessionFile, type AISummary } from "../api";
 import { useI18n } from "../i18n";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
@@ -31,6 +31,7 @@ export function SessionReplayPage() {
   const [meta, setMeta] = useState("");
   const [protocol, setProtocol] = useState("");
   const [isolated, setIsolated] = useState(false);
+  const [nativeRdp, setNativeRdp] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -48,6 +49,7 @@ export function SessionReplayPage() {
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [sshSpeed, setSshSpeed] = useState(1);
+  const [aiSum, setAiSum] = useState<AISummary | null>(null);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -77,6 +79,13 @@ export function SessionReplayPage() {
         setMeta(`${sess.asset_name} · ${sess.account_username} · ${sess.username}`);
         setProtocol(sess.protocol);
         setIsolated(!!sess.isolated);
+        const recPath = sess.recording_path || "";
+        const isNativeRdp =
+          recPath.includes("rdp-native") ||
+          recPath.endsWith(".pcap") ||
+          recPath.endsWith(".rec") ||
+          recPath.endsWith(".irdp");
+        setNativeRdp(isNativeRdp);
         try {
           const fl = await api.listSessionFiles(id);
           if (!cancelled) setFiles(fl.files || []);
@@ -98,10 +107,23 @@ export function SessionReplayPage() {
           } catch {
             /* replay still works */
           }
+          void api
+            .getSessionAISummary(id)
+            .then((s) => {
+              if (!cancelled) setAiSum(s);
+            })
+            .catch(() => {
+              if (!cancelled) setAiSum(null);
+            });
         }
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
         if (!res.ok) throw new Error(t("replay.unavailable"));
+
+        if (isNativeRdp) {
+          if (!cancelled) setReady(true);
+          return;
+        }
 
         if (sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           const blob = await res.blob();
@@ -359,7 +381,7 @@ export function SessionReplayPage() {
     }
   }
 
-  const isGuac = protocol === "rdp" || protocol === "vnc" || isolated;
+  const isGuac = (protocol === "rdp" || protocol === "vnc" || isolated) && !nativeRdp;
 
   function seekToMs(ms: number) {
     const rec = recordingRef.current;
@@ -476,6 +498,11 @@ export function SessionReplayPage() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {nativeRdp && (
+        <p className="muted" style={{ padding: "0 1rem" }}>
+          {t("replay.nativeHint")}
+        </p>
+      )}
       {(isGuac || protocol === "ssh") && (
         <div className="row" style={{ padding: "0.5rem 1rem", gap: "0.75rem", alignItems: "center" }}>
           <span className="mono muted">{formatMs(position)}</span>
@@ -491,6 +518,48 @@ export function SessionReplayPage() {
           <span className="mono muted">{formatMs(duration)}</span>
         </div>
       )}
+      {aiSum && aiSum.status !== "skipped" ? (
+        <div className="card" style={{ margin: "0 1rem 0.75rem" }}>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h2 style={{ margin: 0 }}>{t("replay.aiSummary")}</h2>
+            {id ? (
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() =>
+                  void api.postSessionAISummary(id, true).then(setAiSum).catch(() => undefined)
+                }
+              >
+                {t("replay.aiRefresh")}
+              </button>
+            ) : null}
+          </div>
+          {aiSum.status === "pending" ? (
+            <p className="muted">{t("replay.aiPending")}</p>
+          ) : (
+            <>
+              <p>
+                <strong>{aiSum.headline}</strong>
+              </p>
+              <p className="muted">{aiSum.summary}</p>
+              {aiSum.screen_narrative ? <p className="muted">{aiSum.screen_narrative}</p> : null}
+              <ul className="plain-list">
+                {(aiSum.bullets || []).map((b, i) => (
+                  <li key={i}>
+                    {b.offset != null ? (
+                      <button type="button" className="btn secondary" onClick={() => seekToMs(b.offset! * 1000)}>
+                        {b.text}
+                      </button>
+                    ) : (
+                      <span>{b.text}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      ) : null}
       <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" || isGuac ? "0.75rem" : 0 }}>
       <div
         ref={hostRef}

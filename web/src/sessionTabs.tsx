@@ -64,7 +64,7 @@ export function pathForTab(tab: SessionTab): string {
 }
 
 export function isSQLProtocol(protocol: string): boolean {
-  return protocol === "postgres" || protocol === "mysql" || protocol === "mssql";
+  return protocol === "postgres" || protocol === "mysql" || protocol === "mssql" || protocol === "oracle";
 }
 
 export function kindForProtocol(protocol: string, isolated?: boolean): SessionTabKind {

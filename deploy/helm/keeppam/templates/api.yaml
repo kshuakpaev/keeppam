@@ -7,6 +7,11 @@ metadata:
     app.kubernetes.io/component: api
 spec:
   replicas: {{ .Values.replicaCount.api }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "keeppam.name" . }}
@@ -43,6 +48,8 @@ spec:
               containerPort: 13306
             - name: mssqlwire
               containerPort: 11433
+            - name: oraclewire
+              containerPort: 11521
             - name: k8sapi
               containerPort: 16443
           env:
@@ -64,6 +71,8 @@ spec:
               value: {{ .Values.env.guacdAddr | quote }}
             - name: KEEPPAM_TRUSTED_PROXIES
               value: {{ .Values.env.trustedProxies | quote }}
+            - name: KEEPPAM_DIGITALID_LAB
+              value: {{ .Values.env.digitalidLab | default "false" | quote }}
             - name: KEEPPAM_DATA_KEY_SOURCE
               value: env
             - name: KEEPPAM_DATABASE_URL
@@ -136,6 +145,9 @@ spec:
     - name: mssqlwire
       port: {{ .Values.service.mssqlwire.port }}
       targetPort: mssqlwire
+    - name: oraclewire
+      port: {{ .Values.service.oraclewire.port }}
+      targetPort: oraclewire
     - name: k8sapi
       port: {{ .Values.service.k8sapi.port }}
       targetPort: k8sapi

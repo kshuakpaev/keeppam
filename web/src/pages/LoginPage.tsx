@@ -19,6 +19,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("local");
   const [oidcReady, setOidcReady] = useState(false);
+  const [oauthReady, setOauthReady] = useState(false);
   const [samlReady, setSamlReady] = useState(false);
   const [radiusReady, setRadiusReady] = useState(false);
   const [certLogin, setCertLogin] = useState(false);
@@ -30,6 +31,7 @@ export function LoginPage() {
         const m = await api.authMethods();
         setMode(m.mode);
         setOidcReady(m.oidc_ready);
+        setOauthReady(!!m.oauth_ready);
         setSamlReady(!!m.saml_ready);
         setRadiusReady(!!m.radius_ready);
         setCertLogin(!!m.cert_login);
@@ -127,6 +129,7 @@ export function LoginPage() {
     mode === "radius" ||
     !!challenge ||
     (mode === "oidc" && !oidcReady) ||
+    (mode === "oauth" && !oauthReady) ||
     (mode === "saml" && !samlReady);
 
   return (
@@ -142,6 +145,7 @@ export function LoginPage() {
         <h1>{challenge ? t("login.mfaTitle") : t("login.title")}</h1>
         <p className="muted">
           {mode === "oidc" && "SSO (OIDC)"}
+          {mode === "oauth" && t("login.oauth")}
           {mode === "saml" && "SSO (SAML 2.0)"}
           {mode === "ldap" && "LDAP / Active Directory"}
           {mode === "radius" && t("login.radius")}
@@ -156,6 +160,17 @@ export function LoginPage() {
               </a>
             ) : (
               <p className="error">{t("login.oidcBad")}</p>
+            )}
+          </div>
+        )}
+        {!challenge && mode === "oauth" && (
+          <div style={{ marginBottom: "1rem" }}>
+            {oauthReady ? (
+              <a className="btn" href="/api/v1/auth/oauth/start" style={{ display: "inline-block" }}>
+                {t("login.digitalId")}
+              </a>
+            ) : (
+              <p className="error">{t("login.oauthBad")}</p>
             )}
           </div>
         )}

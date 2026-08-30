@@ -37,11 +37,11 @@
 
 ## Failover с репликой
 
-1. Promote standby PostgreSQL (Patroni/repmgr/manual).
-2. Обновить `KEEPPAM_DATABASE_URL` API на новый primary.
-3. Подключить/синхронизировать object storage recordings (rsync/S3 replication).
-4. Сбросить Redis или принять потерю live sessions.
-5. Старт API/workers; smoke-тест.
+1. Promote standby PostgreSQL (Patroni / CloudNativePG / `compose.pgha.yml` repmgr).
+   С Pgpool/CNPG writer endpoint DSN менять не нужно (`postgres` / `keeppam-pg-rw`).
+2. Подключить/синхронизировать object storage recordings (rsync/S3 replication).
+3. Сбросить Redis или принять потерю live sessions.
+4. Старт API/workers; smoke-тест.
 
 ## Проверки после drill
 

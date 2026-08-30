@@ -50,11 +50,9 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 		return OCRResult{Skipped: "unsupported"}, nil
 	}
 	n, _ := s.sess.CountScreenText(ctx, sessionID)
-	if !force && n > 0 {
-		return OCRResult{Indexed: true, Source: "cached", ScreenText: n}, nil
-	}
 	if force {
 		_ = s.sess.DeleteGuacScreenText(ctx, sessionID)
+		n = 0
 	}
 	if row.RecordingPath == "" {
 		return OCRResult{Indexed: true, Source: "guacenc", Skipped: "no_recording"}, nil
@@ -70,7 +68,13 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 	if row.PolicySnapshot != nil {
 		opt = row.PolicySnapshot.OCR()
 	}
-	frames, err := s.fetchOCR(ctx, path, opt)
+	since := -1.0
+	if !force {
+		if off, err := s.sess.MaxEventOffset(ctx, sessionID, "screen_text", "guacenc"); err == nil {
+			since = off
+		}
+	}
+	frames, err := s.fetchOCR(ctx, path, opt, since, n > 0)
 	if err != nil {
 		return OCRResult{}, err
 	}
@@ -83,9 +87,14 @@ func (s *Service) IndexOCR(ctx context.Context, sessionID uuid.UUID, force bool)
 	dlp := contentDLP(row)
 	var piiTotal outputPIIStats
 	piiTotal.kinds = map[string]struct{}{}
+	capN := ocrStoreCap(opt.MaxFrames)
+	already := n
 	for _, fr := range frames {
+		if fr.Offset <= since {
+			continue
+		}
 		line := cleanOCRLine(fr.Text)
-		if line == "" || line == last || stored >= ocrStoreCap(opt.MaxFrames) {
+		if line == "" || line == last || already+stored >= capN {
 			continue
 		}
 		text, skip, st := applyContentDLP(dlp, line)
@@ -125,12 +134,18 @@ func (s *Service) IndexOCRAsync(sessionID uuid.UUID) {
 		}
 		if citrixSession(row) {
 			_, _ = s.IndexOCR(ctx, sessionID, false)
+			if s.afterIndex != nil {
+				s.afterIndex(ctx, sessionID)
+			}
 			return
 		}
 		if strings.TrimSpace(s.guacencURL) == "" {
 			return
 		}
 		_, _ = s.IndexOCR(ctx, sessionID, false)
+		if s.afterIndex != nil {
+			s.afterIndex(ctx, sessionID)
+		}
 	}()
 }
 

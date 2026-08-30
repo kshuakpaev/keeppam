@@ -18,9 +18,10 @@ type EventSearchFilter struct {
 	Protocol string
 	ClientIP string
 	Hours    int
-	OnlyUser *uuid.UUID
-	Limit    int
-	Offset   int
+	OnlyUser       *uuid.UUID
+	OnlyAssetOwner *uuid.UUID
+	Limit          int
+	Offset         int
 }
 
 type EventHit struct {
@@ -281,6 +282,9 @@ func (s *Service) SearchEvents(ctx context.Context, f EventSearchFilter) ([]Even
 	}
 	if f.OnlyUser != nil {
 		where = append(where, "s.user_id = "+add(*f.OnlyUser))
+	}
+	if f.OnlyAssetOwner != nil {
+		where = append(where, "EXISTS (SELECT 1 FROM assets ax WHERE ax.id = s.asset_id AND ax.owner_user_id = "+add(*f.OnlyAssetOwner)+")")
 	}
 	clause := strings.Join(where, " AND ")
 

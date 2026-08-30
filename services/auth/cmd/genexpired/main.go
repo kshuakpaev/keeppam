@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	st := f.Evaluate(0, time.Now())
+	st := f.Evaluate(0, 0, time.Now())
 	fmt.Printf("customer=%s max_file=%d expires=%s expired=%v effective_max=%d hard=%v msg=%q\n",
 		f.Customer, f.MaxAssets, f.Expires, st.Expired, st.MaxAssets, st.HardBlocked, st.Message)
 	_ = raw

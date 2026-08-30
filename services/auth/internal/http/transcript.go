@@ -26,7 +26,7 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -63,7 +63,7 @@ func (s *Server) handleIndexTranscript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !canViewSession(sess.Permissions, sess.UserID, row.UserID) {
+	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}

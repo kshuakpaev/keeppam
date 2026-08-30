@@ -50,7 +50,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if row.Protocol != "postgres" && row.Protocol != "mysql" && row.Protocol != "mssql" {
+	if !dbproxy.IsSQLProtocol(row.Protocol) {
 		writeErr(w, http.StatusBadRequest, "not a db session")
 		return
 	}
@@ -151,6 +151,7 @@ func (s *Server) handleSessionSQL(w http.ResponseWriter, r *http.Request) {
 				Bypass: bypass, TicketID: row.TicketID, ClientIP: s.clientIP(r),
 				Operation: policy.SQLOperation(msg.Statement), Snapshot: row.PolicySnapshot,
 				StepUpVerified: s.auth != nil && s.auth.HasOpStepUp(r.Context(), id, authSess.UserID),
+				SessionID:      id,
 			}); err == nil && !ev.OK {
 				if ev.NeedsStepUp() {
 					pending, aerr := s.armOpStepUp(r.Context(), authSess.UserID, authSess.Username, row.AssetID, id, ev)

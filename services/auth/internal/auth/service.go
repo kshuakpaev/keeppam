@@ -206,6 +206,24 @@ func (s *Service) LoginOIDC(ctx context.Context, claims settings.OIDCClaims, ip,
 	return s.finishLogin(ctx, u, ip, ua, authCfg.OIDCSkipMFA, "oidc")
 }
 
+func (s *Service) LoginOAuth(ctx context.Context, claims settings.OIDCClaims, ip, ua string) (LoginResult, error) {
+	authCfg, _, _, err := s.settings.Get(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if authCfg.Mode != "oauth" {
+		return LoginResult{}, fmt.Errorf("oauth is not enabled")
+	}
+	u, err := s.findOrProvisionExternal(ctx, claims.Username, claims.Email, claims.Name, "oauth", authCfg.OIDCAutoProvision, authCfg.OIDCDefaultRole)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if u.Status == "disabled" {
+		return LoginResult{}, fmt.Errorf("account disabled")
+	}
+	return s.finishLogin(ctx, u, ip, ua, authCfg.OIDCSkipMFA, "oauth")
+}
+
 func (s *Service) LoginSAML(ctx context.Context, claims settings.SAMLClaims, idp settings.SAMLIdP, ip, ua string) (LoginResult, error) {
 	authCfg, _, _, err := s.settings.Get(ctx)
 	if err != nil {

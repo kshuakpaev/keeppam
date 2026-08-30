@@ -64,6 +64,7 @@ cp "$ROOT/docs/offline-update.txt" "$ROOT/docs/install.txt" "$ROOT/docs/demo-45m
 cp -a "$ROOT/services/auth/migrations" "$STAGE/services/auth/"
 cp "$ROOT/deploy/docker-compose.yml" "$ROOT/deploy/compose.ha.yml" "$ROOT/deploy/compose.ha3.yml" \
   "$ROOT/deploy/compose.branded.yml" "$ROOT/deploy/compose.branded-ha.yml" \
+  "$ROOT/deploy/compose.ai.yml" \
   "$ROOT/deploy/image-brand-map.txt" \
   "$ROOT/deploy/.env.example" "$ROOT/deploy/images-core.txt" "$ROOT/deploy/images-full.txt" \
   "$STAGE/deploy/"

@@ -7,6 +7,11 @@ metadata:
     app.kubernetes.io/component: worker
 spec:
   replicas: {{ .Values.replicaCount.worker }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.rollingUpdate.maxSurge }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "keeppam.name" . }}
@@ -36,6 +41,8 @@ spec:
           ports:
             - name: ssh
               containerPort: 2222
+            - name: ftp
+              containerPort: 2121
             - name: telnet
               containerPort: 2323
             - name: tn3270
@@ -51,6 +58,8 @@ spec:
               value: ":8080"
             - name: KEEPPAM_SSH_ADDR
               value: ":2222"
+            - name: KEEPPAM_FTP_ADDR
+              value: ":2121"
             - name: KEEPPAM_TELNET_ADDR
               value: ":2323"
             - name: KEEPPAM_TN3270_ADDR
@@ -127,6 +136,9 @@ spec:
     - name: ssh
       port: {{ .Values.service.worker.port }}
       targetPort: ssh
+    - name: ftp
+      port: {{ .Values.service.ftp.port }}
+      targetPort: ftp
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

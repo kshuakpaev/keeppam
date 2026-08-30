@@ -1,0 +1,62 @@
+{{- if .Values.ai.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keeppam.fullname" . }}-ai
+  labels:
+    {{- include "keeppam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "keeppam.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: ai
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "keeppam.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: ai
+    spec:
+      containers:
+        - name: ai-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: KEEPPAM_MODE
+              value: "ai"
+            - name: KEEPPAM_HTTP_ADDR
+              value: ":8080"
+            - name: KEEPPAM_AI_ALLOW_EXTERNAL
+              value: {{ if .Values.ai.allowExternal }}"1"{{ else }}"0"{{ end }}
+            - name: KEEPPAM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: database-url
+            - name: KEEPPAM_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: redis-url
+            - name: KEEPPAM_DATA_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keeppam.secretName" . }}
+                  key: data-key
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+{{- end }}

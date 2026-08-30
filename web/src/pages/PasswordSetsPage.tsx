@@ -41,7 +41,7 @@ export function PasswordSetsPage() {
   async function load() {
     setError("");
     try {
-      const [ps, as] = await Promise.all([api.listPasswordSets(), api.listAssets()]);
+      const [ps, as] = await Promise.all([api.listPasswordSets(), api.listAllAssets()]);
       setSets(ps.sets || []);
       const detailed = await Promise.all((as.assets || []).map((a) => api.getAsset(a.id)));
       setAssets(detailed);

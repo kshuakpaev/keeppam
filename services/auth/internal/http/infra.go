@@ -12,11 +12,12 @@ import (
 	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/fips"
 	"github.com/keeppam/auth/internal/obs"
+	"github.com/keeppam/auth/internal/residency"
 	"github.com/keeppam/auth/internal/sbom"
 	"github.com/keeppam/auth/internal/spiffe"
 )
 
-func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleInfraStatus(w http.ResponseWriter, r *http.Request) {
 	backend := s.cfg.RecordingsBackend
 	if s.sessionsvc != nil && s.sessionsvc.RecordingStore() != nil {
 		backend = s.sessionsvc.RecordingStore().Backend()
@@ -27,6 +28,23 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		opaPkg = s.policy.OPA().Package()
 	}
 	mem := crypto.LastMemStatus()
+	var res any
+	compliant := true
+	var risks []string
+	if svc := s.residencySvc(); svc != nil {
+		if st, err := svc.Get(r.Context()); err == nil {
+			st.AttachCompliance(s.cfg.DataKeySource, s.cfg.S3Endpoint)
+			res = st
+			compliant = st.Compliant
+			risks = st.Risks
+		} else {
+			compliant = residency.Compliant(residency.RegionKZ, true, s.cfg.DataKeySource, s.cfg.S3Endpoint)
+			risks = residency.Risks(residency.RegionKZ, true, s.cfg.DataKeySource, s.cfg.S3Endpoint)
+		}
+	} else {
+		compliant = residency.Compliant(residency.RegionKZ, true, s.cfg.DataKeySource, s.cfg.S3Endpoint)
+		risks = residency.Risks(residency.RegionKZ, true, s.cfg.DataKeySource, s.cfg.S3Endpoint)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":             buildinfo.Version,
 		"build_time":          buildinfo.BuildTime,
@@ -73,6 +91,9 @@ func (s *Server) handleInfraStatus(w http.ResponseWriter, _ *http.Request) {
 		"coredump":            mem.CoreDump,
 		"dumpable":            mem.Dumpable,
 		"data_key_mlock":      mem.DataKeyMlock,
+		"residency":           res,
+		"residency_compliant": compliant,
+		"residency_risks":     risks,
 	})
 }
 

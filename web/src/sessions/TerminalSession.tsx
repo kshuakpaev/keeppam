@@ -67,7 +67,7 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
       if ((ws as WebSocket & { __kpDead?: boolean }).__kpDead) return;
       (ws as WebSocket & { __kpDead?: boolean }).__kpDead = true;
       setStatus(tr("term.ended"));
-      setError(msg || tr("term.wsLost"));
+      setError((prev) => prev || msg || tr("term.wsLost"));
     };
 
     ws.onopen = () => setStatus(tr("term.connected"));
@@ -279,7 +279,7 @@ export function TerminalSession({ id, title, visible, onClose }: Props) {
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       } else if (ws && ws.readyState !== WebSocket.CONNECTING && ws.readyState !== WebSocket.OPEN) {
         setStatus(tRef.current("term.ended"));
-        setError(tRef.current("term.wsLost"));
+        setError((prev) => prev || tRef.current("term.wsLost"));
       }
     };
     const raf = window.requestAnimationFrame(() => {

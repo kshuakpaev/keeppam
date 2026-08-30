@@ -43,7 +43,9 @@ UI p95 — кольцо в процессе API + SQL за 24ч. Grafana p95 —
 | KeepPAMSessionSetupP95High | p95 setup > 2s, 10m |
 | KeepPAMSIEMLagHigh | lag > 60s, 5m |
 | KeepPAMHTTP5xx | доля 5xx > 5%, 5m |
-| KeepPAMSessionSpike | active sessions > 50, 5m |
+| KeepPAMSessionSpike | active sessions > 50, 5m (лаб) |
+| KeepPAMSessionHigh | active sessions > 800, 5m (NIT §4) |
+| KeepPAMSessionCapacity | active sessions > 950, 2m |
 
 ## Метрики `/metrics`
 

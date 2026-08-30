@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/sessionsvc"
 	"github.com/keeppam/auth/internal/sshcmd"
+	"github.com/keeppam/auth/internal/sshlegacy"
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/termcharset"
@@ -65,6 +67,7 @@ type Gateway struct {
 	targetsAt time.Time
 
 	sessFence func() error
+	legacy    bool
 }
 
 const maxEgressForwards = 8
@@ -98,6 +101,12 @@ func New(
 	}
 }
 
+func (g *Gateway) SetLegacy(on bool) {
+	if g != nil {
+		g.legacy = on
+	}
+}
+
 func (g *Gateway) SetSessionFence(fn func() error) {
 	if g != nil {
 		g.sessFence = fn
@@ -105,7 +114,7 @@ func (g *Gateway) SetSessionFence(fn func() error) {
 }
 
 func (g *Gateway) ListenAndServe() error {
-	signer, err := loadOrCreateHostKey(g.hostKeyPath)
+	signers, err := loadOrCreateHostKeys(g.hostKeyPath)
 	if err != nil {
 		return err
 	}
@@ -148,7 +157,12 @@ func (g *Gateway) ListenAndServe() error {
 			return p, nil
 		},
 	}
-	cfg.AddHostKey(signer)
+	if g.legacy {
+		sshlegacy.ApplyServer(cfg)
+	}
+	for _, signer := range signers {
+		cfg.AddHostKey(signer)
+	}
 
 	ln, err := net.Listen("tcp", g.addr)
 	if err != nil {
@@ -1083,14 +1097,48 @@ func be32(b []byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }
 
-func loadOrCreateHostKey(path string) (ssh.Signer, error) {
+func loadOrCreateHostKeys(path string) ([]ssh.Signer, error) {
 	if path == "" {
 		path = "/tmp/keeppam-ssh-hostkey"
 	}
+	ed, err := loadOrCreateEd25519HostKey(path)
+	if err != nil {
+		return nil, err
+	}
+	rsaSigner, err := loadOrCreateRSAHostKey(path + ".rsa")
+	if err != nil {
+		return nil, err
+	}
+	return []ssh.Signer{ed, rsaSigner}, nil
+}
+
+func loadOrCreateEd25519HostKey(path string) (ssh.Signer, error) {
 	if data, err := os.ReadFile(path); err == nil {
 		return ssh.ParsePrivateKey(data)
 	}
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		return nil, err
+	}
+	pemBytes := pem.EncodeToMemory(block)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		return nil, err
+	}
+	return ssh.ParsePrivateKey(pemBytes)
+}
+
+func loadOrCreateRSAHostKey(path string) (ssh.Signer, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		return ssh.ParsePrivateKey(data)
+	}
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}

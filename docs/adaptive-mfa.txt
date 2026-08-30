@@ -48,6 +48,7 @@ JIT по-прежнему можно создать (как при `require_appr
 Connect: `step_up_token` в теле `POST /admin/sessions`, `/assets/{id}/app/access`, `/assets/{id}/k8s/access`.
 
 Миграция `051`: CHECK `risk_action` включает `require_mfa`. Seed Policy `adaptive-mfa` (порог 40, не привязана).
+Миграция `113`: CHECK расширен до `terminate` / `lock_account` (`docs/ueba.txt`).
 
 ## Аудит
 

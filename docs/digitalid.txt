@@ -1,0 +1,60 @@
+# KeepPAM: OAuth 2.0 и Digital ID
+
+Режим **OAuth** — коннектор Digital ID в продукте: Authorization Code + PKCE и GET userinfo с Bearer. Это не OIDC: нет discovery и нет обязательного `id_token`.
+
+Контракт Digital ID (btsdigital.kz и аналоги): три URL + client id/secret + JSON userinfo (ИИН, ФИО, email). Маппинг claims по умолчанию — `iin` / `email` / `name`.
+
+## Лаборатория (из коробки, без партнёра)
+
+В compose включено `KEEPPAM_DIGITALID_LAB=true`. API поднимает локальный IdP:
+
+| Endpoint | Кто зовёт |
+|----------|-----------|
+| `{public_base}/api/v1/auth/digitalid-lab/authorize` | браузер |
+| `http://127.0.0.1:<api>/api/v1/auth/digitalid-lab/token` | KeepPAM (token) |
+| `http://127.0.0.1:<api>/api/v1/auth/digitalid-lab/userinfo` | KeepPAM (userinfo) |
+
+Client ID / secret: `keeppam-digitalid-lab` / `keeppam-digitalid-lab-secret`.
+
+Config → Авторизация → режим OAuth → **«Лаборатория KeepPAM»** заполняет URL и secret. Логин: **Войти через Digital ID** → форма ИИН (демо `900101300123`). Интернет не нужен.
+
+Helm / prod: `KEEPPAM_DIGITALID_LAB` не задавать (default off).
+
+## Настройка партнёрского Digital ID (входит в поставку)
+
+1. Public Base URL = URL UI.
+2. Режим входа = `OAuth 2.0 / Digital ID`.
+3. Кнопка «Пресет Digital ID» — claims `iin` / `email` / `name`.
+4. Authorize / Token / Userinfo / client — с площадки IdP заказчика (on-prem или периметр).
+5. Callback у IdP:
+
+```text
+{public_base_url}/api/v1/auth/oauth/callback
+```
+
+Старт: `GET /api/v1/auth/oauth/start`. State и PKCE verifier — Redis 10 минут (`oauth:{state}`).
+
+Auto-provision и skip local MFA — те же флаги, что у OIDC.
+
+KeepPAM не вызывает облачные API Digital ID сам: только URL, которые задал администратор.
+
+## Маппинг userinfo
+
+| Поле PAM | Claims по умолчанию (первый непустой) |
+|----------|----------------------------------------|
+| username | `oauth_username_claim` (default `iin`), затем preferred_username, username, sub, phone |
+| email    | `oauth_email_claim` (default `email`), mail; иначе `{username}@oauth.local` |
+| name     | `oauth_name_claim` (default `name`), display_name, fio |
+
+Источник учётки: `oauth`.
+
+## Acceptance (DoD)
+
+1. Compose: lab IdP → пресет → вход по ИИН → учётка `oauth`.
+2. На стенде заказчика: заменить URL на контур Digital ID, тот же callback, вход по ИИН с площадки партнёра.
+
+## Вне scope
+
+- OIDC discovery и проверка `id_token` (режим `oidc`)
+- Готовые production URL конкретного оператора Digital ID без заявки партнёра (как LDAP bind DN — заполняются на внедрении)
+- Отдельный SDK биометрии Digital ID (биометрия PAM — WebAuthn platform, локально)

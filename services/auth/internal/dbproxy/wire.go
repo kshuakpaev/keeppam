@@ -35,6 +35,7 @@ type WireGateway struct {
 	live      *sessionsvc.LiveHub
 	ensureEph EnsureEphemeral
 	sqlGuard  ResolveSQLGuard
+	pamStart  PamStart
 }
 
 // EnsureEphemeral creates a temporary DB role and returns dial credentials.
@@ -71,6 +72,15 @@ func (g *SQLGuard) denyOverflow() bool {
 }
 
 type ResolveSQLGuard func(ctx context.Context, sessionID uuid.UUID) (*SQLGuard, error)
+
+// PamStart creates a session from PAM username/password (native client, no portal).
+type PamStart func(ctx context.Context, protocol, username, password, hint, ip string) (sessionID uuid.UUID, token string, err error)
+
+func (g *WireGateway) SetPamStart(fn PamStart) {
+	if g != nil {
+		g.pamStart = fn
+	}
+}
 
 func NewWireGateway(addr, protocol string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service, aud *audit.Service, live *sessionsvc.LiveHub, ensure EnsureEphemeral, sqlGuard ResolveSQLGuard) *WireGateway {
 	return &WireGateway{addr: addr, protocol: protocol, rdb: rdb, assets: assetsSvc, sessions: sess, audit: aud, live: live, ensureEph: ensure, sqlGuard: sqlGuard}
@@ -141,13 +151,31 @@ func (g *WireGateway) handleConn(client net.Conn) {
 	_ = client.SetDeadline(time.Now().Add(60 * time.Second))
 	ctx := context.Background()
 
-	sessionID, token, clientDB, err := g.clientAuth(client)
+	user, token, clientDB, err := g.clientAuth(client)
 	if err != nil {
 		slog.Info("db wire auth failed", "protocol", g.protocol, "err", err)
 		return
 	}
-	want, err := g.rdb.Get(ctx, wireTokenPrefix+sessionID.String()).Result()
-	if err != nil || want == "" || want != token {
+	ip := ""
+	if ta, ok := client.RemoteAddr().(*net.TCPAddr); ok {
+		ip = ta.IP.String()
+	}
+	sessionID, parseErr := uuid.Parse(user)
+	tokenOK := false
+	if parseErr == nil {
+		want, werr := g.rdb.Get(ctx, wireTokenPrefix+sessionID.String()).Result()
+		tokenOK = werr == nil && want != "" && want == token
+	}
+	if !tokenOK && g.pamStart != nil {
+		sid, tok, perr := g.pamStart(ctx, g.protocol, user, token, clientDB, ip)
+		if perr != nil {
+			_ = g.sendAuthFail(client, perr.Error())
+			return
+		}
+		sessionID, token = sid, tok
+		tokenOK = true
+	}
+	if !tokenOK {
 		_ = g.sendAuthFail(client, "invalid wire token")
 		return
 	}
@@ -212,6 +240,8 @@ func (g *WireGateway) handleConn(client net.Conn) {
 		g.serveMySQL(ctx, client, creds, sessionID, row.UserID, rec)
 	case "mssql":
 		g.serveMSSQL(ctx, client, creds, sessionID, row.UserID, rec)
+	case "oracle":
+		g.serveOracle(ctx, client, creds, sessionID, row.UserID, rec)
 	}
 	_ = g.sessions.MarkEnded(ctx, sessionID, "")
 	ClearWireToken(ctx, g.rdb, sessionID)
@@ -514,15 +544,17 @@ func writeMySQLQueryResult(ctx context.Context, client net.Conn, db *sql.DB, stm
 	return nil
 }
 
-func (g *WireGateway) clientAuth(c net.Conn) (uuid.UUID, string, string, error) {
+func (g *WireGateway) clientAuth(c net.Conn) (user, token, clientDB string, err error) {
 	switch g.protocol {
 	case "postgres":
 		return g.authPostgres(c)
 	case "mssql":
 		return g.authMSSQL(c)
+	case "oracle":
+		return g.authOracle(c)
 	default:
-		id, tok, err := g.authMySQL(c)
-		return id, tok, "", err
+		u, tok, err := g.authMySQL(c)
+		return u, tok, "", err
 	}
 }
 
@@ -532,6 +564,8 @@ func (g *WireGateway) sendAuthFail(c net.Conn, msg string) error {
 		return writePGMsg(c, 'E', pgErrorBody(msg))
 	case "mssql":
 		return sendMSSQLFail(c, msg)
+	case "oracle":
+		return sendOracleFail(c, msg)
 	default:
 		return writeMySQLPacket(c, 2, mysqlErr(msg))
 	}
@@ -547,47 +581,49 @@ func (g *WireGateway) sendAuthOK(c net.Conn, database string) error {
 		return writePGMsg(c, 'Z', []byte{'I'})
 	case "mssql":
 		return sendMSSQLOK(c, database)
+	case "oracle":
+		return sendOracleOK(c)
 	default:
 		return writeMySQLPacket(c, 2, []byte{0, 0, 0, 2, 0, 0, 0})
 	}
 }
 
-func (g *WireGateway) authPostgres(c net.Conn) (uuid.UUID, string, string, error) {
+func (g *WireGateway) authPostgres(c net.Conn) (user, pass, db string, err error) {
 	hdr := make([]byte, 8)
 	if _, err := io.ReadFull(c, hdr); err != nil {
-		return uuid.Nil, "", "", err
+		return "", "", "", err
 	}
 	length := int(binary.BigEndian.Uint32(hdr[0:4]))
 	if length < 8 || length > 10000 {
-		return uuid.Nil, "", "", fmt.Errorf("bad startup length")
+		return "", "", "", fmt.Errorf("bad startup length")
 	}
 	rest := make([]byte, length-8)
 	if _, err := io.ReadFull(c, rest); err != nil {
-		return uuid.Nil, "", "", err
+		return "", "", "", err
 	}
 	if binary.BigEndian.Uint32(hdr[4:8]) == 80877103 {
 		_, _ = c.Write([]byte{'N'})
 		return g.authPostgres(c)
 	}
 	params := parsePGStartup(rest)
-	id, err := uuid.Parse(params["user"])
-	if err != nil {
-		return uuid.Nil, "", "", fmt.Errorf("user must be session uuid")
+	user = strings.TrimSpace(params["user"])
+	if user == "" {
+		return "", "", "", fmt.Errorf("user required")
 	}
 	if err := writePGMsg(c, 'R', []byte{0, 0, 0, 3}); err != nil {
-		return uuid.Nil, "", "", err
+		return "", "", "", err
 	}
 	msg, err := readPGMsg(c)
 	if err != nil {
-		return uuid.Nil, "", "", err
+		return "", "", "", err
 	}
 	if msg.tag != 'p' {
-		return uuid.Nil, "", "", fmt.Errorf("expected password")
+		return "", "", "", fmt.Errorf("expected password")
 	}
-	return id, strings.TrimRight(string(msg.body), "\x00"), strings.TrimSpace(params["database"]), nil
+	return user, strings.TrimRight(string(msg.body), "\x00"), strings.TrimSpace(params["database"]), nil
 }
 
-func (g *WireGateway) authMySQL(c net.Conn) (uuid.UUID, string, error) {
+func (g *WireGateway) authMySQL(c net.Conn) (user, pass string, err error) {
 	salt := make([]byte, 20)
 	_, _ = io.ReadFull(randReader(), salt)
 	payload := []byte{10}
@@ -605,21 +641,17 @@ func (g *WireGateway) authMySQL(c net.Conn) (uuid.UUID, string, error) {
 	payload = append(payload, 0)
 	payload = append(payload, "mysql_clear_password\x00"...)
 	if err := writeMySQLPacket(c, 0, payload); err != nil {
-		return uuid.Nil, "", err
+		return "", "", err
 	}
 	pkt, _, err := readMySQLPacket(c)
 	if err != nil {
-		return uuid.Nil, "", err
+		return "", "", err
 	}
 	if len(pkt) < 32 {
-		return uuid.Nil, "", fmt.Errorf("short handshake response")
+		return "", "", fmt.Errorf("short handshake response")
 	}
 	user, i := readNull(pkt, 32)
-	id, err := uuid.Parse(user)
-	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("user must be session uuid")
-	}
-	pass := ""
+	pass = ""
 	if i < len(pkt) {
 		if pkt[i] != 0 && int(pkt[i]) < 250 && i+1+int(pkt[i]) <= len(pkt) {
 			n := int(pkt[i])
@@ -628,7 +660,7 @@ func (g *WireGateway) authMySQL(c net.Conn) (uuid.UUID, string, error) {
 			pass, _ = readNull(pkt, i)
 		}
 	}
-	return id, strings.TrimRight(pass, "\x00"), nil
+	return user, strings.TrimRight(pass, "\x00"), nil
 }
 
 func pgErrorBody(msg string) []byte {

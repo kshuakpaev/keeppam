@@ -94,6 +94,22 @@ func TestFormatEventECS(t *testing.T) {
 	}
 }
 
+func TestFormatEventLEEF(t *testing.T) {
+	id := uuidMust()
+	actor := id
+	got := formatEvent("leef", store.AuditEvent{
+		ID: id, TS: time.Date(2026, 8, 29, 7, 0, 0, 0, time.UTC),
+		ActorID: &actor, Action: "user.login.success", ResourceType: "user", ResourceID: "u1",
+		IP: "10.1.2.3", Payload: map[string]any{"src": "oauth"}, Hash: "abc",
+	})
+	if !strings.HasPrefix(got, "LEEF:2.0|KeepPAM|KeepPAM|1.0|user.login.success|\t|") {
+		t.Fatalf("prefix %q", got)
+	}
+	if !strings.Contains(got, "src=10.1.2.3") || !strings.Contains(got, "sev=3") {
+		t.Fatal(got)
+	}
+}
+
 func uuidMust() uuid.UUID {
 	return uuid.MustParse("01900000-0000-7000-8000-000000000099")
 }

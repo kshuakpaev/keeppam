@@ -7,7 +7,7 @@ import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { rdpResolutionById, loadRdpResolutionId, RDP_RESOLUTIONS, saveRdpResolutionId } from "../rdpResolution";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "ftp", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
 const SUPERVISOR_WAIT_MS = 15 * 60 * 1000;
 
@@ -126,6 +126,7 @@ export function AssetEditPage() {
     citrix_transport: "socks",
     tn3270_codepage: "cp037",
     tn3270_terminal_type: "",
+    owner_user_id: "",
   });
   const [accForm, setAccForm] = useState({ ...emptyAccForm });
   const [accEditId, setAccEditId] = useState<string | null>(null);
@@ -151,7 +152,7 @@ export function AssetEditPage() {
   const [appLoaded, setAppLoaded] = useState(false);
 
   const canWrite = hasPerm(user, "assets.write");
-  const canConnect = hasPerm(user, "sessions.connect");
+  const canConnect = hasPerm(user, "sessions.connect") && !!asset?.entitled;
   const canACL = hasPerm(user, "assets.acl");
   const canUsers = hasPerm(user, "users.read");
   const canRequest = hasPerm(user, "access.request");
@@ -196,6 +197,7 @@ export function AssetEditPage() {
         citrix_transport: a.citrix_transport || "socks",
         tn3270_codepage: a.tn3270_codepage || "cp037",
         tn3270_terminal_type: a.tn3270_terminal_type || "",
+        owner_user_id: a.owner_user_id || "",
       });
       const acl = await api.listACL(id);
       setBindings(acl.bindings || []);
@@ -297,8 +299,17 @@ export function AssetEditPage() {
       if (isSQLProtocol(asset.protocol)) {
         if (sess.wire_token) {
           const fallback =
-            asset.protocol === "mysql" ? ":13306" : asset.protocol === "mssql" ? ":11433" : ":15432";
-          const dbn = sess.database_name || asset.database_name || (asset.protocol === "mssql" ? "master" : "postgres");
+            asset.protocol === "mysql"
+              ? ":13306"
+              : asset.protocol === "mssql"
+                ? ":11433"
+                : asset.protocol === "oracle"
+                  ? ":11521"
+                  : ":15432";
+          const dbn =
+            sess.database_name ||
+            asset.database_name ||
+            (asset.protocol === "mssql" ? "master" : asset.protocol === "oracle" ? "ORCL" : "postgres");
           setMsg(
             `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`,
           );
@@ -353,6 +364,12 @@ export function AssetEditPage() {
         a.click();
         URL.revokeObjectURL(url);
         setMsg(sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`);
+      }
+      if (asset.protocol === "ftp") {
+        setMsg(
+          `FTP: FileZilla/WinSCP → PAM ${sess.wire_addr || ":2121"} — USER=${sess.wire_user || sess.id} PASS=${sess.wire_token || ""} или USER=pamuser+ASSET`,
+        );
+        return;
       }
       openTab({
         id: sess.id,
@@ -504,6 +521,9 @@ export function AssetEditPage() {
         citrix_transport: form.citrix_transport || "socks",
         tn3270_codepage: form.tn3270_codepage || "cp037",
         tn3270_terminal_type: form.tn3270_terminal_type || "",
+        ...(canUsers
+          ? { owner_user_id: form.owner_user_id || "00000000-0000-0000-0000-000000000000" }
+          : {}),
       });
       setAsset(updated);
       setMsg(t("assets.saved"));
@@ -1152,6 +1172,29 @@ export function AssetEditPage() {
           />
           {t("assets.pamOnly")}
         </label>
+        <label>{t("assets.owner")}</label>
+        {canUsers ? (
+          <select
+            value={form.owner_user_id}
+            onChange={(e) => setForm({ ...form, owner_user_id: e.target.value })}
+            disabled={!canWrite}
+          >
+            <option value="">{t("assets.ownerNone")}</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.username}
+                {u.display_name ? ` (${u.display_name})` : ""}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="muted" style={{ marginTop: 0 }}>
+            {asset?.owner_username || "—"}
+          </p>
+        )}
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("assets.ownerHint")}
+        </p>
         {form.pam_only && (
           <p className="muted" style={{ marginTop: 0 }}>
             Firewall:{" "}
@@ -2736,6 +2779,8 @@ export function AssetEditPage() {
                 <option value="deny">deny</option>
                 <option value="require_approval">require_approval (JIT)</option>
                 <option value="require_mfa">{t("assets.requireMfaOpt")}</option>
+                <option value="terminate">{t("assets.terminateOpt")}</option>
+                <option value="lock_account">{t("assets.lockAccountOpt")}</option>
               </select>
             </div>
           </div>

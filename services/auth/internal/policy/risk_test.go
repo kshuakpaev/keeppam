@@ -71,6 +71,18 @@ func TestComputeRiskUEBA(t *testing.T) {
 	}
 }
 
+func TestComputeRiskNewIPSubnet(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	score, factors := computeRisk(RiskInputs{Now: now, NewIP: true})
+	if score != 20 || len(factors) != 1 || factors[0] != "ueba_new_ip" {
+		t.Fatalf("new ip score=%d factors=%v", score, factors)
+	}
+	score, factors = computeRisk(RiskInputs{Now: now, NewIP: true, NewSubnet: true})
+	if score != 25 || len(factors) != 1 || factors[0] != "ueba_new_subnet" {
+		t.Fatalf("subnet wins over host: score=%d factors=%v", score, factors)
+	}
+}
+
 func TestRiskDenyMessage(t *testing.T) {
 	r := AccessResult{DeniedByRisk: true, RiskScore: 72, MaxRisk: 40, RiskAction: "require_approval", RiskFactors: []string{"off_hours", "failed_logins"}}
 	msg := r.DenyMessage()
@@ -84,8 +96,31 @@ func TestNormalizeRiskAction(t *testing.T) {
 	if err != nil || ok != "require_mfa" {
 		t.Fatalf("got %s %v", ok, err)
 	}
+	for _, a := range []string{"terminate", "lock_account"} {
+		got, err := NormalizeRiskAction(a)
+		if err != nil || got != a {
+			t.Fatalf("%s: got %s %v", a, got, err)
+		}
+		if !IsHardRiskAction(a) {
+			t.Fatalf("%s should be hard", a)
+		}
+	}
+	if IsHardRiskAction("deny") || IsHardRiskAction("require_mfa") {
+		t.Fatal("soft actions must not be hard")
+	}
 	if _, err := NormalizeRiskAction("explode"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRiskDenyMessageHardActions(t *testing.T) {
+	term := AccessResult{DeniedByRisk: true, RiskScore: 80, MaxRisk: 40, RiskAction: "terminate"}
+	if !strings.Contains(term.DenyMessage(), "terminated") {
+		t.Fatalf("terminate msg=%s", term.DenyMessage())
+	}
+	lock := AccessResult{DeniedByRisk: true, RiskScore: 80, MaxRisk: 40, RiskAction: "lock_account"}
+	if !strings.Contains(lock.DenyMessage(), "account locked") {
+		t.Fatalf("lock msg=%s", lock.DenyMessage())
 	}
 }
 

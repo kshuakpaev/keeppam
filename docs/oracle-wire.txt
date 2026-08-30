@@ -1,0 +1,67 @@
+# KeepPAM: Oracle SQL*Net wire
+
+Native клиент (SQL Developer, DBeaver, DataGrip, sqlplus) ходит на шлюз KeepPAM, пароль актива не видит. Vault-логин подставляется на стороне proxy (go-ora). Модель та же, что у MSSQL TDS: terminate-and-query, не байт-форвард TTC.
+
+## Как пользоваться
+
+1. Актив `protocol=oracle`, порт цели обычно `1521`, `database_name` = service name / SID (default `ORCL`).
+2. Создать сессию (портал / JIT) **или** create-on-connect `user+ASSET` без портала.
+3. В ответе create: `wire_user` = UUID сессии, `wire_token`, `wire_addr` (default `:11521`).
+4. Клиент — Basic / EZCONNECT:
+
+```text
+Host: pam.example
+Port: 11521
+Service / SID: ORCL   (должен совпадать с database_name сессии)
+User: <session-uuid>   или  pamuser+ASSET
+Password: <wire_token> или пароль PAM (для user+ASSET)
+```
+
+sqlplus:
+
+```text
+sqlplus '<uuid>/<wire_token>@//pam.example:11521/ORCL'
+```
+
+Если драйвер не кладёт user/password в TNS CONNECT, задайте их в CONNECT_DATA (SQL Developer → Advanced → Custom JDBC URL):
+
+```text
+jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=pam.example)(PORT=11521))(CONNECT_DATA=(SERVICE_NAME=ORCL)(KEEPPAM_USER=<uuid>)(KEEPPAM_PASS=<wire_token>)))
+```
+
+Create-on-connect без портала: `KEEPPAM_USER=pamuser+ASSET`, `KEEPPAM_PASS=` пароль PAM.
+
+Web SQL-консоль — тот же путь, что PG/MySQL (`/sessions/{id}/sql`).
+
+## Что делает proxy
+
+| Шаг | Поведение |
+|-----|-----------|
+| TNS CONNECT | Разбор descriptor; ACCEPT |
+| Auth | UUID + wire_token **или** `user+ASSET` + пароль PAM; опционально `KEEPPAM_USER` / `KEEPPAM_PASS` |
+| Upstream | go-ora на актив: vault user/password, service = `database_name` |
+| SQL | JEA pack + DLP; statement → `session_events` type `sql`, recording JSONL, audit `session.sql` |
+| Result | Текстовый result set в TNS DATA (не полный TTC row source) |
+
+Ephemeral DB role **нет** (только postgres/mysql).
+
+## Ограничения (не обещать в пилоте без SOW)
+
+- Нет полного TTC: Object Explorer / PL/SQL debug / RPC SQL Developer могут не открыть дерево. Simple SQL (worksheet / sqlplus SELECT) — целевой срез, как MSSQL без TDS RPC.
+- Нет TCPS/NNE от клиента до PAM.
+- Живой байт-форвард на listener цели нет: пароль актива не уходит в клиент.
+- CDB/PDB edge cases — service name на активе.
+
+## Порты
+
+| Где | Порт |
+|-----|------|
+| Wire на PAM | `KEEPPAM_ORACLE_WIRE_ADDR` default `:11521` |
+| Цель | `assets.port` default 1521 |
+
+HA: HAProxy TCP `:11521` → api / api-b. См. `docs/ha.txt`, `docs/db-app-pam.txt`.
+
+## Связанное
+
+- `docs/oracle-pwdsync.txt` — rotate/sync пароля
+- `docs/mssql-wire.txt` — тот же класс proxy для TDS

@@ -11,6 +11,8 @@ const CONNECT_PROTOCOLS = new Set([
   "postgres",
   "mysql",
   "mssql",
+  "oracle",
+  "ftp",
   "https",
   "kubectl",
 ]);
@@ -81,6 +83,7 @@ export type StartAssetSessionResult = {
   title: string;
   protocol: string;
   msg?: string;
+  skipTab?: boolean;
 };
 
 export async function startAssetSession(
@@ -108,13 +111,27 @@ export async function startAssetSession(
   if (isSQLProtocol(asset.protocol)) {
     if (sess.wire_token) {
       const fallback =
-        asset.protocol === "mysql" ? ":13306" : asset.protocol === "mssql" ? ":11433" : ":15432";
+        asset.protocol === "mysql"
+          ? ":13306"
+          : asset.protocol === "mssql"
+            ? ":11433"
+            : asset.protocol === "oracle"
+              ? ":11521"
+              : ":15432";
       const dbn =
         sess.database_name ||
         asset.database_name ||
-        (asset.protocol === "mssql" ? "master" : "postgres");
+        (asset.protocol === "mssql" ? "master" : asset.protocol === "oracle" ? "ORCL" : "postgres");
       msg = `Wire: host=PAM port=${sess.wire_addr || fallback} user=${sess.wire_user || sess.id} password=${sess.wire_token} dbname=${dbn} (Encrypt=Optional)`;
+      if (asset.protocol === "oracle") {
+        msg =
+          sess.wire_hint ||
+          `Oracle wire: host=PAM port=${sess.wire_addr || ":11521"} user=${sess.wire_user || sess.id} password=${sess.wire_token} service=${dbn}`;
+      }
     }
+  }
+  if (asset.protocol === "ftp") {
+    msg = `FTP: FileZilla/WinSCP → PAM ${sess.wire_addr || ":2121"} — USER=${sess.wire_user || sess.id} PASS=${sess.wire_token || "(PAM password)"} или USER=pamuser+ASSET без портала`;
   }
   if (asset.protocol === "telnet" && sess.wire_token) {
     msg = `Telnet wire: telnet PAM ${sess.wire_addr || ":2323"} — login=${sess.wire_user || sess.id} password=${sess.wire_token}`;
@@ -169,5 +186,6 @@ export async function startAssetSession(
     title,
     protocol: asset.protocol,
     msg,
+    skipTab: asset.protocol === "ftp",
   };
 }

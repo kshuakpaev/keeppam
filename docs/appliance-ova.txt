@@ -86,7 +86,7 @@ Start-VM KeepPAM
 | 5173 | Web UI |
 | 8080 | API |
 | 2222 | SSH gateway |
-| 15432 / 13306 / 11433 | SQL wire |
+| 15432 / 13306 / 11433 / 11521 | SQL wire (PG / MySQL / MSSQL / Oracle) |
 | 16443 | k8s API proxy |
 
 Firewall на гипервизоре / NSX — по политике заказчика.

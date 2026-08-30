@@ -14,11 +14,13 @@ import {
   type ArchiveSettings,
   type EIDASSettings,
   type LicenseStatus,
+  type ResidencySettings,
   type UEBAMLSettings,
+  type AISettings,
 } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
-import { licenseStatusText } from "../licenseStatus";
+import { licenseCapText, licenseModelLabel, licenseStatusText } from "../licenseStatus";
 
 const emptyEidas: EIDASSettings = { mode: "off", profile: "eidas", require_b_lta: true };
 const emptyUebaMl: UEBAMLSettings = {
@@ -27,11 +29,29 @@ const emptyUebaMl: UEBAMLSettings = {
   ml_threshold: 65,
   live_interval_s: 60,
 };
+const emptyAI: AISettings = {
+  mode: "off",
+  endpoint: "mock://local",
+  model: "mock",
+  embed_model: "mock",
+  max_input_chars: 48000,
+  timeout_s: 90,
+  lang: "ru",
+};
+
+const emptyResidency: ResidencySettings = {
+  region: "KZ",
+  country_name: "Kazakhstan",
+  on_prem: true,
+  notes: "",
+  compliant: true,
+  risks: [],
+};
 
 const emptyArchive: ArchiveSettings = {
   enabled: false,
   backend: "nfs",
-  age_days: 7,
+  age_days: 30,
   interval_minutes: 60,
   delete_local: false,
   nfs_path: "",
@@ -53,6 +73,12 @@ const empty: AuthSettings = {
   oidc_auto_provision: true,
   oidc_skip_mfa: true,
   oidc_default_role: "operator",
+  oauth_authorize_url: "",
+  oauth_token_url: "",
+  oauth_userinfo_url: "",
+  oauth_username_claim: "iin",
+  oauth_email_claim: "email",
+  oauth_name_claim: "name",
   ldap_url: "",
   ldap_bind_dn: "",
   has_ldap_bind_password: false,
@@ -232,14 +258,37 @@ export function ConfigPage() {
     live_interval_s: 60,
     last_error: "",
   });
+  const [aiForm, setAiForm] = useState({
+    mode: "off",
+    endpoint: "mock://local",
+    model: "mock",
+    embed_model: "mock",
+    max_input_chars: 48000,
+    timeout_s: 90,
+    lang: "ru",
+    last_error: "",
+    licensed: true,
+    allow_external: false,
+  });
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
   const [ssh, setSsh] = useState<SSHSettings>(emptySSH);
   const [infra, setInfra] = useState<InfraStatus | null>(null);
+  const [residency, setResidency] = useState<ResidencySettings>(emptyResidency);
   const [archive, setArchive] = useState<ArchiveSettings>(emptyArchive);
   const [smbPass, setSmbPass] = useState("");
   const [secret, setSecret] = useState("");
+  const [didLab, setDidLab] = useState<{
+    authorize_url: string;
+    token_url: string;
+    userinfo_url: string;
+    client_id: string;
+    client_secret: string;
+    username_claim: string;
+    email_claim: string;
+    name_claim: string;
+  } | null>(null);
   const [ldapPass, setLdapPass] = useState("");
   const [radiusSecret, setRadiusSecret] = useState("");
   const [scimToken, setScimToken] = useState("");
@@ -295,7 +344,7 @@ export function ConfigPage() {
     if (!canWrite) return;
     void (async () => {
       try {
-        const [s, si, sh, inf, it, fw, fws, nac, eidas, uebaMl, nt, idps, ar] = await Promise.all([
+        const [s, si, sh, inf, it, fw, fws, nac, eidas, uebaMl, aiSet, nt, idps, ar] = await Promise.all([
           api.getAuthSettings(),
           api.getSIEMSettings(),
           api.getSSHSettings(),
@@ -313,15 +362,18 @@ export function ConfigPage() {
           })),
           api.getEIDASSettings().catch(() => emptyEidas),
           api.getUEBAMLSettings().catch(() => emptyUebaMl),
+          api.getAISettings().catch(() => emptyAI),
           api.getNotifySettings(),
           api.listSAMLIdPs().catch(() => ({ idps: [] as SAMLIdP[] })),
           api.getArchiveSettings().catch(() => emptyArchive),
         ]);
+        void api.getDigitalIDLabPreset().then(setDidLab).catch(() => setDidLab(null));
         setForm({ ...empty, ...s });
         setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
         setSiem({ ...emptySIEM, ...si });
         setSsh({ ...emptySSH, ...sh });
         setInfra(inf);
+        if (inf.residency) setResidency({ ...emptyResidency, ...inf.residency });
         setArchive({ ...emptyArchive, ...ar });
         setItsm({
           ...emptyITSM,
@@ -374,6 +426,18 @@ export function ConfigPage() {
           ml_threshold: uebaMl.ml_threshold || 65,
           live_interval_s: uebaMl.live_interval_s || 60,
           last_error: uebaMl.last_error || "",
+        });
+        setAiForm({
+          mode: aiSet.mode || "off",
+          endpoint: aiSet.endpoint || "mock://local",
+          model: aiSet.model || "mock",
+          embed_model: aiSet.embed_model || "mock",
+          max_input_chars: aiSet.max_input_chars || 48000,
+          timeout_s: aiSet.timeout_s || 90,
+          lang: aiSet.lang || "ru",
+          last_error: aiSet.last_error || "",
+          licensed: aiSet.licensed !== false,
+          allow_external: !!aiSet.allow_external,
         });
         setNotify({ ...emptyNotify, ...nt });
         setExtraIdPs(idps.idps || []);
@@ -585,6 +649,41 @@ export function ConfigPage() {
     }
   }
 
+  async function onSaveAI(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const saved = await api.putAISettings({
+        mode: aiForm.mode,
+        endpoint: aiForm.endpoint,
+        model: aiForm.model,
+        embed_model: aiForm.embed_model,
+        max_input_chars: Number(aiForm.max_input_chars) || 48000,
+        timeout_s: Number(aiForm.timeout_s) || 90,
+        lang: aiForm.lang,
+      });
+      setAiForm({
+        mode: saved.mode || "off",
+        endpoint: saved.endpoint || "mock://local",
+        model: saved.model || "mock",
+        embed_model: saved.embed_model || "mock",
+        max_input_chars: saved.max_input_chars || 48000,
+        timeout_s: saved.timeout_s || 90,
+        lang: saved.lang || "ru",
+        last_error: saved.last_error || "",
+        licensed: saved.licensed !== false,
+        allow_external: !!saved.allow_external,
+      });
+      setMsg(t("config.aiSaved"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("config.aiSaveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onSaveProbeAgents(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -757,6 +856,9 @@ export function ConfigPage() {
         <div>
           <h1>{t("config.title")}</h1>
           <p className="muted">{t("config.lead")}</p>
+          <p className="muted" style={{ marginTop: "0.35rem" }}>
+            <a href="#ai">{t("config.aiTitle")}</a>
+          </p>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -773,11 +875,21 @@ export function ConfigPage() {
                 <td>{licenseInfo.customer || "—"}</td>
               </tr>
               <tr>
+                <td className="muted">{t("config.licenseModel")}</td>
+                <td>{licenseModelLabel(licenseInfo.model, t)}</td>
+              </tr>
+              <tr>
                 <td className="muted">{t("config.licenseAssets")}</td>
                 <td>
-                  {licenseInfo.asset_count} / {licenseInfo.max_assets}
-                  {licenseInfo.soft_warn ? t("config.warningSuffix") : ""}
-                  {licenseInfo.hard_blocked ? t("config.licenseBlockedSuffix") : ""}
+                  {licenseCapText(licenseInfo.asset_count, licenseInfo.max_assets, licenseInfo.limits_assets)}
+                  {licenseInfo.hard_blocked_assets ? t("config.licenseBlockedSuffix") : ""}
+                </td>
+              </tr>
+              <tr>
+                <td className="muted">{t("config.licenseUsers")}</td>
+                <td>
+                  {licenseCapText(licenseInfo.user_count, licenseInfo.max_users, licenseInfo.limits_users)}
+                  {licenseInfo.hard_blocked_users ? t("config.licenseBlockedSuffix") : ""}
                 </td>
               </tr>
               <tr>
@@ -797,7 +909,8 @@ export function ConfigPage() {
                   <td className="muted">{t("common.status")}</td>
                   <td>
                     {licenseStatusText(licenseInfo, t)}
-                    {licenseInfo.hard_blocked ? ` ${t("license.createForbidden")}` : ""}
+                    {licenseInfo.hard_blocked_assets ? ` ${t("license.createForbidden")}` : ""}
+                    {licenseInfo.hard_blocked_users ? ` ${t("license.connectForbidden")}` : ""}
                   </td>
                 </tr>
               )}
@@ -830,6 +943,117 @@ export function ConfigPage() {
                 }}
               />
             </>
+          )}
+        </div>
+      )}
+
+      {infra && (
+        <div className="card" style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
+          <h2>{t("config.residencyTitle")}</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {t("config.residencyLead")}{" "}
+            <span className="mono">docs/data-residency.txt</span>
+          </p>
+          <p>
+            {residency.compliant ? (
+              t("config.residencyOk")
+            ) : (
+              <span className="error">
+                {t("config.residencyBad")}
+                {residency.risks && residency.risks.length
+                  ? `: ${residency.risks.join(", ")}`
+                  : ""}
+              </span>
+            )}
+          </p>
+          <label>{t("config.residencyRegion")}</label>
+          <input
+            className="mono"
+            value={residency.region}
+            disabled={!canWrite || busy}
+            onChange={(e) => setResidency({ ...residency, region: e.target.value.toUpperCase() })}
+          />
+          <label className="row" style={{ gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={residency.on_prem}
+              disabled={!canWrite || busy}
+              onChange={(e) => setResidency({ ...residency, on_prem: e.target.checked })}
+            />
+            {t("config.residencyOnPrem")}
+          </label>
+          <label>{t("config.residencyNotes")}</label>
+          <input
+            value={residency.notes}
+            disabled={!canWrite || busy}
+            onChange={(e) => setResidency({ ...residency, notes: e.target.value })}
+          />
+          {residency.attested_at && (
+            <p className="muted">
+              {t("config.residencyAttested", {
+                name: residency.attested_by_name || residency.attested_by || "—",
+                at: new Date(residency.attested_at).toLocaleString(),
+              })}
+            </p>
+          )}
+          {canWrite && (
+            <div className="row" style={{ gap: "0.5rem" }}>
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      const saved = await api.putResidencySettings({
+                        region: residency.region,
+                        on_prem: residency.on_prem,
+                        notes: residency.notes,
+                      });
+                      setResidency({ ...emptyResidency, ...saved });
+                      setMsg(t("config.residencySaved"));
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : t("common.error"));
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {t("common.save")}
+              </button>
+              <button
+                className="btn"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      const saved = await api.putResidencySettings({
+                        region: residency.region || "KZ",
+                        on_prem: true,
+                        notes: residency.notes,
+                        attest: true,
+                      });
+                      setResidency({ ...emptyResidency, ...saved });
+                      const inf = await api.getInfraStatus().catch(() => null);
+                      if (inf) setInfra(inf);
+                      setMsg(t("config.residencySaved"));
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : t("common.error"));
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {t("config.residencyAttest")}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -1031,6 +1255,14 @@ export function ConfigPage() {
           {t("config.archiveHintJsx")}{" "}
           <span className="mono">docs/archive-smb-nfs.txt</span>
         </p>
+        <button
+          type="button"
+          className="btn secondary"
+          style={{ marginBottom: "0.75rem" }}
+          onClick={() => setArchive({ ...archive, age_days: 30 })}
+        >
+          {t("config.archiveNitPreset")}
+        </button>
         <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
           <input
             type="checkbox"
@@ -1162,9 +1394,10 @@ export function ConfigPage() {
         >
           <option value="local">{t("config.loginModeLocal")}</option>
           <option value="oidc">OIDC / SSO</option>
+          <option value="oauth">{t("config.loginModeOAuth")}</option>
           <option value="saml">SAML 2.0 / SSO</option>
           <option value="ldap">LDAP / Active Directory</option>
-          <option value="radius">RADIUS (PAP)</option>
+          <option value="radius">RADIUS (PAP/EAP/RadSec)</option>
         </select>
 
         <label>{t("config.publicBaseUrl")}</label>
@@ -1176,6 +1409,9 @@ export function ConfigPage() {
         <p className="muted" style={{ marginTop: 0 }}>
           OIDC callback:{" "}
           <span className="mono">{form.public_base_url || "…"}/api/v1/auth/oidc/callback</span>
+          <br />
+          OAuth callback:{" "}
+          <span className="mono">{form.public_base_url || "…"}/api/v1/auth/oauth/callback</span>
           <br />
           SAML ACS: <span className="mono">{form.public_base_url || "…"}/api/v1/auth/saml/acs</span>
           <br />
@@ -1210,6 +1446,133 @@ export function ConfigPage() {
             <input
               value={form.oidc_scopes}
               onChange={(e) => setForm({ ...form, oidc_scopes: e.target.value })}
+            />
+            <label>{t("config.defaultRoleAutoProvision")}</label>
+            <input
+              value={form.oidc_default_role}
+              onChange={(e) => setForm({ ...form, oidc_default_role: e.target.value })}
+            />
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.oidc_auto_provision}
+                onChange={(e) => setForm({ ...form, oidc_auto_provision: e.target.checked })}
+              />
+              {t("config.autoCreateUsers")}
+            </label>
+            <label className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={form.oidc_skip_mfa}
+                onChange={(e) => setForm({ ...form, oidc_skip_mfa: e.target.checked })}
+              />
+              {t("config.skipLocalMfaAfterSaml")}
+            </label>
+          </>
+        )}
+
+        {form.mode === "oauth" && (
+          <>
+            <h2>{t("config.oauthTitle")}</h2>
+            <p className="muted">{t("config.oauthHint")}</p>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ marginBottom: "0.75rem" }}
+              onClick={() =>
+                setForm({
+                  ...form,
+                  mode: "oauth",
+                  oidc_scopes: "",
+                  oauth_username_claim: "iin",
+                  oauth_email_claim: "email",
+                  oauth_name_claim: "name",
+                })
+              }
+            >
+              {t("config.oauthDigitalIdPreset")}
+            </button>
+            {didLab ? (
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ marginBottom: "0.75rem", marginLeft: "0.5rem" }}
+                onClick={() => {
+                  setForm({
+                    ...form,
+                    mode: "oauth",
+                    oidc_client_id: didLab.client_id,
+                    oidc_scopes: "",
+                    oauth_authorize_url: didLab.authorize_url,
+                    oauth_token_url: didLab.token_url,
+                    oauth_userinfo_url: didLab.userinfo_url,
+                    oauth_username_claim: didLab.username_claim,
+                    oauth_email_claim: didLab.email_claim,
+                    oauth_name_claim: didLab.name_claim,
+                    oidc_auto_provision: true,
+                    oidc_default_role: form.oidc_default_role || "operator",
+                  });
+                  setSecret(didLab.client_secret);
+                }}
+              >
+                {t("config.oauthDigitalIdLab")}
+              </button>
+            ) : null}
+            <label>Client ID</label>
+            <input
+              value={form.oidc_client_id}
+              onChange={(e) => setForm({ ...form, oidc_client_id: e.target.value })}
+              required={form.mode === "oauth"}
+            />
+            <label>Client Secret {form.has_oidc_secret ? t("config.secretSetLeaveEmpty") : ""}</label>
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              autoComplete="off"
+              placeholder={form.has_oidc_secret ? "••••••••" : ""}
+            />
+            <label>{t("config.oauthAuthorizeUrl")}</label>
+            <input
+              value={form.oauth_authorize_url || ""}
+              onChange={(e) => setForm({ ...form, oauth_authorize_url: e.target.value })}
+              placeholder="https://id.example/oauth/authorize"
+              required={form.mode === "oauth"}
+            />
+            <label>{t("config.oauthTokenUrl")}</label>
+            <input
+              value={form.oauth_token_url || ""}
+              onChange={(e) => setForm({ ...form, oauth_token_url: e.target.value })}
+              placeholder="https://id.example/oauth/token"
+              required={form.mode === "oauth"}
+            />
+            <label>{t("config.oauthUserinfoUrl")}</label>
+            <input
+              value={form.oauth_userinfo_url || ""}
+              onChange={(e) => setForm({ ...form, oauth_userinfo_url: e.target.value })}
+              placeholder="https://id.example/oauth/userinfo"
+              required={form.mode === "oauth"}
+            />
+            <label>Scopes ({t("config.oauthScopesOptional")})</label>
+            <input
+              value={form.oidc_scopes}
+              onChange={(e) => setForm({ ...form, oidc_scopes: e.target.value })}
+              placeholder=""
+            />
+            <label>{t("config.oauthUsernameClaim")}</label>
+            <input
+              value={form.oauth_username_claim || "iin"}
+              onChange={(e) => setForm({ ...form, oauth_username_claim: e.target.value })}
+            />
+            <label>{t("config.oauthEmailClaim")}</label>
+            <input
+              value={form.oauth_email_claim || "email"}
+              onChange={(e) => setForm({ ...form, oauth_email_claim: e.target.value })}
+            />
+            <label>{t("config.oauthNameClaim")}</label>
+            <input
+              value={form.oauth_name_claim || "name"}
+              onChange={(e) => setForm({ ...form, oauth_name_claim: e.target.value })}
             />
             <label>{t("config.defaultRoleAutoProvision")}</label>
             <input
@@ -2326,6 +2689,48 @@ export function ConfigPage() {
         </div>
       </form>
 
+      <form id="ai" className="card" onSubmit={onSaveAI} style={{ maxWidth: 640 }}>
+        <h2>{t("config.aiTitle")}</h2>
+        <p className="muted">{t("config.aiLead")}</p>
+        <p className="muted">{aiForm.licensed ? t("config.aiLicensed") : t("config.aiUnlicensed")}</p>
+        <label>{t("config.mode")}</label>
+        <select value={aiForm.mode} onChange={(e) => setAiForm({ ...aiForm, mode: e.target.value })}>
+          <option value="off">{t("config.off")}</option>
+          <option value="on">on</option>
+          {aiForm.allow_external ? <option value="external">external</option> : null}
+        </select>
+        <label>{t("config.aiEndpoint")}</label>
+        <input value={aiForm.endpoint} onChange={(e) => setAiForm({ ...aiForm, endpoint: e.target.value })} />
+        <label>{t("config.aiModel")}</label>
+        <input value={aiForm.model} onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })} />
+        <label>{t("config.aiEmbed")}</label>
+        <input value={aiForm.embed_model} onChange={(e) => setAiForm({ ...aiForm, embed_model: e.target.value })} />
+        <label>Lang</label>
+        <select value={aiForm.lang} onChange={(e) => setAiForm({ ...aiForm, lang: e.target.value })}>
+          <option value="ru">ru</option>
+          <option value="en">en</option>
+        </select>
+        {aiForm.last_error ? <p className="error">{aiForm.last_error}</p> : null}
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void api
+                .testAISettings()
+                .then((r) => setMsg(`AI test: ok=${r.ok} model=${r.model || "—"}`))
+                .catch((err) => setError(String(err)))
+            }
+          >
+            Test
+          </button>
+          <button className="btn" type="submit" disabled={busy}>
+            {t("config.save")}
+          </button>
+        </div>
+      </form>
+
       <form className="card" onSubmit={onSaveITSM} style={{ maxWidth: 640 }}>
         <h2>{t("config.itsmTitle")}</h2>
         <p className="muted">{t("config.itsmLead")}</p>
@@ -2616,6 +3021,7 @@ export function ConfigPage() {
           <option value="json">JSON</option>
           <option value="cef">CEF</option>
           <option value="ecs">ECS (OpenSearch)</option>
+          <option value="leef">LEEF 2.0 (QRadar)</option>
         </select>
         {(siem.transport === "syslog_udp" || siem.transport === "syslog_tcp") && (
           <>

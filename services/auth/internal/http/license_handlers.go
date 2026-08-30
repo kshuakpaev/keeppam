@@ -42,15 +42,35 @@ func (s *Server) syncAssetQuota() {
 		}
 		return s.currentLicense().AllowCreate(n, time.Now())
 	})
+	if s.sessionsvc != nil {
+		s.sessionsvc.SetSessionQuota(func(ctx context.Context) error {
+			n, err := s.sessionsvc.CountLive(ctx)
+			if err != nil {
+				return err
+			}
+			return s.currentLicense().AllowSession(n, time.Now())
+		})
+	}
+}
+
+func (s *Server) licenseUsage(ctx context.Context) (assetsN, sessionsN int, err error) {
+	assetsN, err = s.assets.CountActive(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	if s.sessionsvc != nil {
+		sessionsN, err = s.sessionsvc.CountLive(ctx)
+	}
+	return assetsN, sessionsN, err
 }
 
 func (s *Server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
-	n, err := s.assets.CountActive(r.Context())
+	n, sessN, err := s.licenseUsage(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	st := s.enrichLicenseStatus(s.currentLicense().Evaluate(n, time.Now()))
+	st := s.enrichLicenseStatus(s.currentLicense().Evaluate(n, sessN, time.Now()))
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -138,10 +158,10 @@ func (s *Server) handleUploadLicense(w http.ResponseWriter, r *http.Request) {
 	f.Source = path
 	s.setLicense(f)
 	_ = s.audit.Record(r.Context(), &sess.UserID, "license.uploaded", "license", path, s.clientIP(r), r.UserAgent(), map[string]any{
-		"customer": f.Customer, "max_assets": f.MaxAssets, "expires": f.Expires,
+		"customer": f.Customer, "model": f.ResolvedModel(), "max_assets": f.MaxAssets, "max_users": f.MaxUsers, "expires": f.Expires,
 	})
 
-	n, _ := s.assets.CountActive(r.Context())
-	st := s.enrichLicenseStatus(f.Evaluate(n, time.Now()))
+	n, sessN, _ := s.licenseUsage(r.Context())
+	st := s.enrichLicenseStatus(f.Evaluate(n, sessN, time.Now()))
 	writeJSON(w, http.StatusOK, st)
 }

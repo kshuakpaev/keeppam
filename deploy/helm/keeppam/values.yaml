@@ -3,6 +3,7 @@ replicaCount:
   api: 3
   worker: 2
   web: 1
+  guacd: 1
 
 image:
   repository: keeppam/api
@@ -23,6 +24,8 @@ service:
   worker:
     type: LoadBalancer
     port: 2222
+  ftp:
+    port: 2121
   telnet:
     port: 2323
   tn3270:
@@ -38,6 +41,8 @@ service:
     port: 13306
   mssqlwire:
     port: 11433
+  oraclewire:
+    port: 11521
   k8sapi:
     port: 16443
 
@@ -60,6 +65,7 @@ env:
   recordingsBackend: local
   guacdAddr: guacd:4822
   trustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  digitalidLab: "false"
 
 # Connection strings live in Secret (see secret.yaml / existingSecret).
 databaseUrl: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
@@ -69,8 +75,13 @@ dataKey: "a2VlcHBhbS1sb2NhbC1kZXYta2V5LTMyLWJ5dGVzISE="
 existingSecret: ""
 
 postgres:
-  # false = внешний Patroni / CloudNativePG / RDS-эквивалент on-prem
+  # false = внешний Patroni / CloudNativePG (см. deploy/helm/cnpg-cluster.yaml)
   ha: false
+
+# Rolling scale without dropping ready pods (NIT §2).
+rollingUpdate:
+  maxUnavailable: 0
+  maxSurge: 1
 
 resources:
   api:
@@ -93,3 +104,7 @@ recordings:
 guacd:
   enabled: true
   image: guacamole/guacd:1.5.5
+
+ai:
+  enabled: false
+  allowExternal: false

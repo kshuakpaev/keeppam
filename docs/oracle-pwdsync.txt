@@ -1,6 +1,10 @@
-# KeepPAM: Oracle password sync (SOW-ORACLE)
+# KeepPAM: Oracle password sync и SQL (web)
 
-Rotate/sync пароля Oracle-учётки из vault без показа секрета оператору. Wire-сессии SQL*Net через PAM — **вне** этого среза (как в КП уровня A: «не Oracle» на wire).
+Rotate/sync пароля Oracle-учётки из vault без показа секрета оператору.
+
+**В scope:** web SQL-консоль портала (`protocol=oracle`) + native SQL*Net wire `:11521` (`docs/oracle-wire.txt`) + аудит statements в `session_events`.
+
+**Вне среза:** полный TTC Object Explorer / байт-форвард на listener цели.
 
 ## Настройка актива
 
@@ -54,9 +58,10 @@ Oracle-учётки включаются в `password_sets` наравне с Po
 
 | В scope | Вне scope |
 |---------|-----------|
-| Vault rotate + thin `ALTER USER` | Wire proxy SQL*Net |
+| Vault rotate + thin `ALTER USER` | Полный TTC Object Explorer |
 | SQL*Plus fallback через SSH | godror / OCI thick на API-хосте |
 | Password sets peer sync | CDB/PDB multi-tenant edge cases |
+| Native wire `:11521` | Байт-форвард SQL*Net без terminate |
 
 ## API
 
@@ -74,3 +79,4 @@ Body: `{ "apply_remote": true }`
 
 - `docs/password-sync.txt` — password sets
 - `docs/sow-backlog.txt` — SOW-ORACLE
+- `docs/oracle-wire.txt` — SQL*Net wire

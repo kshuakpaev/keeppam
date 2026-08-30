@@ -68,6 +68,7 @@
 
 Дальше только по запросу:
 - **«SOW: id»** из `docs/sow-backlog.txt` (Citrix HDX, geo-HA, Oracle, EAP…);
+- ИИ-copilot **SOW-AI-COPILOT** — в коде, план/DoD: `docs/ai-plan.txt`;
 - полный ручной прогон `docs/kp-acceptance.txt`.
 
 Авто-поднабор: `make acceptance-smoke` → `docs/kp-acceptance-lab.txt`.

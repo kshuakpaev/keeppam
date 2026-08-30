@@ -11,7 +11,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8099"))
-MAX_OCR_FRAMES = int(os.environ.get("MAX_OCR_FRAMES", "120"))
+MAX_OCR_FRAMES = int(os.environ.get("MAX_OCR_FRAMES", "3600"))
 OCR_LANG = os.environ.get("OCR_LANG", "rus+eng")
 OCR_INTERVAL = int(os.environ.get("OCR_INTERVAL_SEC", "15"))
 
@@ -110,14 +110,19 @@ class Handler(BaseHTTPRequestHandler):
                 max_frames = 1
             if max_frames > MAX_OCR_FRAMES:
                 max_frames = MAX_OCR_FRAMES
-            interval = int(data.get("interval_sec") or OCR_INTERVAL)
-            if interval < 5:
+            every_frame = bool(data.get("every_frame"))
+            interval = int(data.get("interval_sec") or (0 if every_frame else OCR_INTERVAL))
+            if every_frame:
+                interval = 0
+            elif interval < 5:
                 interval = 5
-            if interval > 120:
+            elif interval > 120:
                 interval = 120
+            since_offset = float(data.get("since_offset") or -1)
+            refresh = bool(data.get("refresh"))
             lang = str(data.get("lang") or OCR_LANG).strip() or OCR_LANG
-            video = ensure_video(path)
-            frames = ocr_video(video, max_frames, interval, lang)
+            video = ensure_video(path, refresh=refresh)
+            frames = ocr_video(video, max_frames, interval, lang, since_offset=since_offset)
             self._json(200, {"status": "ready", "frames": frames})
         except subprocess.CalledProcessError as e:
             err = (e.stderr or e.stdout or str(e))[-2000:]
@@ -126,9 +131,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(e), "detail": traceback.format_exc()[-1000:]})
 
 
-def ensure_video(guac_path: str) -> str:
+def ensure_video(guac_path: str, refresh: bool = False) -> str:
     mp4 = guac_path + ".mp4"
     m4v = guac_path + ".m4v"
+    if refresh:
+        for p in (mp4, m4v):
+            try:
+                if os.path.isfile(p) and os.path.isfile(guac_path):
+                    if os.path.getmtime(guac_path) > os.path.getmtime(p) + 0.4:
+                        os.remove(p)
+            except OSError:
+                pass
     if os.path.isfile(mp4) and os.path.getsize(mp4) > 0:
         return mp4
     if os.path.isfile(m4v) and os.path.getsize(m4v) > 0:
@@ -175,23 +188,39 @@ def clean_ocr(text: str) -> str:
     return text.strip()
 
 
-def ocr_video(path: str, max_frames: int, interval: int = 15, lang: str = "") -> list[dict]:
+def ocr_video(
+    path: str,
+    max_frames: int,
+    interval: int = 15,
+    lang: str = "",
+    since_offset: float = -1,
+) -> list[dict]:
     if not lang:
         lang = OCR_LANG
-    if interval < 5:
-        interval = 5
     dur = probe_duration(path)
-    n = min(max_frames, max(1, int(dur // interval) + 1))
+    if interval <= 0:
+        # every frame: at least 5 OCR/s (0.2s), fill the cap
+        step = max(0.2, dur / max(max_frames, 1))
+        n = min(max_frames, max(1, int(dur / step) + 1))
+    else:
+        if interval < 5:
+            interval = 5
+        n = min(max_frames, max(1, int(dur // interval) + 1))
+        step = interval
     frames: list[dict] = []
     last = ""
     with tempfile.TemporaryDirectory(prefix="keeppam-ocr-") as tmp:
         for i in range(n):
-            if n == 1:
+            if interval <= 0:
+                t = min(dur, i * step)
+            elif n == 1:
                 t = min(1.0, dur * 0.05)
             else:
                 t = (dur * i) / max(n - 1, 1)
+            if t <= since_offset:
+                continue
             png = os.path.join(tmp, "f%03d.png" % i)
-            subprocess.run(
+            r = subprocess.run(
                 [
                     "ffmpeg",
                     "-y",
@@ -205,10 +234,11 @@ def ocr_video(path: str, max_frames: int, interval: int = 15, lang: str = "") ->
                     "2",
                     png,
                 ],
-                check=True,
                 capture_output=True,
                 text=True,
             )
+            if r.returncode != 0:
+                continue
             if not os.path.isfile(png) or os.path.getsize(png) == 0:
                 continue
             ocr = subprocess.run(

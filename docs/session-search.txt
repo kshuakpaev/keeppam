@@ -4,7 +4,9 @@
 
 SSH: живой line-buffer (JEA / `max_risk>0`) пишет `command` сразу. Сессии без буфера — индекс stdin из asciicast v2 при конце сессии или кнопкой в replay. **Stdout** (`o`) индексируется тем же проходом в тип `output`; при `pii_action` mask/deny — те же PII-паттерны (`docs/dlp.txt`). Имена файлов SCP/SFTP — тип `file_transfer`.
 
-RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`, не полное видео). Из OCR/клавиш → `win_process` (`docs/win-proc.txt`, best-effort без агента).
+RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `screen_text` (`docs/ocr-rdp.txt`): выборка, **каждый кадр** (до 5/с, cap 3600) и **live** во время сессии. Из OCR/клавиш → `win_process` (`docs/win-proc.txt`, best-effort без агента).
+
+SSH/Telnet **stdout** индексируется live и в конце сессии (`output` + `screen_text` source `ssh_stdout`).
 
 Лента «все действия пользователя за день» — `docs/forensic.txt`.
 
@@ -36,8 +38,8 @@ RDP/VNC/isolated: `recording-include-keys` → `keystroke`. OCR кадра → `
 
 ## Индекс
 
-До 400 строк stdin/stdout/keystroke / 8 MiB записи; OCR — до 120 `screen_text` (Policy, default 60). Строка ≤ 512 рун.
+До 400 строк stdin / **4000** stdout / 8 MiB записи; OCR — до **3600** `screen_text` (Policy, default 60). Строка ≤ 512 рун. Live-индекс до конца сессии: Policy `ocr_live` / `ocr_ssh_stdout`.
 
 ## Вне scope
 
-OpenSearch-кластер, маскирование паролей в stdin/stdout/клавишах/OCR, live-индекс до конца сессии, полное видео OCR.
+OpenSearch-кластер, маскирование паролей в stdin/stdout/клавишах/OCR, OCR в compliance PDF.

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"github.com/wwt/guac"
 
 	"github.com/keeppam/auth/internal/assets"
+	"github.com/keeppam/auth/internal/guacd"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
 	"github.com/keeppam/auth/internal/rdpgw"
@@ -210,12 +210,10 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) openGuacTunnel(protocol, address string, port int, username, password string, width, height int, sessID uuid.UUID, snap *policy.Snapshot, asset assets.Asset) (guac.Tunnel, error) {
-	if s.cfg.GuacdAddr == "" || s.cfg.GuacdAddr == "off" {
-		return nil, fmt.Errorf("guacd is not configured")
-	}
-	conn, err := net.DialTimeout("tcp", s.cfg.GuacdAddr, 15*time.Second)
+	addrs := guacd.Parse(s.cfg.GuacdAddr)
+	conn, err := guacd.Dial(addrs, 15*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("guacd dial: %w", err)
+		return nil, err
 	}
 	stream := guac.NewStream(conn, guac.SocketTimeout)
 	cfg := guac.NewGuacamoleConfiguration()

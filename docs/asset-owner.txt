@@ -1,0 +1,26 @@
+# KeepPAM: роль owner (владелец актива)
+
+NIT §5: RBAC включает владельцев целевых систем отдельно от admin/operator/auditor.
+
+## Роль `owner`
+
+UUID `01900000-0000-7000-8000-000000000005`. Права: активы (read/write/acl), сессии на своих системах, JIT request/approve, аудит и JEA read.
+
+Пользователь **только** с ролью `owner` (без admin/operator/auditor/security):
+
+- в списке активов видит только строки с `assets.owner_user_id = себя`;
+- create актива записывает владельцем его самого;
+- не может переназначить владельца;
+- сессии и forensic — только по своим активам (даже при `audit.read`).
+
+## Поле актива
+
+`owner_user_id` → `users(id)`. Назначает admin/operator с `users.read` в карточке актива.
+
+Владелец получает доступ к цели **без ACL**, если `owner_user_id` совпадает с ним (затем risk/OPA как обычно).
+
+## RADIUS / IdP
+
+Filter-Id / Class: `owner` или `keeppam-owner`.
+
+Миграция `110_nit_p5.sql`.

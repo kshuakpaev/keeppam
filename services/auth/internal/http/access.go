@@ -39,6 +39,9 @@ func (s *Server) handleCreateAccessRequest(w http.ResponseWriter, r *http.Reques
 	if s.notify != nil {
 		s.notify.OnJITCreated(r.Context(), req)
 	}
+	if s.ai != nil {
+		_ = s.ai.Enqueue(r.Context(), "approval_brief", req.ID)
+	}
 	writeJSON(w, http.StatusCreated, req)
 }
 

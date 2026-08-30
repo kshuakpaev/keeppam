@@ -20,13 +20,16 @@ const emptyPolicyForm = {
   pii_action: "",
   nlp_dlp_action: "",
   file_transfer: "deny",
-  ocr_lang: "rus+eng",
+	ocr_lang: "rus+eng",
   ocr_interval_sec: "15",
   ocr_max_frames: "60",
+  ocr_every_frame: false,
+  ocr_live: true,
+  ocr_ssh_stdout: true,
   rdp_clipboard: false,
   rdp_drive: false,
   rdp_printer: false,
-  rdp_native: false,
+  rdp_native: true,
   dlp_patterns: "",
   dlp_classifiers: "",
   command_policy_pack_id: "",
@@ -219,6 +222,8 @@ export function JeaPage() {
   const [tryCmd, setTryCmd] = useState("sudo ls -la");
   const [tryPack, setTryPack] = useState("");
   const [tryOut, setTryOut] = useState<CommandPreview | null>(null);
+  const [aiPrompt, setAiPrompt] = useState("DBA SSH на *db* пн–пт 9-18, без rm/dd");
+  const [aiDraft, setAiDraft] = useState<string>("");
   const [tagBindings, setTagBindings] = useState<AccessBinding[]>([]);
   const [tagUsers, setTagUsers] = useState<User[]>([]);
   const [tagRoles, setTagRoles] = useState<Role[]>([]);
@@ -624,6 +629,9 @@ export function JeaPage() {
       ocr_lang: p.ocr_lang || "rus+eng",
       ocr_interval_sec: String(p.ocr_interval_sec || 15),
       ocr_max_frames: String(p.ocr_max_frames || 60),
+      ocr_every_frame: !!p.ocr_every_frame,
+      ocr_live: !!p.ocr_live,
+      ocr_ssh_stdout: p.ocr_ssh_stdout !== false,
       rdp_clipboard: !!p.rdp_clipboard,
       rdp_drive: !!p.rdp_drive,
       rdp_printer: !!p.rdp_printer,
@@ -669,7 +677,15 @@ export function JeaPage() {
     if (p.pii_action) bits.push("pii:" + p.pii_action);
     if (p.nlp_dlp_action) bits.push("nlp:" + p.nlp_dlp_action);
     if (p.file_transfer && p.file_transfer !== "deny") bits.push("files:" + p.file_transfer);
-    if (p.ocr_lang) bits.push("ocr:" + p.ocr_lang + "/" + (p.ocr_interval_sec || 15) + "s");
+    if (p.ocr_lang) {
+      bits.push(
+        "ocr:" +
+          p.ocr_lang +
+          (p.ocr_every_frame ? "/every" : "/" + (p.ocr_interval_sec || 15) + "s") +
+          (p.ocr_live ? "+live" : "") +
+          (p.ocr_ssh_stdout !== false ? "+ssh" : ""),
+      );
+    }
     if (p.rdp_clipboard || p.rdp_drive || p.rdp_printer) {
       const r: string[] = [];
       if (p.rdp_clipboard) r.push("clip");
@@ -715,6 +731,9 @@ export function JeaPage() {
         ocr_lang: policyForm.ocr_lang || "rus+eng",
         ocr_interval_sec: Number(policyForm.ocr_interval_sec) || 15,
         ocr_max_frames: Number(policyForm.ocr_max_frames) || 60,
+        ocr_every_frame: !!policyForm.ocr_every_frame,
+        ocr_live: !!policyForm.ocr_live,
+        ocr_ssh_stdout: !!policyForm.ocr_ssh_stdout,
         rdp_clipboard: !!policyForm.rdp_clipboard,
         rdp_drive: !!policyForm.rdp_drive,
         rdp_printer: !!policyForm.rdp_printer,
@@ -1081,6 +1100,32 @@ export function JeaPage() {
                 <p>{tryOut.note}</p>
               </div>
             )}
+          </form>
+          <form
+            className="card"
+            style={{ marginBottom: "1.25rem" }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              setBusy(true);
+              void api
+                .jeaAIDraft(aiPrompt)
+                .then((d) => setAiDraft(JSON.stringify(d, null, 2)))
+                .catch((err) => setError(te(err, "jea.previewFailed")))
+                .finally(() => setBusy(false));
+            }}
+          >
+            <h2>{t("jea.aiDraft")}</h2>
+            <p className="muted">{t("jea.aiDraftHint")}</p>
+            <label>{t("jea.aiPrompt")}</label>
+            <textarea value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} rows={3} style={{ width: "100%" }} />
+            <button className="btn" type="submit" disabled={busy || !aiPrompt.trim()} style={{ marginTop: "0.75rem" }}>
+              {t("jea.aiDraftRun")}
+            </button>
+            {aiDraft ? (
+              <pre className="mono" style={{ whiteSpace: "pre-wrap", fontSize: "0.8rem" }}>
+                {aiDraft}
+              </pre>
+            ) : null}
           </form>
           {canWrite && (
             <form className="card" onSubmit={onSubmit} style={{ maxWidth: 560 }}>
@@ -1760,15 +1805,47 @@ export function JeaPage() {
                 max={120}
                 value={policyForm.ocr_interval_sec}
                 onChange={(e) => setPolicyForm({ ...policyForm, ocr_interval_sec: e.target.value })}
+                disabled={!!policyForm.ocr_every_frame}
               />
               <label>{t("jea.ocrMaxFrames")}</label>
               <input
                 type="number"
                 min={1}
-                max={120}
+                max={3600}
                 value={policyForm.ocr_max_frames}
                 onChange={(e) => setPolicyForm({ ...policyForm, ocr_max_frames: e.target.value })}
               />
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.ocr_every_frame}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setPolicyForm({
+                      ...policyForm,
+                      ocr_every_frame: on,
+                      ocr_max_frames: on && Number(policyForm.ocr_max_frames) < 300 ? "3600" : policyForm.ocr_max_frames,
+                    });
+                  }}
+                />
+                {t("jea.ocrEveryFrame")}
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.ocr_live}
+                  onChange={(e) => setPolicyForm({ ...policyForm, ocr_live: e.target.checked })}
+                />
+                {t("jea.ocrLive")}
+              </label>
+              <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={!!policyForm.ocr_ssh_stdout}
+                  onChange={(e) => setPolicyForm({ ...policyForm, ocr_ssh_stdout: e.target.checked })}
+                />
+                {t("jea.ocrSshStdout")}
+              </label>
               <p className="muted" style={{ marginTop: "-0.5rem" }}>
                 {t("jea.ocrHint")}
               </p>
@@ -1892,6 +1969,8 @@ export function JeaPage() {
                     <option value="deny">deny</option>
                     <option value="require_approval">require_approval</option>
                     <option value="require_mfa">require_mfa</option>
+                    <option value="terminate">terminate</option>
+                    <option value="lock_account">lock_account</option>
                   </select>
                 </div>
               </div>

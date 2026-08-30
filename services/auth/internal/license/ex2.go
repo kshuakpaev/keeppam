@@ -23,8 +23,11 @@ type Ex2Payload struct {
 	IssuedBy            string    `json:"issued_by"`
 	Signature           string    `json:"signature"`
 	MaxAssets           *int      `json:"max_assets,omitempty"`
+	MaxUsers            *int      `json:"max_users,omitempty"`
+	Model               string    `json:"model,omitempty"`
 	SoftWarnPct         *int      `json:"soft_warn_pct,omitempty"`
 	HA                  *bool     `json:"ha,omitempty"`
+	AICopilot           *bool     `json:"ai_copilot,omitempty"`
 	Customer            string    `json:"customer,omitempty"`
 }
 
@@ -246,7 +249,7 @@ func ParseEx2Blob(key string, blob []byte, skipHW bool) (File, Ex2Payload, error
 	f := File{
 		Issued:      p.IssuedAt.UTC().Format("2006-01-02"),
 		Customer:    strings.TrimSpace(p.Customer),
-		MaxAssets:   100,
+		Model:       strings.TrimSpace(p.Model),
 		SoftWarnPct: 90,
 		HA:          true,
 		Expires:     expires.UTC().Format("2006-01-02"),
@@ -258,12 +261,19 @@ func ParseEx2Blob(key string, blob []byte, skipHW bool) (File, Ex2Payload, error
 	if p.MaxAssets != nil && *p.MaxAssets > 0 {
 		f.MaxAssets = *p.MaxAssets
 	}
+	if p.MaxUsers != nil && *p.MaxUsers > 0 {
+		f.MaxUsers = *p.MaxUsers
+	}
 	if p.SoftWarnPct != nil && *p.SoftWarnPct > 0 && *p.SoftWarnPct <= 100 {
 		f.SoftWarnPct = *p.SoftWarnPct
 	}
 	if p.HA != nil {
 		f.HA = *p.HA
 	}
+	if p.AICopilot != nil {
+		f.AICopilot = *p.AICopilot
+	}
+	normalizeFile(&f)
 	return f, p, nil
 }
 
@@ -303,8 +313,32 @@ func LoadAny(path, encKey string, skipHW bool) (File, error) {
 }
 
 func normalizeFile(f *File) {
-	if f.MaxAssets <= 0 {
-		f.MaxAssets = 100
+	if f.MaxAssets < 0 {
+		f.MaxAssets = 0
+	}
+	if f.MaxUsers < 0 {
+		f.MaxUsers = 0
+	}
+	f.Model = InferModel(f.Model, f.MaxAssets, f.MaxUsers)
+	switch f.Model {
+	case ModelUsers:
+		f.MaxAssets = 0
+		if f.MaxUsers <= 0 {
+			f.MaxUsers = 200
+		}
+	case ModelBoth:
+		if f.MaxAssets <= 0 {
+			f.MaxAssets = 100
+		}
+		if f.MaxUsers <= 0 {
+			f.MaxUsers = 200
+		}
+	default:
+		f.Model = ModelAssets
+		f.MaxUsers = 0
+		if f.MaxAssets <= 0 {
+			f.MaxAssets = 100
+		}
 	}
 	if f.SoftWarnPct <= 0 || f.SoftWarnPct > 100 {
 		f.SoftWarnPct = 90

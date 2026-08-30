@@ -2,7 +2,7 @@
 
 ## Что есть
 
-SP-initiated SAML 2.0 рядом с OIDC/LDAP (режим взаимоисключающий: `local|oidc|ldap|saml`).
+SP-initiated SAML 2.0 рядом с OIDC/LDAP/OAuth (режим взаимоисключающий: `local|oidc|ldap|saml|radius|oauth`).
 
 1. Миграции `031` + `033` — IdP/SP, group→role, SLO URL в metadata.
 2. `GET /api/v1/auth/saml/metadata` — SP metadata XML (ACS + SingleLogoutService).

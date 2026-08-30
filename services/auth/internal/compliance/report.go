@@ -90,6 +90,7 @@ type Report struct {
 	EvidenceTotal int                `json:"evidence_total"`
 	Truncated     bool               `json:"truncated"`
 	Notes         []string           `json:"notes"`
+	Prose         string             `json:"prose,omitempty"`
 }
 
 func NormalizeFramework(s string) string {

@@ -14,6 +14,7 @@ services:
     environment:
       KEEPPAM_ISO_PROXY_BASE: "http://edge:8080"
       KEEPPAM_DRAIN_TIMEOUT: "90s"
+      KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@pgbouncer:5432/keeppam?sslmode=disable"
     depends_on:
       postgres:
         condition: service_healthy
@@ -21,6 +22,8 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     restart: unless-stopped
 
   edge:

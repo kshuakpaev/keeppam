@@ -17,8 +17,10 @@ import {
 import { useSessionTabs } from "../sessionTabs";
 import { StepUpDialog } from "./StepUpDialog";
 
-const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "kubectl", "telnet", "tn3270", "citrix"];
+const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "ftp", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
 
 function connectKey(assetId: string, accountId: string) {
   return `${assetId}:${accountId}`;
@@ -42,6 +44,11 @@ export function AssetsPage() {
   const [rdpResolutionId, setRdpResolutionId] = useState(loadRdpResolutionId);
   const [showCreate, setShowCreate] = useState(false);
   const [tab, setTab] = useState<"listed" | "archived">("listed");
+  const [q, setQ] = useState("");
+  const [appliedQ, setAppliedQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState(0);
   const [form, setForm] = useState({
     name: "",
     asset_type: "host",
@@ -57,6 +64,13 @@ export function AssetsPage() {
   const canWrite = hasPerm(user, "assets.write");
   const canRead = hasPerm(user, "assets.read");
   const canConnect = hasPerm(user, "sessions.connect") && tab === "listed";
+  const canRequest = hasPerm(user, "access.request");
+  const fullCatalog =
+    hasPerm(user, "assets.write") ||
+    hasPerm(user, "assets.acl") ||
+    hasPerm(user, "users.write") ||
+    hasPerm(user, "audit.read");
+  const [browse, setBrowse] = useState<"entitled" | "catalog">("entitled");
   const hasRdpAssets = assets.some((a) => a.protocol === "rdp" && a.status === "active");
 
   function rdpSizeForConnect(protocol: string) {
@@ -68,11 +82,22 @@ export function AssetsPage() {
     };
   }
 
-  async function load() {
+  async function load(nextPage = page, nextQ = appliedQ, nextSize = pageSize) {
     try {
-      const res = await api.listAssets({ status: tab });
+      const offset = (nextPage - 1) * nextSize;
+      const res = await api.listAssets({
+        status: tab,
+        q: nextQ || undefined,
+        limit: nextSize,
+        offset,
+        scope: fullCatalog ? undefined : browse,
+      });
       setAssets(res.assets || []);
       setHiddenAssets(res.hidden || 0);
+      setTotal(res.total || 0);
+      setPage(nextPage);
+      setAppliedQ(nextQ);
+      setPageSize(nextSize);
       if (tab === "listed" && res.license_expired) {
         setLicenseRestricted(true);
         setLicenseRestrictReason("expired");
@@ -89,8 +114,9 @@ export function AssetsPage() {
   }
 
   useEffect(() => {
-    void load();
-  }, [tab]);
+    void load(1, "", pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on tab/browse change only
+  }, [tab, browse]);
 
   async function onArchive(asset: Asset) {
     if (!canWrite) return;
@@ -144,12 +170,14 @@ export function AssetsPage() {
       });
       setStepUp(null);
       if (res.msg) setMsg(res.msg);
-      openTab({
-        id: res.sessionId,
-        kind: res.kind,
-        title: res.title,
-        protocol: res.protocol,
-      });
+      if (!res.skipTab) {
+        openTab({
+          id: res.sessionId,
+          kind: res.kind,
+          title: res.title,
+          protocol: res.protocol,
+        });
+      }
     } catch (err) {
       if (!stepUpToken && ApiError.isStepUp(err)) {
         setStepUp({ err, retry: (tok) => onConnect(asset, acc, tok) });
@@ -158,6 +186,21 @@ export function AssetsPage() {
       setError(te(err, "assets.connectError"));
     } finally {
       setConnecting(null);
+    }
+  }
+
+  async function onRequest(asset: Asset) {
+    const reason = window.prompt(t("assets.reasonPh"));
+    if (reason == null) return;
+    const trimmed = reason.trim();
+    if (!trimmed) return;
+    setError("");
+    setMsg("");
+    try {
+      await api.createAccessRequest(asset.id, { reason: trimmed, duration_minutes: 60 });
+      setMsg(t("assets.requestSent"));
+    } catch (err) {
+      setError(te(err, "assets.requestError"));
     }
   }
 
@@ -202,7 +245,7 @@ export function AssetsPage() {
       <div className="toolbar">
         <div>
           <h1>{t("assets.title")}</h1>
-          <p className="muted">{t("assets.lead")}</p>
+          <p className="muted">{fullCatalog ? t("assets.lead") : t("assets.leadOperator")}</p>
         </div>
         {canWrite && tab === "listed" && (
           <button className="btn" type="button" onClick={() => setShowCreate((v) => !v)}>
@@ -216,22 +259,62 @@ export function AssetsPage() {
           type="button"
           onClick={() => {
             setShowCreate(false);
+            setQ("");
             setTab("listed");
           }}
         >
           {t("assets.tabActive")}
         </button>
-        <button
-          className={`btn secondary${tab === "archived" ? " active" : ""}`}
-          type="button"
-          onClick={() => {
-            setShowCreate(false);
-            setTab("archived");
-          }}
-        >
-          {t("assets.tabArchive")}
-        </button>
+        {canWrite && (
+          <button
+            className={`btn secondary${tab === "archived" ? " active" : ""}`}
+            type="button"
+            onClick={() => {
+              setShowCreate(false);
+              setQ("");
+              setTab("archived");
+            }}
+          >
+            {t("assets.tabArchive")}
+          </button>
+        )}
+        {!fullCatalog && canRequest && tab === "listed" && (
+          <>
+            <button
+              className={`btn secondary${browse === "entitled" ? " active" : ""}`}
+              type="button"
+              onClick={() => setBrowse("entitled")}
+            >
+              {t("assets.tabMine")}
+            </button>
+            <button
+              className={`btn secondary${browse === "catalog" ? " active" : ""}`}
+              type="button"
+              onClick={() => setBrowse("catalog")}
+            >
+              {t("assets.tabCatalog")}
+            </button>
+          </>
+        )}
       </div>
+      <form
+        className="row"
+        style={{ gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void load(1, q.trim(), pageSize);
+        }}
+      >
+        <input
+          placeholder={t("assets.searchPlaceholder")}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ marginBottom: 0, flex: 1, minWidth: 180 }}
+        />
+        <button className="btn" type="submit">
+          {t("common.find")}
+        </button>
+      </form>
       {error && <p className="error">{error}</p>}
       {msg && <p className="muted">{msg}</p>}
       {licenseRestricted && hiddenAssets > 0 && (
@@ -239,8 +322,8 @@ export function AssetsPage() {
           {t("assets.licenseHidden", {
             reason:
               licenseRestrictReason === "unlicensed" ? t("license.notInstalled") : t("license.expired"),
-            shown: assets.length,
-            total: assets.length + hiddenAssets,
+            shown: Math.max(0, total - hiddenAssets),
+            total,
           })}
         </p>
       )}
@@ -330,7 +413,13 @@ export function AssetsPage() {
                     https: 443,
                     postgres: 5432,
                     mysql: 3306,
+                    mssql: 1433,
+                    oracle: 1521,
+                    ftp: 21,
                     kubectl: 6443,
+                    telnet: 23,
+                    tn3270: 23,
+                    citrix: 1494,
                   };
                   setForm({
                     ...form,
@@ -339,9 +428,13 @@ export function AssetsPage() {
                     database_name:
                       protocol === "postgres"
                         ? form.database_name || "postgres"
-                        : protocol === "mysql"
-                          ? form.database_name
-                          : "",
+                        : protocol === "mssql"
+                          ? form.database_name || "master"
+                          : protocol === "oracle"
+                            ? form.database_name || "ORCL"
+                            : protocol === "mysql"
+                              ? form.database_name
+                              : "",
                   });
                 }}
               >
@@ -429,6 +522,7 @@ export function AssetsPage() {
                     <div className="row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
                       {tab === "listed" &&
                         canConnect &&
+                        (fullCatalog || a.entitled) &&
                         accounts.map((acc) => {
                           const key = connectKey(a.id, acc.id);
                           return (
@@ -446,6 +540,11 @@ export function AssetsPage() {
                             </button>
                           );
                         })}
+                      {tab === "listed" && canRequest && !fullCatalog && !a.entitled && (
+                        <button className="btn secondary" type="button" onClick={() => void onRequest(a)}>
+                          {t("assets.requestJit")}
+                        </button>
+                      )}
                       {canRead && (
                         <Link className="btn secondary" to={`/assets/${a.id}`}>
                           {t("common.open")}
@@ -474,12 +573,83 @@ export function AssetsPage() {
             {assets.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  {tab === "archived" ? t("assets.archiveEmpty") : t("assets.empty")}
+                  {appliedQ
+                    ? t("assets.searchEmpty")
+                    : tab === "archived"
+                      ? t("assets.archiveEmpty")
+                      : !fullCatalog && browse === "entitled"
+                        ? t("assets.emptyEntitled")
+                        : t("assets.empty")}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {(() => {
+          const cap = hiddenAssets > 0 ? Math.max(0, total - hiddenAssets) : total;
+          const pages = cap > 0 ? Math.ceil(cap / pageSize) : 1;
+          return (
+            <div className="pager" style={{ marginTop: "0.75rem" }}>
+              <span className="muted">
+                {cap === 0
+                  ? t("common.noRecords")
+                  : t("common.pageOf", { page, pages, total: cap })}
+              </span>
+              <div className="row">
+                <label className="row" style={{ gap: "0.35rem" }}>
+                  <span className="muted">{t("audit.rowsPerPage")}</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      void load(1, appliedQ, n);
+                    }}
+                    aria-label={t("audit.rowsPerPage")}
+                    style={{ marginBottom: 0, width: 90 }}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => void load(1, appliedQ, pageSize)}
+                >
+                  {t("audit.first")}
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => void load(page - 1, appliedQ, pageSize)}
+                >
+                  {t("audit.prev")}
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={page >= pages}
+                  onClick={() => void load(page + 1, appliedQ, pageSize)}
+                >
+                  {t("audit.next")}
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  disabled={page >= pages}
+                  onClick={() => void load(pages, appliedQ, pageSize)}
+                >
+                  {t("audit.last")}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
       {stepUp && (
         <StepUpDialog

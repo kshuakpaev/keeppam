@@ -1,0 +1,27 @@
+# NIT §4 scale overlay: HAProxy DNS templates + guacd/worker --scale.
+# Requires compose.ha.yml. 20 session-worker + 8 guacd ≈ SSH-тяжёлый микс 1000 сессий
+# (docs/nit-p4.txt, ~50 смешанных сессий на worker 4–8 vCPU).
+#
+#   cd deploy
+#   docker compose -f docker-compose.yml -f compose.ha.yml -f compose.scale.yml up -d \
+#     --scale session-worker=20 --scale guacd=8
+#
+# Kubernetes (предпочтительно): helm -f deploy/helm/keeppam/values-nit-p4.yaml
+
+services:
+  edge:
+    volumes: !override
+      - ./ha/haproxy-scale.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+  api:
+    environment:
+      KEEPPAM_GUACD_ADDR: "guacd:4822"
+
+  api-b:
+    environment:
+      KEEPPAM_GUACD_ADDR: "guacd:4822"
+
+  pgbouncer:
+    environment:
+      MAX_CLIENT_CONN: "4000"
+      DEFAULT_POOL_SIZE: "80"

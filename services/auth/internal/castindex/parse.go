@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	MaxBytes = 8 << 20
-	MaxLines = 400
-	MaxLine  = 512
+	MaxBytes    = 8 << 20
+	MaxLines    = 400
+	MaxOutLines = 4000
+	MaxLine     = 512
 )
 
 var csiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b.`)
@@ -64,14 +65,14 @@ func ParseCast(r io.Reader) (in, out []Line, err error) {
 			}
 			return in, out, err
 		}
-		if len(in) >= MaxLines && len(out) >= MaxLines {
+		if len(in) >= MaxLines && len(out) >= MaxOutLines {
 			break
 		}
 	}
 	if t := flushLine(&inBuf, false); t != "" && len(in) < MaxLines {
 		in = append(in, Line{Offset: inOff, Text: t})
 	}
-	if t := flushLine(&outBuf, true); t != "" && len(out) < MaxLines {
+	if t := flushLine(&outBuf, true); t != "" && len(out) < MaxOutLines {
 		if !dupLast(out, t) {
 			out = append(out, Line{Offset: outOff, Text: t})
 		}
@@ -87,7 +88,7 @@ func ParseCast(r io.Reader) (in, out []Line, err error) {
 
 func appendRunes(dst []Line, buf *strings.Builder, off float64, data string, output bool) []Line {
 	for _, ch := range data {
-		if len(dst) >= MaxLines {
+		if len(dst) >= capLines(output) {
 			return dst
 		}
 		switch ch {
@@ -103,6 +104,13 @@ func appendRunes(dst []Line, buf *strings.Builder, off float64, data string, out
 		}
 	}
 	return dst
+}
+
+func capLines(output bool) int {
+	if output {
+		return MaxOutLines
+	}
+	return MaxLines
 }
 
 func flushLine(buf *strings.Builder, output bool) string {

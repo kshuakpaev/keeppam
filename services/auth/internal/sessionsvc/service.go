@@ -77,6 +77,8 @@ type Service struct {
 	store         recstore.Store
 	startHook     StartHook
 	endHook       EndHook
+	quota         func(ctx context.Context) error
+	live          *LiveHub
 }
 
 // StartHook runs once when a session first becomes active (best-effort AD/JIT join).
@@ -96,6 +98,17 @@ func (s *Service) SetStartHook(h StartHook) {
 
 func (s *Service) SetEndHook(h EndHook) {
 	s.endHook = h
+}
+
+func (s *Service) SetSessionQuota(fn func(ctx context.Context) error) {
+	s.quota = fn
+}
+
+func (s *Service) CountLive(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sessions WHERE status IN ('pending','active')`).Scan(&n)
+	return n, err
 }
 
 func (s *Service) SetRecordingStore(st recstore.Store) {
@@ -146,6 +159,7 @@ type CreateInput struct {
 
 type ListFilter struct {
 	OnlyUser          *uuid.UUID
+	OnlyAssetOwner    *uuid.UUID
 	Status            string
 	Protocol          string
 	Q                 string
@@ -155,6 +169,11 @@ type ListFilter struct {
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, ua string) (Session, error) {
+	if s.quota != nil {
+		if err := s.quota(ctx); err != nil {
+			return Session{}, err
+		}
+	}
 	if in.Protocol == "" {
 		in.Protocol = "ssh"
 	}
@@ -164,8 +183,11 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in CreateInput, 
 	if in.Protocol == "rdp" || in.Protocol == "vnc" {
 		recPath = filepath.Join(s.recordingsDir, "guac", id.String())
 	}
-	if in.Protocol == "postgres" || in.Protocol == "mysql" || in.Protocol == "mssql" {
+	if in.Protocol == "postgres" || in.Protocol == "mysql" || in.Protocol == "mssql" || in.Protocol == "oracle" {
 		recPath = filepath.Join(s.recordingsDir, "sql", id.String()+".jsonl")
+	}
+	if in.Protocol == "ftp" {
+		recPath = filepath.Join(s.recordingsDir, "ftp", id.String()+".jsonl")
 	}
 	if in.Protocol == "https" {
 		if in.Isolated {
@@ -286,6 +308,15 @@ func (s *Service) MarkEnded(ctx context.Context, id uuid.UUID, failMsg string) e
 	return nil
 }
 
+func (s *Service) SetRecordingPath(ctx context.Context, id uuid.UUID, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("recording path empty")
+	}
+	_, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET recording_path=$2 WHERE id=$1`, id, path)
+	return err
+}
+
 // CloseStale ends active sessions with no heartbeat within olderThan.
 func (s *Service) CloseStale(ctx context.Context, olderThan time.Duration) (int, error) {
 	if olderThan <= 0 {
@@ -363,7 +394,11 @@ func (s *Service) AppendRisk(ctx context.Context, sessionID uuid.UUID, points in
 	factors := append(append([]string{}, row.RiskFactors...), factor)
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET risk_score=$2, risk_factors=$3 WHERE id=$1`, sessionID, score, factors)
-	return score, factors, err
+	if err != nil {
+		return score, factors, err
+	}
+	s.maybeEnforceAfterRisk(ctx, row, score)
+	return score, factors, nil
 }
 
 // KeystrokeMedians returns historical median IKI (ms) from ueba keystroke_stats events for the user.
@@ -507,6 +542,11 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Session, int, error
 		args = append(args, *f.OnlyUser)
 		i++
 	}
+	if f.OnlyAssetOwner != nil {
+		where += ` AND a.owner_user_id=$` + itoa(i)
+		args = append(args, *f.OnlyAssetOwner)
+		i++
+	}
 	if st := strings.TrimSpace(f.Status); st != "" {
 		where += ` AND s.status=$` + itoa(i)
 		args = append(args, st)
@@ -572,13 +612,18 @@ func (s *Service) RecordingFile(ctx context.Context, id uuid.UUID) (string, erro
 		return "", fmt.Errorf("no recording")
 	}
 	path := sess.RecordingPath
-	guac := sess.Protocol == "rdp" || sess.Protocol == "vnc" ||
-		strings.Contains(filepath.ToSlash(path), "/guac/")
+	guac := IsGuacamoleRecording(sess.Protocol, path)
 	if s.store != nil {
 		_ = s.store.EnsureLocal(ctx, path)
 	}
 	if guac {
 		if best := largestGuacRecording(path); best != "" {
+			return best, nil
+		}
+		return "", fmt.Errorf("recording not found")
+	}
+	if st, err := os.Stat(path); err == nil && st.IsDir() {
+		if best := LargestFileInDir(path); best != "" {
 			return best, nil
 		}
 		return "", fmt.Errorf("recording not found")

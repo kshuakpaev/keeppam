@@ -1,0 +1,10 @@
+{
+  "issued": "2026-01-01",
+  "customer": "KeepPAM",
+  "model": "users",
+  "max_users": 200,
+  "soft_warn_pct": 90,
+  "ha": true,
+  "ai_copilot": true,
+  "expires": ""
+}

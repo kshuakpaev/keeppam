@@ -25,14 +25,14 @@ type ocrResponse struct {
 	Frames []ocrFrame `json:"frames"`
 }
 
-func (s *Service) fetchOCR(ctx context.Context, guacPath string, opt policy.OCROpts) ([]ocrFrame, error) {
+func (s *Service) fetchOCR(ctx context.Context, guacPath string, opt policy.OCROpts, sinceOffset float64, refresh bool) ([]ocrFrame, error) {
 	if s == nil || strings.TrimSpace(s.guacencURL) == "" {
 		return nil, fmt.Errorf("guacenc not configured")
 	}
 	if opt.Lang == "" {
 		opt.Lang = policy.OCRDefaultLang
 	}
-	if opt.IntervalSec <= 0 {
+	if opt.IntervalSec <= 0 && !opt.EveryFrame {
 		opt.IntervalSec = policy.OCRDefaultInterval
 	}
 	if opt.MaxFrames <= 0 {
@@ -41,9 +41,14 @@ func (s *Service) fetchOCR(ctx context.Context, guacPath string, opt policy.OCRO
 	if opt.MaxFrames > policy.OCRMaxFramesCap {
 		opt.MaxFrames = policy.OCRMaxFramesCap
 	}
+	interval := opt.IntervalSec
+	if opt.EveryFrame {
+		interval = 0
+	}
 	body, _ := json.Marshal(map[string]any{
 		"path": guacPath, "max_frames": opt.MaxFrames,
-		"interval_sec": opt.IntervalSec, "lang": opt.Lang,
+		"interval_sec": interval, "lang": opt.Lang,
+		"every_frame": opt.EveryFrame, "since_offset": sinceOffset, "refresh": refresh,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.guacencURL, "/")+"/ocr", bytes.NewReader(body))
 	if err != nil {
@@ -56,7 +61,7 @@ func (s *Service) fetchOCR(ctx context.Context, guacPath string, opt policy.OCRO
 		return nil, err
 	}
 	defer res.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 16<<20))
 	var out ocrResponse
 	_ = json.Unmarshal(raw, &out)
 	if res.StatusCode >= 300 {

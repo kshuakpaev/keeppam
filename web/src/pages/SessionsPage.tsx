@@ -50,6 +50,7 @@ export function SessionsPage() {
   const [clientIP, setClientIP] = useState("");
   const [appliedIP, setAppliedIP] = useState("");
   const [hours, setHours] = useState(168);
+  const [nl, setNl] = useState(false);
   const [events, setEvents] = useState<SessionEventHit[]>([]);
   const [eventTotal, setEventTotal] = useState(0);
   const canRead = hasPerm(user, "sessions.read");
@@ -71,6 +72,7 @@ export function SessionsPage() {
           hours,
           limit: PAGE_SIZE,
           offset,
+          nl: nl || undefined,
         });
         setEvents(res.events || []);
         setEventTotal(res.total || 0);
@@ -89,7 +91,7 @@ export function SessionsPage() {
     } catch (err) {
       setError(te(err));
     }
-  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours, appliedFilename, appliedProcess, eventProtocol, appliedIP]);
+  }, [tab, effectiveStatus, protocol, appliedQ, offset, eventType, hours, appliedFilename, appliedProcess, eventProtocol, appliedIP, nl]);
 
   async function onEnd(id: string) {
     setError("");
@@ -269,6 +271,8 @@ export function SessionsPage() {
                 <option value="postgres">postgres</option>
                 <option value="mysql">mysql</option>
                 <option value="mssql">mssql</option>
+                <option value="oracle">oracle</option>
+                <option value="ftp">ftp</option>
                 <option value="kubectl">kubectl</option>
                 <option value="https">https</option>
               </select>
@@ -290,6 +294,10 @@ export function SessionsPage() {
                 <option value={720}>{t("sess.d30")}</option>
               </select>
             </label>
+            <label>
+              <input type="checkbox" checked={nl} onChange={(e) => { setNl(e.target.checked); setOffset(0); }} />{" "}
+              {t("sess.nlSearch")}
+            </label>
           </>
         ) : (
           <label>
@@ -305,6 +313,8 @@ export function SessionsPage() {
               <option value="postgres">postgres</option>
               <option value="mysql">mysql</option>
               <option value="mssql">mssql</option>
+              <option value="oracle">oracle</option>
+              <option value="ftp">ftp</option>
               <option value="kubectl">kubectl</option>
               <option value="https">https</option>
             </select>
@@ -381,7 +391,7 @@ export function SessionsPage() {
                       </Link>
                     )}
                     {(e.status === "ended" || e.status === "failed") &&
-                      (e.protocol === "postgres" || e.protocol === "mysql" || e.protocol === "mssql" || e.protocol === "kubectl" ? (
+                      (e.protocol === "postgres" || e.protocol === "mysql" || e.protocol === "mssql" || e.protocol === "oracle" || e.protocol === "ftp" || e.protocol === "kubectl" ? (
                         <a className="btn secondary" href={api.getRecordingUrl(e.session_id)}>
                           Recording
                         </a>
@@ -514,6 +524,7 @@ export function SessionsPage() {
                     )}
                     {(s.status === "active" || s.status === "pending") && !s.waiting_supervisor && (
                       <>
+                        {s.protocol !== "ftp" && (
                         <button
                           className="btn secondary"
                           type="button"
@@ -536,6 +547,7 @@ export function SessionsPage() {
                                   ? "kubectl"
                                   : "Terminal"}
                         </button>
+                        )}
                         {canWatch && (
                           <Link className="btn secondary" to={`/sessions/${s.id}/watch`}>
                             {t("common.watch")}
@@ -554,6 +566,9 @@ export function SessionsPage() {
                       <>
                         {s.protocol === "postgres" ||
                         s.protocol === "mysql" ||
+                        s.protocol === "mssql" ||
+                        s.protocol === "oracle" ||
+                        s.protocol === "ftp" ||
                         s.protocol === "kubectl" ||
                         (s.protocol === "https" && !s.isolated) ? (
                           <a className="btn secondary" href={api.getRecordingUrl(s.id)}>

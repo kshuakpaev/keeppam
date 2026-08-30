@@ -10,8 +10,10 @@
 |---------|--------|-------|
 | ≥3 разных актива в baseline и текущий актив **не** в этом наборе | `ueba_new_asset` | 25 |
 | за 24ч уникальных активов ≥6 и ≥2× размера 30-дневного набора | `ueba_spread` | 20 |
+| ≥3 разных исходных IP и текущий host **не** в наборе | `ueba_new_ip` | 20 |
+| ≥3 разных подсети (/24 IPv4, /64 IPv6) и текущая **не** в наборе | `ueba_new_subnet` | 25 |
 
-Холодный старт (0–2 актива) — факторы не ставятся. Срабатывание в connect-score (`docs/abac-breakglass.txt`).
+Холодный старт (0–2 актива / IP / подсети) — факторы не ставятся. Подсеть сильнее host: оба сразу не ставятся. Срабатывание в connect-score (`docs/abac-breakglass.txt`).
 
 ## Клавиши (post-session, T-50)
 
@@ -44,6 +46,22 @@
 ## Аналитика
 
 `GET .../analytics/overview` → anomaly `ueba_keystroke_fast` / `ueba_mouse_fast`. Карточка **Аналитика**.
+
+## Авто-реакция (NIT §9)
+
+На ACL / Policy: `max_risk` > 0 и `risk_action`:
+
+| `risk_action` | Когда score > max_risk |
+|---------------|------------------------|
+| `deny` | отказ connect / операции |
+| `require_approval` | JIT (connect) или hold команды (SSH) |
+| `require_mfa` | step-up TOTP/Passkey |
+| `terminate` | kill текущей сессии (`LiveHub` + `MarkEnded`) |
+| `lock_account` | `users.status=locked`, `locked_until` +24ч, kill всех pending/active сессий пользователя |
+
+Default из коробки — `deny`. Политику terminate/lock нужно включить явно. Блокировка единственного admin не защищена отдельно — как у brute-force lockout.
+
+Аудит: `user.locked` reason=`ueba_risk`; `session.ended` via=`ueba_risk`.
 
 ## Вне scope (базовый UEBA)
 

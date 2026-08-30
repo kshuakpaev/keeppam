@@ -31,11 +31,19 @@
 
 `policy.Evaluate` сливает до проверки окна/ABAC/риска. Снимок JEA на сессию (SSH/SQL/HTTP/object pack) тоже берёт эффективный ID.
 
+## Видимость списка активов
+
+Новый пользователь с ролью `operator` **не** видит весь каталог и не может подключаться ко всем хостам. `GET /assets` по умолчанию `scope=entitled`: ACL на пользователя / роль / группу (не истёк TTL) или `owner_user_id`. Connect — только там.
+
+`scope=catalog` (нужен `access.request`) — listed-активы без учёток, чтобы отправить JIT. После approve binding появляется в «Доступные».
+
+Полный инвентарь: `assets.write`, `assets.acl`, `users.write`, `audit.read`. Native `:2222` и так фильтрует по `Evaluate`.
+
 ## Снимок на сессию
 
 На **connect** в `sessions.policy_snapshot` пишется заморозка: binding, Policy, max_risk / risk_action, JEA-пакеты (имена на момент входа), namespaces, egress, pii_action, tag ACL, break-glass / admin bypass.
 
-Операции внутри сессии (SQL / HTTP / kubectl / SSH-команда) берут порог риска и pack IDs из снимка, не из live Policy. Правка политики или revoke ACL **не** меняет уже открытую сессию — чтобы оборвать, нужен force-kill.
+Операции внутри сессии (SQL / HTTP / kubectl / SSH-команда) берут порог риска и pack IDs из снимка, не из live Policy. Правка политики или revoke ACL **не** меняет уже открытую сессию — чтобы оборвать, нужен force-kill или `risk_action=terminate`/`lock_account` при score > max_risk.
 
 Старые сессии без колонки (NULL) по-прежнему Evaluate live.
 

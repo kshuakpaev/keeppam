@@ -73,6 +73,7 @@ export function UsersPage() {
       {showCreate && (
         <form className="card" onSubmit={onCreate} style={{ marginBottom: "1rem" }}>
           <h2>{t("users.new")}</h2>
+          <p className="muted">{t("users.createHint")}</p>
           <label>{t("login.username")}</label>
           <input
             value={form.username}

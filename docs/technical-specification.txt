@@ -159,7 +159,7 @@ KeepPAM — платформа управления привилегирован
 
 ## 9) Интеграции и внешние сервисы
 
-- IdP: LDAP/AD, OIDC, SAML, RADIUS.
+- IdP: LDAP/AD, OIDC, OAuth 2.0 (Digital ID), SAML, RADIUS (PAP/EAP/RadSec).
 - SCIM inbound provisioning.
 - SIEM и observability системы.
 - ITSM для тикет-гейта JIT.
@@ -174,7 +174,7 @@ KeepPAM — платформа управления привилегирован
 - инфраструктурные параметры и версия;
 - архив записей (SMB/NFS);
 - авторизация и IdP;
-- OIDC/SAML/LDAP/RADIUS/SCIM;
+- OIDC/OAuth/SAML/LDAP/RADIUS/SCIM;
 - SSH auth к целям;
 - firewall PAM;
 - NAC client;

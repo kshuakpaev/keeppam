@@ -72,6 +72,9 @@ func TestEx2Roundtrip(t *testing.T) {
 	if raw.Days != 30 || got.MaxAssets != 250 || got.Customer != "Acme" {
 		t.Fatalf("%+v %+v", got, raw)
 	}
+	if got.Model != ModelAssets || got.MaxUsers != 0 {
+		t.Fatalf("legacy model %+v", got)
+	}
 	if got.Expires != "2026-02-14" {
 		t.Fatalf("expires %q", got.Expires)
 	}
@@ -120,6 +123,34 @@ func TestNormalizeEx2BlobJSONWrapper(t *testing.T) {
 	got := NormalizeEx2Blob(wrap)
 	if len(got) != len(blob) {
 		t.Fatalf("len %d want %d", len(got), len(blob))
+	}
+}
+
+func TestEx2UsersModel(t *testing.T) {
+	issued := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	users := 200
+	p := Ex2Payload{
+		HardwareFingerprint: "*",
+		Days:                30,
+		IssuedAt:            issued,
+		IssuedBy:            "KeepPAM Lab",
+		MaxUsers:            &users,
+		Model:               ModelUsers,
+		Customer:            "NIT",
+	}
+	blob, err := encryptEx2Test(testKey, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := ParseEx2Blob(testKey, blob, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != ModelUsers || got.MaxAssets != 0 || got.MaxUsers != 200 {
+		t.Fatalf("%+v", got)
+	}
+	if got.EffectiveMaxAssets(issued) != 0 {
+		t.Fatal("users SKU must not cap assets")
 	}
 }
 

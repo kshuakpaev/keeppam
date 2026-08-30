@@ -27,24 +27,26 @@ const tokenPrefix = "keeppam:rdp:"
 
 // Broker launches per-session freerdp-proxy (optional) and issues native connect info.
 type Broker struct {
-	PublicHost string // hostname clients put in .rdp (e.g. pam.example.com)
-	ListenHost string // bind host for dynamic ports (default 0.0.0.0)
-	ProxyBin   string // path to freerdp-proxy; empty = tokens/.rdp only
-	CertFile   string
-	KeyFile    string
-	WorkDir    string
-	rdb        *redis.Client
-	assets     *assets.Service
-	sessions   *sessionsvc.Service
+	PublicHost    string // hostname clients put in .rdp (e.g. pam.example.com)
+	ListenHost    string // bind host for dynamic ports (default 0.0.0.0)
+	ProxyBin      string // path to freerdp-proxy; empty = tokens/.rdp only
+	CertFile      string
+	KeyFile       string
+	WorkDir       string
+	NativeDefault bool // mstsc without policy rdp_native when broker is enabled
+	rdb           *redis.Client
+	assets        *assets.Service
+	sessions      *sessionsvc.Service
 
 	mu      sync.Mutex
 	running map[uuid.UUID]*proxyProc
 }
 
 type proxyProc struct {
-	cmd  *exec.Cmd
-	port int
-	dir  string
+	cmd        *exec.Cmd
+	port       int
+	dir        string
+	captureDir string
 }
 
 func NewBroker(publicHost, proxyBin, cert, key, workDir string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service) *Broker {
@@ -71,6 +73,17 @@ func (b *Broker) Enabled() bool {
 
 func (b *Broker) ProxyAvailable() bool {
 	return b != nil && b.ProxyBin != "" && b.ProxyBin != "off"
+}
+
+// NativeAllowed is true if policy rdp_native is on, or broker is on and NativeDefault (KEEPPAM_RDP_NATIVE_DEFAULT).
+func (b *Broker) NativeAllowed(snap *policy.Snapshot) bool {
+	if b == nil || !b.Enabled() {
+		return false
+	}
+	if snap != nil && snap.RDP().Native {
+		return true
+	}
+	return b.NativeDefault
 }
 
 func IssueToken(ctx context.Context, rdb *redis.Client, sessionID uuid.UUID, ttl time.Duration) (string, error) {
@@ -114,7 +127,7 @@ func (b *Broker) Prepare(ctx context.Context, row sessionsvc.Session, snap *poli
 	if snap != nil {
 		rdp = snap.RDP()
 	}
-	if !rdp.Native {
+	if !b.NativeAllowed(snap) {
 		return nil, fmt.Errorf("rdp_native not enabled in access policy")
 	}
 	tok, err := IssueToken(ctx, b.rdb, row.ID, ttl)
@@ -180,6 +193,7 @@ func (b *Broker) Stop(sessionID uuid.UUID) {
 		_ = p.cmd.Process.Kill()
 		_, _ = p.cmd.Process.Wait()
 	}
+	b.persistCapture(sessionID, p.captureDir, p.dir)
 	if p.dir != "" {
 		_ = os.RemoveAll(p.dir)
 	}
@@ -210,8 +224,13 @@ func (b *Broker) startProxy(_ context.Context, sessionID uuid.UUID, creds assets
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return 0, err
 	}
+	captureDir := ""
+	if b.sessions != nil {
+		captureDir = filepath.Join(b.sessions.RecordingsDir(), "rdp-native", sessionID.String())
+		_ = os.MkdirAll(captureDir, 0o750)
+	}
 	iniPath := filepath.Join(dir, "proxy.ini")
-	ini := buildProxyINI(port, creds, rdp, b.CertFile, b.KeyFile)
+	ini := buildProxyINI(port, creds, rdp, b.CertFile, b.KeyFile, captureDir)
 	if err := os.WriteFile(iniPath, []byte(ini), 0o600); err != nil {
 		return 0, err
 	}
@@ -224,7 +243,7 @@ func (b *Broker) startProxy(_ context.Context, sessionID uuid.UUID, creds assets
 		return 0, err
 	}
 	b.mu.Lock()
-	b.running[sessionID] = &proxyProc{cmd: cmd, port: port, dir: dir}
+	b.running[sessionID] = &proxyProc{cmd: cmd, port: port, dir: dir, captureDir: captureDir}
 	b.mu.Unlock()
 	go func() {
 		_ = cmd.Wait()
@@ -233,13 +252,14 @@ func (b *Broker) startProxy(_ context.Context, sessionID uuid.UUID, creds assets
 			delete(b.running, sessionID)
 		}
 		b.mu.Unlock()
+		b.persistCapture(sessionID, captureDir, dir)
 		_ = os.RemoveAll(dir)
 		_ = b.sessions.MarkEnded(context.Background(), sessionID, "rdp proxy exited")
 	}()
 	return port, nil
 }
 
-func buildProxyINI(listenPort int, creds assets.TargetCreds, rdp policy.RDPRedir, cert, key string) string {
+func buildProxyINI(listenPort int, creds assets.TargetCreds, rdp policy.RDPRedir, cert, key, captureDir string) string {
 	host := creds.Asset.Address
 	if host == "" {
 		host = creds.Asset.Hostname
@@ -270,7 +290,77 @@ func buildProxyINI(listenPort int, creds assets.TargetCreds, rdp policy.RDPRedir
 	if !rdp.Printer {
 		b.WriteString("rail_printing=false\n")
 	}
+	if strings.TrimSpace(captureDir) != "" {
+		b.WriteString("\n[SessionCapture]\n")
+		b.WriteString("Enabled = TRUE\n")
+		b.WriteString(fmt.Sprintf("CapturesDirectory = \"%s\"\n", escapeINI(captureDir)))
+	}
 	return b.String()
+}
+
+func (b *Broker) persistCapture(sessionID uuid.UUID, captureDir, workDir string) {
+	if b == nil || b.sessions == nil {
+		return
+	}
+	best := sessionsvc.LargestFileInDir(captureDir)
+	if alt := sessionsvc.LargestFileInDir(workDir); alt != "" && filepath.Base(alt) != "proxy.ini" {
+		if best == "" {
+			if captureDir != "" {
+				_ = os.MkdirAll(captureDir, 0o750)
+				dest := filepath.Join(captureDir, filepath.Base(alt))
+				if copyErr := copyFile(alt, dest); copyErr == nil {
+					best = dest
+				} else {
+					best = alt
+				}
+			} else {
+				best = alt
+			}
+		}
+	}
+	if best == "" {
+		return
+	}
+	ctx := context.Background()
+	row, err := b.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	st, _ := os.Stat(best)
+	size := int64(0)
+	if st != nil {
+		size = st.Size()
+	}
+	_ = b.sessions.AddEvent(ctx, sessionID, "rdp_native_capture", map[string]any{
+		"path": best, "bytes": size,
+	})
+	if sessionsvc.IsGuacamoleRecording(row.Protocol, row.RecordingPath) && sessionsvc.HasLocalGuacRecording(row.RecordingPath) {
+		return
+	}
+	_ = b.sessions.SetRecordingPath(ctx, sessionID, best)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(dst)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(dst)
+		return closeErr
+	}
+	return nil
 }
 
 func escapeINI(s string) string {

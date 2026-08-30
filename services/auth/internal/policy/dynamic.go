@@ -5,6 +5,8 @@ import (
 	"net"
 	"path"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // AssetSelector is the WHAT side of a dynamic (asset_id NULL) ACL binding.
@@ -19,11 +21,12 @@ type AssetSelector struct {
 
 // AssetMeta is enough of an asset to evaluate a selector.
 type AssetMeta struct {
-	Name     string
-	Hostname string
-	Address  string
-	Type     string
-	Tags     []string
+	Name        string
+	Hostname    string
+	Address     string
+	Type        string
+	Tags        []string
+	OwnerUserID *uuid.UUID
 }
 
 func (s AssetSelector) Empty() bool {

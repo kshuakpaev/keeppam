@@ -174,9 +174,12 @@ export type Asset = {
   host_key_learned_at?: string;
   pam_only?: boolean;
   firewall_applied_at?: string;
+  owner_user_id?: string;
+  owner_username?: string;
   created_at: string;
   updated_at: string;
   accounts?: AssetAccount[];
+  entitled?: boolean;
 };
 
 export type PasswordSetMember = {
@@ -311,7 +314,7 @@ export type AccessRequest = {
 };
 
 export type AuthSettings = {
-  mode: "local" | "oidc" | "ldap" | "saml" | string;
+  mode: "local" | "oidc" | "ldap" | "saml" | "oauth" | string;
   public_base_url: string;
   oidc_issuer: string;
   oidc_client_id: string;
@@ -321,6 +324,12 @@ export type AuthSettings = {
   oidc_auto_provision: boolean;
   oidc_skip_mfa: boolean;
   oidc_default_role: string;
+  oauth_authorize_url?: string;
+  oauth_token_url?: string;
+  oauth_userinfo_url?: string;
+  oauth_username_claim?: string;
+  oauth_email_claim?: string;
+  oauth_name_claim?: string;
   ldap_url: string;
   ldap_bind_dn: string;
   ldap_bind_password?: string;
@@ -463,6 +472,59 @@ export type UEBAMLSettings = {
   last_run_at?: string;
   last_error?: string;
   updated_at?: string;
+};
+
+export type AISettings = {
+  mode?: string;
+  endpoint?: string;
+  model?: string;
+  embed_model?: string;
+  max_input_chars?: number;
+  timeout_s?: number;
+  lang?: string;
+  last_run_at?: string;
+  last_error?: string;
+  updated_at?: string;
+  allow_external?: boolean;
+  licensed?: boolean;
+};
+
+export type AISummary = {
+  session_id: string;
+  status: string;
+  model?: string;
+  headline?: string;
+  summary?: string;
+  screen_narrative?: string;
+  bullets?: { text: string; event_id?: string; offset?: number; kind?: string; type?: string }[];
+  risk_notes?: { text: string; event_id?: string; kind?: string }[];
+  offsets?: { label: string; offset: number }[];
+  skip_reason?: string;
+};
+
+export type AIRisk = {
+  session_id: string;
+  status: string;
+  text: string;
+  factors?: string[];
+  model?: string;
+};
+
+export type AIBrief = {
+  kind: string;
+  ref_id: string;
+  status: string;
+  brief: string;
+  facts?: Record<string, unknown>;
+  model?: string;
+};
+
+export type AIDraft = {
+  prompt: string;
+  policy: Record<string, unknown>;
+  patterns: string[];
+  notes: string[];
+  model?: string;
 };
 
 export type FirewallSettings = {
@@ -630,14 +692,23 @@ export type InboxNotification = {
 export type LicenseStatus = {
   issued: string;
   customer?: string;
+  model?: string;
   max_assets: number;
+  max_users?: number;
   asset_count: number;
+  user_count?: number;
   soft_warn_at: number;
+  soft_warn_at_users?: number;
+  limits_assets?: boolean;
+  limits_users?: boolean;
   ha: boolean;
+  ai_copilot?: boolean;
   expires?: string;
   expired: boolean;
   soft_warn: boolean;
   hard_blocked: boolean;
+  hard_blocked_assets?: boolean;
+  hard_blocked_users?: boolean;
   source: string;
   message?: string;
   format?: string;
@@ -692,6 +763,22 @@ export type InfraStatus = {
   coredump?: string;
   dumpable?: boolean;
   data_key_mlock?: boolean;
+  residency?: ResidencySettings;
+  residency_compliant?: boolean;
+  residency_risks?: string[];
+};
+
+export type ResidencySettings = {
+  region: string;
+  country_name: string;
+  on_prem: boolean;
+  attested_at?: string;
+  attested_by?: string;
+  attested_by_name?: string;
+  notes: string;
+  updated_at?: string;
+  compliant: boolean;
+  risks?: string[];
 };
 
 export type DiscoveryJob = {
@@ -980,6 +1067,8 @@ export const api = {
       oidc_ready: boolean;
       ldap_ready: boolean;
       saml_ready: boolean;
+      oauth_ready?: boolean;
+      digitalid_lab?: boolean;
       radius_ready?: boolean;
       cert_login?: boolean;
       cert_presented?: boolean;
@@ -993,6 +1082,17 @@ export const api = {
   deleteSAMLIdP: (id: string) =>
     request<{ status: string }>(`/api/v1/admin/settings/saml/idps/${id}`, { method: "DELETE" }),
   getAuthSettings: () => request<AuthSettings>("/api/v1/admin/settings/auth"),
+  getDigitalIDLabPreset: () =>
+    request<{
+      authorize_url: string;
+      token_url: string;
+      userinfo_url: string;
+      client_id: string;
+      client_secret: string;
+      username_claim: string;
+      email_claim: string;
+      name_claim: string;
+    }>("/api/v1/admin/settings/digitalid-lab"),
   getArchiveSettings: () => request<ArchiveSettings>("/api/v1/admin/settings/archive"),
   putArchiveSettings: (body: Partial<ArchiveSettings>) =>
     request<ArchiveSettings>("/api/v1/admin/settings/archive", {
@@ -1100,6 +1200,40 @@ export const api = {
       "/api/v1/admin/settings/ueba-ml/test",
       { method: "POST", body: JSON.stringify(body || {}) },
     ),
+  getAISettings: () => request<AISettings>("/api/v1/admin/settings/ai"),
+  putAISettings: (body: Partial<AISettings>) =>
+    request<AISettings>("/api/v1/admin/settings/ai", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  testAISettings: () =>
+    request<{ ok: boolean; mode?: string; model?: string; skipped?: boolean }>("/api/v1/admin/settings/ai/test", {
+      method: "POST",
+      body: JSON.stringify({ probe: true }),
+    }),
+  getSessionAISummary: (id: string) => request<AISummary>(`/api/v1/admin/sessions/${id}/ai-summary`),
+  postSessionAISummary: (id: string, force?: boolean) =>
+    request<AISummary>(`/api/v1/admin/sessions/${id}/ai-summary`, {
+      method: "POST",
+      body: JSON.stringify({ force: !!force }),
+    }),
+  getSessionAIRisk: (id: string) => request<AIRisk>(`/api/v1/admin/sessions/${id}/ai-risk`),
+  getAccessAIBrief: (id: string, kind?: string) => {
+    const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+    return request<AIBrief>(`/api/v1/admin/access-requests/${id}/ai-brief${qs}`);
+  },
+  getSessionAIBrief: (id: string) => request<AIBrief>(`/api/v1/admin/sessions/${id}/ai-brief`),
+  getOpAIBrief: (id: string) => request<AIBrief>(`/api/v1/admin/op-approvals/${id}/ai-brief`),
+  jeaAIDraft: (prompt: string, user_id?: string) =>
+    request<AIDraft>("/api/v1/admin/jea/ai-draft", {
+      method: "POST",
+      body: JSON.stringify({ prompt, user_id }),
+    }),
+  helpAsk: (q: string) =>
+    request<{ question: string; answer: string; topics?: string[] }>("/api/v1/help/ask", {
+      method: "POST",
+      body: JSON.stringify({ q }),
+    }),
   downloadFirewallRules: async (format: "iptables" | "nft" | "ansible" = "iptables") => {
     const res = await fetch(`/api/v1/admin/firewall/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(await res.text());
@@ -1129,6 +1263,12 @@ export const api = {
   readAllNotifications: () =>
     request<{ status: string }>("/api/v1/notifications/read-all", { method: "POST" }),
   getInfraStatus: () => request<InfraStatus>("/api/v1/admin/settings/infra"),
+  getResidencySettings: () => request<ResidencySettings>("/api/v1/admin/settings/residency"),
+  putResidencySettings: (body: Partial<ResidencySettings> & { attest?: boolean }) =>
+    request<ResidencySettings>("/api/v1/admin/settings/residency", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   getSBOM: () => request<Record<string, unknown>>("/api/v1/admin/settings/sbom"),
   downloadSBOM: async () => {
     const bom = await request<Record<string, unknown>>("/api/v1/admin/settings/sbom");
@@ -1267,16 +1407,66 @@ export const api = {
   sealAudit: () =>
     request<{ sealed: number }>("/api/v1/admin/audit-events/seal", { method: "POST" }),
   listAuditBatches: () => request<{ batches: AuditBatch[] }>("/api/v1/admin/audit-events/batches"),
-  listAssets: (opts?: { status?: "listed" | "archived" | "all" }) => {
-    const q = opts?.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+  listAssets: (opts?: {
+    status?: "listed" | "archived" | "all";
+    q?: string;
+    limit?: number;
+    offset?: number;
+    scope?: "entitled" | "catalog" | "all";
+  }) => {
+    const p = new URLSearchParams();
+    if (opts?.status) p.set("status", opts.status);
+    if (opts?.q) p.set("q", opts.q);
+    if (opts?.limit != null) p.set("limit", String(opts.limit));
+    if (opts?.offset != null) p.set("offset", String(opts.offset));
+    if (opts?.scope) p.set("scope", opts.scope);
+    const q = p.toString();
     return request<{
       assets: Asset[];
       total?: number;
       hidden?: number;
+      limit?: number;
+      offset?: number;
+      q?: string;
       visible_limit?: number;
       license_expired?: boolean;
       license_unlicensed?: boolean;
-    }>(`/api/v1/admin/assets${q}`);
+    }>(`/api/v1/admin/assets${q ? `?${q}` : ""}`);
+  },
+  listAllAssets: async (opts?: { status?: "listed" | "archived" | "all" }) => {
+    const assets: Asset[] = [];
+    const limit = 200;
+    let offset = 0;
+    let total = 0;
+    let hidden = 0;
+    let visible_limit = 0;
+    let license_expired = false;
+    let license_unlicensed = false;
+    for (let i = 0; i < 50; i++) {
+      const p = new URLSearchParams();
+      if (opts?.status) p.set("status", opts.status);
+      p.set("limit", String(limit));
+      p.set("offset", String(offset));
+      const qs = p.toString();
+      const res = await request<{
+        assets: Asset[];
+        total?: number;
+        hidden?: number;
+        visible_limit?: number;
+        license_expired?: boolean;
+        license_unlicensed?: boolean;
+      }>(`/api/v1/admin/assets?${qs}`);
+      const page = res.assets || [];
+      assets.push(...page);
+      total = res.total ?? assets.length;
+      hidden = res.hidden || 0;
+      visible_limit = res.visible_limit || 0;
+      license_expired = !!res.license_expired;
+      license_unlicensed = !!res.license_unlicensed;
+      offset += page.length;
+      if (page.length < limit || assets.length >= total) break;
+    }
+    return { assets, total, hidden, visible_limit, license_expired, license_unlicensed };
   },
   getLicense: () =>
     request<LicenseStatus>("/api/v1/admin/license"),
@@ -1366,6 +1556,7 @@ export const api = {
   citrix_transport?: string;
   tn3270_codepage?: string;
   tn3270_terminal_type?: string;
+  owner_user_id?: string | null;
     },
   ) =>
     request<Asset>(`/api/v1/admin/assets/${id}`, {
@@ -1771,6 +1962,7 @@ export const api = {
     hours?: number;
     limit?: number;
     offset?: number;
+    nl?: boolean;
   }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
@@ -1782,8 +1974,9 @@ export const api = {
     if (params?.hours != null) qs.set("hours", String(params.hours));
     if (params?.limit != null) qs.set("limit", String(params.limit));
     if (params?.offset != null) qs.set("offset", String(params.offset));
+    if (params?.nl) qs.set("nl", "1");
     const q = qs.toString();
-    return request<{ events: SessionEventHit[]; total: number }>(
+    return request<{ events: SessionEventHit[]; total: number; ai_query?: boolean; note?: string }>(
       `/api/v1/admin/sessions/events${q ? `?${q}` : ""}`,
     );
   },
@@ -2009,6 +2202,7 @@ export const api = {
     days?: number;
     framework?: string;
     limit?: number;
+    prose?: boolean;
   }) => {
     const qs = new URLSearchParams();
     if (params.from) qs.set("from", params.from);
@@ -2016,6 +2210,7 @@ export const api = {
     if (params.days != null) qs.set("days", String(params.days));
     if (params.framework) qs.set("framework", params.framework);
     if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.prose) qs.set("prose", "1");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<ComplianceReport>(`/api/v1/admin/compliance/report${suffix}`);
   },
@@ -2368,6 +2563,9 @@ export type AccessPolicy = {
   ocr_lang?: string;
   ocr_interval_sec?: number;
   ocr_max_frames?: number;
+  ocr_every_frame?: boolean;
+  ocr_live?: boolean;
+  ocr_ssh_stdout?: boolean;
   rdp_clipboard?: boolean;
   rdp_drive?: boolean;
   rdp_printer?: boolean;
@@ -2408,6 +2606,9 @@ export type AccessPolicyInput = {
   ocr_lang?: string;
   ocr_interval_sec?: number;
   ocr_max_frames?: number;
+  ocr_every_frame?: boolean;
+  ocr_live?: boolean;
+  ocr_ssh_stdout?: boolean;
   rdp_clipboard?: boolean;
   rdp_drive?: boolean;
   rdp_printer?: boolean;
@@ -2552,6 +2753,9 @@ export type PolicySnapshot = {
   ocr_lang?: string;
   ocr_interval_sec?: number;
   ocr_max_frames?: number;
+  ocr_every_frame?: boolean;
+  ocr_live?: boolean;
+  ocr_ssh_stdout?: boolean;
   tag_acl?: boolean;
   match_tags?: string[];
   match_mode?: string;
@@ -2746,6 +2950,7 @@ export type ComplianceReport = {
   evidence_total: number;
   truncated: boolean;
   notes: string[];
+  prose?: string;
 };
 
 export type DRSettings = {

@@ -1,0 +1,43 @@
+# NIT §4: ≥1000 concurrent sessions + ≥200 portal operators.
+# helm upgrade --install keeppam deploy/helm/keeppam -f deploy/helm/keeppam/values.yaml \
+#   -f deploy/helm/keeppam/values-nit-p4.yaml
+#
+# Mix (docs/nit-p4.txt): SSH-heavy 80/15/5. Density ~50 mixed sessions / worker.
+# Recordings: S3 or RWX. Postgres: CloudNativePG instances=2 (cnpg-cluster.yaml).
+
+replicaCount:
+  api: 6
+  worker: 20
+  web: 2
+  guacd: 8
+
+podDisruptionBudget:
+  apiMinAvailable: 4
+  workerMinAvailable: 14
+
+resources:
+  api:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  worker:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+
+env:
+  recordingsBackend: s3
+  drainTimeout: 90s
+
+recordings:
+  persistence: true
+  size: 2Ti
+
+postgres:
+  ha: true

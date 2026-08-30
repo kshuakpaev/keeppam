@@ -1,0 +1,29 @@
+# Data residency (Kazakhstan)
+
+NIT §2: сбор и хранение строго на серверах в РК, on-prem, без утечки в публичное облако.
+
+## Что делает продукт
+
+- Таблица `data_residency_settings` (одна строка): регион (default `KZ`), флаг `on_prem`, аттестация оператора.
+- `GET/PUT /api/v1/admin/settings/residency` (`settings.write`).
+- `PUT` с `"attest": true` ставит `attested_at` / `attested_by`.
+- `GET /api/v1/admin/settings/infra` добавляет `residency`, `residency_compliant`, `residency_risks`.
+- UI: Конфигурация → «Локализация данных (РК)».
+
+Соответствие (`compliant`):
+
+| Условие | Нарушение (`risks`) |
+|---------|---------------------|
+| `on_prem=true` | `not_on_prem` |
+| `region=KZ` | `region_not_kz` |
+| `KEEPPAM_DATA_KEY_SOURCE` не aws/gcp/azure | `cloud_kms` |
+| S3 endpoint не amazonaws / googleapis / blob.core.windows.net | `cloud_s3` |
+
+On-prem MinIO/Ceph, Vault, PKCS#11, `env`/`file` data-key — допустимы.
+
+## Чего продукт не делает
+
+- Не геолоцирует стойки датацентра и не подписывает акт юрисдикции за заказчика.
+- Аттестация — заявление оператора в UI; юридическая привязка площадки — контракт.
+
+См. `docs/prod-infra.txt` (KMS/S3), `docs/ha.txt` (кластер остаётся на площадке).

@@ -1,28 +1,47 @@
-# KeepPAM: лицензия активов (T-52)
+# KeepPAM: лицензия (T-52)
+
+Три SKU. Тип задаёт загруженный файл (`model` или какие cap > 0).
+
+| `model` | Ограничивает | Безлимит |
+|---------|--------------|----------|
+| `assets` | число активов (`max_assets`) | concurrent-сессии |
+| `users` | одновременные сессии `pending`+`active` (`max_users`) | активы и зарегистрированные учётки |
+| `both` | оба cap | — |
+
+**Пользователи лицензии = конкурентные подключения**, не число учёток портала. NIT «Concurrent Users».
+
+Старый файл только с `max_assets` → `assets` (обратная совместимость).
 
 ## Форматы
 
-### 1. JSON (простой entitlement)
+### 1. JSON
 
-`KEEPPAM_LICENSE_FILE` → JSON (пример `deploy/license.json.example`).
+`KEEPPAM_LICENSE_FILE` → JSON (примеры `deploy/license.json.example`, `deploy/license-users.json.example`, `deploy/license-both.json.example`).
 
 ```json
 {
   "issued": "2026-01-01",
   "customer": "Acme",
-  "max_assets": 100,
+  "model": "users",
+  "max_users": 200,
   "soft_warn_pct": 90,
   "ha": true,
   "expires": ""
 }
 ```
 
+`model` можно не писать: `max_users` без `max_assets` → `users`; оба > 0 → `both`; иначе `assets`.
+
+Опциональный флаг `ai_copilot`. Без флага в платном файле API copilot отвечает 403 `license`. Unlicensed/dev — copilot разрешён.
+
 ### 2. ex2 license-generator (рекомендуется)
 
 Бинарный `.lic` из `../ex2/license-generator` + UI (`license-generator-ui`).
 
+В UI генератора — вкладка **KeepPAM** (вкладка **KeepCheck Security Place** — прежний формат без SKU).
+
 - AES-256-GCM, подпись SHA256 (ключ + fingerprint + days + issued_by + issued_at)
-- Опциональные поля KeepPAM внутри JSON: `max_assets`, `soft_warn_pct`, `ha`, `customer`
+- Поля KeepPAM в JSON: `model`, `max_assets`, `max_users`, `soft_warn_pct`, `ha`, `customer`, `ai_copilot`
 - Ключ: `KEEPPAM_LICENSE_ENCRYPTION_KEY` в KeepPAM = `LICENSE_ENCRYPTION_KEY` в генераторе
   (dev default: `your-32-byte-encryption-key-change-me!!`)
 
@@ -36,13 +55,14 @@ Dev без привязки к железу: fingerprint `*` + `KEEPPAM_LICENSE_
 
 | Условие | Поведение |
 |---------|-----------|
-| нет файла / default | **5** активов (создание + видимость); HA=true |
-| count ≥ soft_warn_at | UI banner |
-| count ≥ max_assets | create asset → 403 |
-| expires (JSON `expires` или ex2 `issued_at + days`) | как без лицензии: лимит **5**, в списках только первые 5 (по имени); connect/get скрытых → 403 |
+| нет файла / default | **5** активов; сессии не режутся; HA=true |
+| SKU `users` / `both`, count сессий ≥ soft_warn | UI banner |
+| SKU `users` / `both`, live-сессии ≥ `max_users` | connect → 403 |
+| SKU `assets` / `both`, count ≥ `max_assets` | create asset → 403 |
+| expires | grace: 5 активов (если SKU резал активы) и/или 5 сессий (если SKU резал сессии). Списки активов режутся только при asset-grace |
 
 ## API
 
-- `GET /api/v1/admin/license` (`assets.read`)
+- `GET /api/v1/admin/license` (`assets.read`) — `model`, `max_assets`/`max_users` (0 = безлимит), `limits_assets`/`limits_users`, `user_count`
 - `GET /api/v1/admin/license/fingerprint` (`assets.read`)
 - `POST /api/v1/admin/license/upload` (`settings.write`) — multipart `file` или JSON `{ "license_file": "<base64>" }`

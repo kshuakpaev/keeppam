@@ -1,0 +1,37 @@
+# CloudNativePG cluster for KeepPAM (K8s). Requires the CNPG operator:
+#   kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
+#
+# Then:
+#   kubectl apply -f deploy/helm/cnpg-cluster.yaml
+# Point Helm secret database-url at:
+#   postgres://keeppam:keeppam@keeppam-pg-rw:5432/keeppam
+#
+# instances: 2 = Active-Passive with automatic failover (NIT §2).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keeppam-pg
+spec:
+  instances: 2
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 20Gi
+  bootstrap:
+    initdb:
+      database: keeppam
+      owner: keeppam
+      secret:
+        name: keeppam-pg-app
+  postgresql:
+    parameters:
+      max_connections: "300"
+      shared_buffers: "256MB"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keeppam-pg-app
+type: kubernetes.io/basic-auth
+stringData:
+  username: keeppam
+  password: keeppam

@@ -20,7 +20,7 @@
 |----|--------|-----------------|-------------------|
 | **SOW-CITRIX-HDX** | Citrix HDX terminate, CGP, STA, StoreFront, запись ICA | Закрывает «как Fudo Citrix» | **фазы 1–4 в коде** (`docs/citrix-hdx.txt`); пиксельный decode — OEM |
 | **SOW-GEO-HA** | Multi-site async geo-репликация | 2+ ЦОД | **фазы 1–4 в коде** — SOW закрыт |
-| **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | **Закрыт** — thin rotate + sqlplus fallback; см. `docs/oracle-pwdsync.txt` |
+| **SOW-ORACLE** | Oracle password / thick-client sync | Банки/ERP | **Закрыт** — thin rotate + sqlplus fallback + TNS wire; см. `docs/oracle-pwdsync.txt`, `docs/oracle-wire.txt` |
 | **SOW-RADIUS-EAP** | RADIUS EAP / RadSec | Строгий NAC/802.1X IdP | **Закрыт** — EAP-TTLS/PEAP + RadSec; см. `docs/radius-eap.txt` |
 | **SOW-RDP-FILE** | RDP clipboard **file** capture | Паритет с SCP capture | **Закрыт** — drive/clipboard ingest; см. `docs/rdp-file-capture.txt` |
 | **SOW-WIN-PROC** | Метаданные процессов Windows без агента | Forensic «что запускали» | **Закрыт** — OCR/keystrokes → `win_process`; см. `docs/win-proc.txt` |
@@ -31,6 +31,7 @@
 | **SOW-WINRM-DISC** | Discovery через WinRM / local SAM | Windows-привилегии | **Закрыт** — WinRM + SAM SSH fallback; см. `docs/winrm-discovery.txt` |
 | **SOW-TN3270-DBCS** | TN3270 полный DBCS | Мейнфрейм JP/KR | **Закрыт** — codepage + DBCS forensic; см. `docs/tn3270-dbcs.txt` |
 | **SOW-SUPPORT-12M** | Поддержка 12 мес / безлимит УЗ | Коммерция | **Runbook** — контракт/SLA; см. `docs/support-12m.txt` |
+| **SOW-AI-COPILOT** | On-prem ИИ: сводка сессии, NL-поиск, карточка согласующего | «AI forensic / copilot» в ТЗ; не UEBA-ML | **В коде** — `docs/ai-plan.txt`; не в базовой цене |
 
 ---
 
@@ -52,7 +53,7 @@
 - Rotate/sync пароля Oracle УЗ из KeepPAM vault.
 - Thick-client path или явный out-of-scope в SOW.
 - Acceptance: rotate → connect SQL*Plus/app с новым секретом без показа оператору.
-- **Статус:** закрыт (thin go-ora + SQL*Plus SSH fallback); wire SQL*Net — out of scope.
+- **Статус:** закрыт (thin go-ora + SQL*Plus SSH fallback + SQL*Net wire `:11521`; Object Explorer — срез, см. `docs/oracle-wire.txt`).
 
 ### SOW-RADIUS-EAP
 - EAP-TTLS или PEAP (указать в SOW); опционально RadSec.
@@ -115,6 +116,13 @@
 - Acceptance: контракт + license + обучение + проверочный тикет (не код).
 - **Статус:** runbook; см. `docs/support-12m.txt`.
 
+### SOW-AI-COPILOT
+- On-prem runtime (нет облака по умолчанию). Не в live deny / JEA / автоapprove.
+- Базовый акт: P0 каркас + P1 сводка сессии после index/OCR (replay + права как transcript).
+- Опции контракта: P2 NL-поиск, P3 карточка JIT/4-eyes, P4 пояснение UEBA-факторов.
+- Acceptance: DoD в `docs/ai-plan.txt` §11; `make smoke` без AI-overlay зелёный.
+- **Статус:** в коде (P0–P9); см. `docs/ai-plan.txt`.
+
 ---
 
 ## Что НЕ стартовать без фразы «SOW: …»
@@ -126,3 +134,4 @@
 - Пилот A: `docs/kp-acceptance.txt`, `make acceptance-smoke`
 - КП: `docs/kp.txt`
 - Mid-market: влит в `master` (`818d6e3`)
+- ИИ-copilot (план): `docs/ai-plan.txt`

@@ -1,41 +1,54 @@
-# KeepPAM: OCR кадра RDP/VNC
+# KeepPAM: OCR кадра RDP/VNC и SSH-вывод
 
-**Не** полное видео и не live OCR. После сессии guacenc выбирает кадры с интервалом из Policy, Tesseract (`rus+eng` по умолчанию) → `session_events` тип **`screen_text`**.
+После сессии и **во время** неё (live) guacenc выбирает кадры, Tesseract (`rus+eng` по умолчанию) → `session_events` тип **`screen_text`**.
 
 Отдельно от клавиш opcode `key` (`docs/session-search.txt`).
 
-## Pipeline
+SSH/Telnet stdout индексируется в `output` и дублируется в `screen_text` (`source=ssh_stdout`) — это текстовый аналог OCR вывода терминала, не Tesseract по PTY.
 
-1. `.guac` → guacenc → `.m4v` / `.mp4` (как MP4 export).
-2. `POST http://guacenc:8099/ocr` `{"path","max_frames","interval_sec","lang"}`.
+## Pipeline (RDP/VNC/isolated)
+
+1. `.guac` → guacenc → `.m4v` / `.mp4` (как MP4 export). Live: повторный encode, если `.guac` новее видео.
+2. `POST http://guacenc:8099/ocr` `{"path","max_frames","interval_sec","lang","every_frame","since_offset","refresh"}`.
 3. ffmpeg: кадр на timestamp; tesseract `--psm 6` `-l rus+eng`.
-4. API: `castindex.IndexOCR` → payload `{line, source:"guacenc", offset}`.
+4. API: `castindex.IndexOCR` → payload `{line, source:"guacenc", offset}`. Инкремент: только offset > already stored.
 
-Авто: `IndexOCRAsync` при конце RDP/VNC/isolated (timeout 15 мин). Клавиши — отдельно, 30 с.
+Авто post-session: `IndexOCRAsync` при конце RDP/VNC/isolated (timeout 15 мин). Live: `castindex.RunLive` каждые 20 с, если Policy `ocr_live`.
 
-Параметры берутся из снимка Policy сессии (`ocr_lang`, `ocr_interval_sec`, `ocr_max_frames`). Без Policy — `rus+eng`, 15 с, до 60 кадров.
+Параметры — снимок Policy (`ocr_lang`, `ocr_interval_sec`, `ocr_max_frames`, `ocr_every_frame`, `ocr_live`, `ocr_ssh_stdout`).
+
+## Режимы
+
+| Флаг Policy | Смысл |
+|-------------|--------|
+| интервал 5–120 с | выборка кадров (default 15 с, 60 кадров) |
+| **OCR каждого кадра** | шаг ≥0.2 с (до 5 OCR/с), cap до **3600** кадров |
+| **Live OCR** | индекс `screen_text` пока сессия `active` (новые offset) |
+| **SSH-вывод** | live + post-session: `output` + `screen_text`/`ssh_stdout` |
 
 ## Лимиты
 
 | | Default | Max |
 |-|---------|-----|
-| Интервал | 15 с | 5–120 с |
-| Кадров | 60 | 120 |
+| Интервал | 15 с | 5–120 с (игнор при every-frame) |
+| Кадров | 60 | **3600** |
+| Плотный шаг | 0.2 с | |
 | Символов / кадр (Python) | 4000 | |
 | Строка события | ≤ 512 рун | |
+| SSH stdout строк | 4000 | |
 | Пустые / дубли подряд | skip | |
 
 ## API / UI
 
-`GET .../transcript` — `screen_text[]`.  
-`POST .../transcript` `{force?, ocr?}` — `ocr:true` синхронно запускает OCR (может занять минуты).
+`GET .../transcript` — `screen_text[]` (до 2000).  
+`POST .../transcript` `{force?, ocr?}` — asciicast (SSH), `.guac` keys, опционально OCR.
 
-JEA → named Policy: язык OCR, интервал, макс. кадров.
+JEA → named Policy: язык, интервал, макс. кадров, галки every-frame / live / SSH-вывод.
 
-Forensic: `type=screen_text`. Replay RDP/VNC: **OCR экрана**.
+Forensic: `type=screen_text`. Replay RDP/VNC: **OCR экрана**. Replay SSH: вывод + OCR-панель из stdout.
 
-Контейнер `guacenc`: `tesseract-ocr-eng` + `tesseract-ocr-rus`. Пересборка образа после смены Dockerfile.
+Контейнер `guacenc`: `tesseract-ocr-eng` + `tesseract-ocr-rus`. `MAX_OCR_FRAMES` default 3600.
 
 ## Вне scope
 
-Полный текст каждого кадра, live OCR, OCR SSH stdout, compliance-отчёт, маскирование паролей на экране.
+VLM/описание кадра, маскирование паролей на экране, OCR в compliance PDF, live OCR **каждого** видеокадра 30 fps без cap (есть cap 3600 и шаг 0.2 с).

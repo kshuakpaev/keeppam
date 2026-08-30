@@ -45,7 +45,7 @@
 ## 3) Функциональные модули
 
 ### 3.1 Identity/Auth
-- Local/LDAP/OIDC/SAML/RADIUS/x509 login.
+- Local/LDAP/OIDC/OAuth/SAML/RADIUS/x509 login.
 - MFA (TOTP/WebAuthn), step-up endpoints.
 - SCIM 2.0 inbound provider.
 
@@ -117,7 +117,7 @@
 - files list/get per session.
 
 ### 4.4 Config/Integrations
-- auth settings (OIDC/SAML/LDAP/RADIUS/SCIM context).
+- auth settings (OIDC/OAuth/SAML/LDAP/RADIUS/SCIM context).
 - SSH settings.
 - SIEM settings + bulk export test/trigger.
 - ITSM settings + validate.

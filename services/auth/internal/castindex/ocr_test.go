@@ -23,7 +23,7 @@ func TestOCRStoreCap(t *testing.T) {
 	if ocrStoreCap(0) != policy.OCRDefaultFrames {
 		t.Fatal("default")
 	}
-	if ocrStoreCap(999) != policy.OCRMaxFramesCap {
+	if ocrStoreCap(99999) != policy.OCRMaxFramesCap {
 		t.Fatal("cap")
 	}
 }

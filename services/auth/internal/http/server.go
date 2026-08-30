@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/keeppam/auth/internal/ai"
 	"github.com/keeppam/auth/internal/analytics"
 	"github.com/keeppam/auth/internal/appaccess"
 	"github.com/keeppam/auth/internal/assets"
@@ -30,6 +31,7 @@ import (
 	"github.com/keeppam/auth/internal/config"
 	"github.com/keeppam/auth/internal/dbephemeral"
 	"github.com/keeppam/auth/internal/device"
+	"github.com/keeppam/auth/internal/digitalidlab"
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/eidas"
@@ -46,8 +48,8 @@ import (
 	"github.com/keeppam/auth/internal/opapprove"
 	"github.com/keeppam/auth/internal/policy"
 	"github.com/keeppam/auth/internal/rbac"
-	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/rdpgw"
+	"github.com/keeppam/auth/internal/recarch"
 	"github.com/keeppam/auth/internal/scim"
 	"github.com/keeppam/auth/internal/session"
 	"github.com/keeppam/auth/internal/sessionsvc"
@@ -95,22 +97,27 @@ type Server struct {
 	nac        *nac.Service
 	eidas      *eidas.Service
 	uebaml     *uebaml.Service
+	ai         *ai.Service
 	archive    *recarch.Service
 	files      *filexfer.Service
 	health     *health.State
 	rdp        *rdpgw.Broker
 	hdx        *hdx.Client
+	didLab     *digitalidlab.Lab
 	licenseMu  sync.RWMutex
 	license    license.File
 }
 
-func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, uebamlSvc *uebaml.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service) http.Handler {
+func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, uebamlSvc *uebaml.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service, aiSvc *ai.Service) http.Handler {
 	lic, err := license.LoadAny(cfg.LicenseFile, cfg.LicenseEncryptionKey, cfg.LicenseSkipHW)
 	if err != nil {
 		lic = license.DefaultFile()
 		lic.Source = "error:" + err.Error()
 	}
-	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, uebaml: uebamlSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL)}
+	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, uebaml: uebamlSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL), ai: aiSvc}
+	if cfg.DigitalIDLab && sessions != nil {
+		s.didLab = &digitalidlab.Lab{KV: digitalidlab.RedisKV{C: sessions.Redis()}}
+	}
 	s.syncAssetQuota()
 	if s.castidx == nil && sessSvc != nil {
 		s.castidx = castindex.New(sessSvc, sessSvc.RecordingStore(), cfg.GuacencURL)
@@ -172,6 +179,12 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Get("/methods", s.handleAuthMethods)
 				r.Get("/oidc/start", s.handleOIDCStart)
 				r.Get("/oidc/callback", s.handleOIDCCallback)
+				r.Get("/oauth/start", s.handleOAuthStart)
+				r.Get("/oauth/callback", s.handleOAuthCallback)
+				r.Get("/digitalid-lab/authorize", s.handleDigitalIDLabAuthorize)
+				r.Post("/digitalid-lab/authorize", s.handleDigitalIDLabAuthorize)
+				r.Post("/digitalid-lab/token", s.handleDigitalIDLabToken)
+				r.Get("/digitalid-lab/userinfo", s.handleDigitalIDLabUserinfo)
 				r.Get("/saml/metadata", s.handleSAMLMetadata)
 				r.Get("/saml/start", s.handleSAMLStart)
 				r.Post("/saml/acs", s.handleSAMLACS)
@@ -207,6 +220,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Get("/notifications/unread-count", s.handleUnreadNotifications)
 				r.Post("/notifications/read-all", s.handleReadAllNotifications)
 				r.Post("/notifications/{id}/read", s.handleReadNotification)
+				r.Post("/help/ask", s.handleHelpAsk)
 			})
 
 			r.Route("/admin", func(r chi.Router) {
@@ -214,6 +228,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.Use(s.requireCSRF)
 				r.With(s.requirePerm("settings.write")).Get("/settings/auth", s.handleGetAuthSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/auth", s.handlePutAuthSettings)
+				r.With(s.requirePerm("settings.write")).Get("/settings/digitalid-lab", s.handleDigitalIDLabPreset)
 				r.With(s.requirePerm("settings.write")).Get("/settings/saml/idps", s.handleListSAMLIdPs)
 				r.With(s.requirePerm("settings.write")).Post("/settings/saml/idps", s.handleCreateSAMLIdP)
 				r.With(s.requirePerm("settings.write")).Put("/settings/saml/idps/{id}", s.handleUpdateSAMLIdP)
@@ -240,12 +255,17 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("settings.write")).Get("/settings/ueba-ml", s.handleGetUEBAMLSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/ueba-ml", s.handlePutUEBAMLSettings)
 				r.With(s.requirePerm("settings.write")).Post("/settings/ueba-ml/test", s.handleUEBAMLTest)
+				r.With(s.requirePerm("settings.write")).Get("/settings/ai", s.handleGetAISettings)
+				r.With(s.requirePerm("settings.write")).Put("/settings/ai", s.handlePutAISettings)
+				r.With(s.requirePerm("settings.write")).Post("/settings/ai/test", s.handleAITest)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/status", s.handleFirewallStatus)
 				r.With(s.requirePerm("settings.write")).Post("/firewall/probe", s.handleFirewallProbe)
 				r.With(s.requirePerm("settings.write")).Put("/firewall/probe-agents", s.handlePutFirewallProbeAgents)
 				r.With(s.requirePerm("settings.write")).Post("/firewall/push", s.handleFirewallPush)
 				r.With(s.requireAnyPerm("settings.write", "assets.read")).Get("/firewall/export", s.handleExportFirewallRules)
 				r.With(s.requirePerm("settings.write")).Get("/settings/infra", s.handleInfraStatus)
+				r.With(s.requirePerm("settings.write")).Get("/settings/residency", s.handleGetResidency)
+				r.With(s.requirePerm("settings.write")).Put("/settings/residency", s.handlePutResidency)
 				r.With(s.requirePerm("settings.write")).Get("/settings/archive", s.handleGetArchiveSettings)
 				r.With(s.requirePerm("settings.write")).Put("/settings/archive", s.handlePutArchiveSettings)
 				r.With(s.requirePerm("settings.write")).Post("/settings/archive/sync", s.handleArchiveSync)
@@ -351,6 +371,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs", s.handleListCommandPacks)
 				r.With(s.requirePerm("jea.read")).Post("/jea/command-preview", s.handleCommandPreview)
+				r.With(s.requirePerm("jea.read")).Post("/jea/ai-draft", s.handleJEADraft)
 				r.With(s.requirePerm("jea.read")).Get("/jea/packs/{id}", s.handleGetCommandPack)
 				r.With(s.requirePerm("jea.write")).Post("/jea/packs", s.handleCreateCommandPack)
 				r.With(s.requirePerm("jea.write")).Put("/jea/packs/{id}", s.handleUpdateCommandPack)
@@ -386,8 +407,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("access.request")).Post("/assets/{id}/access-requests", s.handleCreateAccessRequest)
 				r.With(s.requireAnyPerm("access.request", "access.approve", "access.approve.security")).Get("/access-requests", s.handleListAccessRequests)
 				r.With(s.requireAnyPerm("access.request", "access.approve", "access.approve.security")).Get("/access-requests/summary", s.handleAccessRequestsSummary)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security", "sessions.supervise")).Get("/access-requests/{id}/ai-brief", s.handleGetAIBrief)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/approve", s.handleApproveAccessRequest)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/access-requests/{id}/deny", s.handleDenyAccessRequest)
+				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Get("/op-approvals/{id}/ai-brief", s.handleGetOpAIBrief)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Get("/op-approvals", s.handleListOpApprovals)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/op-approvals/{id}/approve", s.handleApproveOp)
 				r.With(s.requireAnyPerm("access.approve", "access.approve.security")).Post("/op-approvals/{id}/deny", s.handleDenyOp)
@@ -421,6 +444,10 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files/{fileId}", s.handleGetSessionFile)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/transcript", s.handleGetTranscript)
 				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/transcript", s.handleIndexTranscript)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/ai-summary", s.handleGetAISummary)
+				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/ai-summary", s.handlePostAISummary)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/ai-risk", s.handleGetAIRisk)
+				r.With(s.requirePerm("sessions.supervise")).Get("/sessions/{id}/ai-brief", s.handleGetSessionAIBrief)
 			})
 		})
 	})
@@ -995,6 +1022,57 @@ func (s *Server) ensureAssetLicenseVisible(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+func (s *Server) ensureAssetOwnerScope(w http.ResponseWriter, r *http.Request, a assets.Asset) bool {
+	sess := mustSess(r)
+	if !rbac.RestrictToOwnedAssets(sess.Roles) {
+		return true
+	}
+	if !s.assets.Owns(a, sess.UserID) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireOwnedAssetID(w http.ResponseWriter, r *http.Request, assetID uuid.UUID) bool {
+	a, err := s.assets.Get(r.Context(), assetID)
+	if err != nil {
+		if assets.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return false
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	return s.ensureAssetOwnerScope(w, r, a)
+}
+
+func (s *Server) requireOwnedAccountID(w http.ResponseWriter, r *http.Request, accountID uuid.UUID) bool {
+	acc, err := s.assets.GetAccount(r.Context(), accountID)
+	if err != nil {
+		if assets.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return false
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	return s.requireOwnedAssetID(w, r, acc.AssetID)
+}
+
+func (s *Server) sessionVisible(ctx context.Context, sess session.Session, row sessionsvc.Session) bool {
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		a, err := s.assets.Get(ctx, row.AssetID)
+		return err == nil && s.assets.Owns(a, sess.UserID)
+	}
+	return canViewSession(sess.Permissions, sess.UserID, row.UserID)
+}
+
+const (
+	defaultAssetPage = 50
+	maxAssetPage     = 200
+)
+
 func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	lic := s.currentLicense()
@@ -1011,37 +1089,80 @@ func (s *Server) handleListAssets(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid status filter")
 		return
 	}
-	var total int
-	var err error
-	if filter == assets.StatusFilterArchived {
-		total, err = s.assets.CountArchived(r.Context())
-	} else if filter == assets.StatusFilterAll {
-		total, err = s.assets.CountAll(r.Context())
-	} else {
-		total, err = s.assets.CountListed(r.Context())
+	pageLimit := defaultAssetPage
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pageLimit = n
+		}
 	}
+	if pageLimit > maxAssetPage {
+		pageLimit = maxAssetPage
+	}
+	offset := 0
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	f := assets.ListFilter{
+		Status: filter,
+		Query:  strings.TrimSpace(r.URL.Query().Get("q")),
+		Limit:  pageLimit,
+		Offset: offset,
+	}
+	sess := mustSess(r)
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		uid := sess.UserID
+		f.OwnerUserID = &uid
+	}
+	scope := s.assetListScope(r, sess)
+	full := rbac.SeesFullAssetCatalog(sess.Permissions)
+	var entitled map[uuid.UUID]struct{}
+	if !full || scope == "entitled" || scope == "catalog" {
+		set, err := s.entitledSet(r, sess)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		entitled = set
+	}
+	if scope == "entitled" && !full {
+		ids := make([]uuid.UUID, 0, len(entitled))
+		for id := range entitled {
+			ids = append(ids, id)
+		}
+		f.IDRestrict = true
+		f.IDs = ids
+	}
+	total, err := s.assets.CountFiltered(r.Context(), f)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	limit := 0
+	licCap := 0
 	if filter == assets.StatusFilterListed {
-		limit = lic.VisibleLimit(now)
-	}
-	list, err := s.assets.ListLimited(r.Context(), limit, filter)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		licCap = lic.VisibleLimit(now)
 	}
 	hidden := 0
-	if limit > 0 && total > len(list) {
-		hidden = total - len(list)
+	if licCap > 0 && total > licCap {
+		hidden = total - licCap
+		f.MaxVisible = licCap
 	}
+	list, err := s.assets.ListPage(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	applyAssetEntitlement(list, full && scope != "catalog", entitled)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"assets":             list,
 		"total":              total,
 		"hidden":             hidden,
-		"visible_limit":      limit,
+		"limit":              pageLimit,
+		"offset":             offset,
+		"q":                  f.Query,
+		"scope":              scope,
+		"visible_limit":      licCap,
 		"license_expired":    lic.IsExpired(now),
 		"license_unlicensed": lic.IsUnlicensed(),
 	})
@@ -1053,6 +1174,9 @@ func (s *Server) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		in.OwnerUserID = &sess.UserID
 	}
 	n, err := s.assets.CountActive(r.Context())
 	if err != nil {
@@ -1089,6 +1213,30 @@ func (s *Server) handleGetAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !s.ensureAssetOwnerScope(w, r, a) {
+		return
+	}
+	sess := mustSess(r)
+	full := rbac.SeesFullAssetCatalog(sess.Permissions)
+	entitled := false
+	if full {
+		entitled = true
+	} else {
+		set, err := s.entitledSet(r, sess)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, entitled = set[a.ID]
+		if !entitled {
+			if !rbac.HasPermission(sess.Permissions, "access.request") || a.Status == "archived" {
+				writeErr(w, http.StatusNotFound, "not found")
+				return
+			}
+			a.Accounts = nil
+		}
+	}
+	a.Entitled = entitled
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -1103,6 +1251,21 @@ func (s *Server) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	cur, err := s.assets.Get(r.Context(), id)
+	if err != nil {
+		if assets.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.ensureAssetOwnerScope(w, r, cur) {
+		return
+	}
+	if rbac.RestrictToOwnedAssets(sess.Roles) {
+		in.OwnerUserID = &sess.UserID
 	}
 	a, err := s.assets.Update(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
@@ -1123,6 +1286,9 @@ func (s *Server) handleClearAssetHostKey(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, id) {
+		return
+	}
 	a, err := s.assets.ClearHostKey(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		if assets.IsNotFound(err) {
@@ -1140,6 +1306,9 @@ func (s *Server) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.requireOwnedAssetID(w, r, id) {
 		return
 	}
 	if err := s.assets.Delete(r.Context(), sess.UserID, id, s.clientIP(r), r.UserAgent()); err != nil {
@@ -1164,6 +1333,9 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
+		return
+	}
 	var in assets.CreateAccountInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -1182,6 +1354,9 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := uuid.Parse(chi.URLParam(r, "accountId"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
+		return
+	}
+	if !s.requireOwnedAccountID(w, r, accountID) {
 		return
 	}
 	var in assets.UpdateAccountInput
@@ -1213,6 +1388,9 @@ func (s *Server) handleRotateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
+		return
+	}
 	var in assets.RotateInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && err != io.EOF {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -1233,6 +1411,9 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
+	if !s.requireOwnedAccountID(w, r, accountID) {
+		return
+	}
 	if err := s.assets.DeleteAccount(r.Context(), sess.UserID, accountID, s.clientIP(r), r.UserAgent()); err != nil {
 		if assets.IsNotFound(err) {
 			writeErr(w, http.StatusNotFound, "not found")
@@ -1248,6 +1429,9 @@ func (s *Server) handleListACL(w http.ResponseWriter, r *http.Request) {
 	assetID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.requireOwnedAssetID(w, r, assetID) {
 		return
 	}
 	list, err := s.policy.ListByAsset(r.Context(), assetID)
@@ -1311,6 +1495,11 @@ func (s *Server) handleCreateACL(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if a, gerr := s.assets.Get(r.Context(), assetID); gerr == nil {
+		if !s.ensureAssetOwnerScope(w, r, a) {
+			return
+		}
 	}
 	b, err := s.policy.Create(r.Context(), sess.UserID, assetID, in, s.clientIP(r), r.UserAgent())
 	if err != nil {
