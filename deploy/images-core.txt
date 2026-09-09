@@ -28,3 +28,4 @@ haproxy:2.9-alpine
 
 # --- optional ---
 # keeppam-iso-browser:local
+# keeppam-rdp-jump:local

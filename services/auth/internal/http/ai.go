@@ -57,6 +57,40 @@ func (s *Server) handlePutAISettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleAIModels(w http.ResponseWriter, r *http.Request) {
+	if s.ai == nil {
+		writeErr(w, http.StatusServiceUnavailable, "ai unavailable")
+		return
+	}
+	out, err := s.ai.ListModels(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleAIPull(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	var in struct {
+		Name   string `json:"name"`
+		Preset string `json:"preset"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = strings.TrimSpace(in.Preset)
+	}
+	out, err := s.ai.Pull(r.Context(), name)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleAITest(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAI(w) {
 		return

@@ -41,6 +41,12 @@ ssh -i ~/.ssh/id_ed25519 -p 2222 admin@localhost -t 'myhost/root'
 ssh -A -p 2222 admin@localhost   # agent forwarding на цель
 ```
 
+**Файл подключения (OpenSSH config):** на карточке актива / списке — «Файл подключения», либо при «Открыть SSH» скачивается `.sshconfig`.  
+Host/Port/User (PAM) + `RemoteCommand asset/account`. Секрет цели в файл не попадает.  
+Публичный hostname: `KEEPPAM_SSH_PUBLIC_HOST` (иначе Host из API-запроса / localhost).
+
+**Native Client (SSH/RDP):** кнопка «Native-клиент» — Connection File + Launcher (`.cmd` / `.sh`). См. `docs/native-client.txt`.
+
 Публичные ключи: Пользователи → редактирование → «SSH-ключи».  
 Host key цели (TOFU): Активы → карточка актива → fingerprint / сброс.
 

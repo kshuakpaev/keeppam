@@ -24,26 +24,28 @@ HTML5-клиент (`DesktopSession`): при `policy_snapshot.rdp_clipboard` �
 1. Broker: `KEEPPAM_RDP_PUBLIC_HOST` задан (пусто/`off` = выкл.). Policy `rdp_native` **или** `KEEPPAM_RDP_NATIVE_DEFAULT=true` (default) — mstsc без обязательной галки в JEA.
 2. Env:
    - `KEEPPAM_RDP_PUBLIC_HOST` — hostname в `.rdp`.
-   - `KEEPPAM_RDP_PROXY_BIN` — путь к `freerdp-proxy` (без бинарника: только `.rdp`/token).
+   - `KEEPPAM_RDP_JUMP_IMAGE` — образ jump (`keeppam-rdp-jump:local`; `off` = не использовать). Один логин на цель: Xvfb + xfreerdp, mstsc → xrdp, guacd пишет `.guac`.
+   - `KEEPPAM_RDP_PROXY_BIN` — запасной `freerdp-proxy` (если jump недоступен).
    - `KEEPPAM_RDP_PROXY_CERT_FILE` / `_KEY_FILE` — опционально (иначе TLS API).
    - `KEEPPAM_RDP_NATIVE_DEFAULT=false` — снова требовать галку `rdp_native` (HTML5-only при политике off).
 3. Create session → `rdp_token`, `rdp_file`, `rdp_addr`; UI скачивает `.rdp`. Ежедневная работа — mstsc, не браузер.
-4. Broker поднимает **per-session freerdp-proxy** с inject vault-учётки на цель; клиент без пароля цели (NLA к proxy отключён в `.rdp`).
+4. Предпочтительно: broker поднимает **per-session rdp-jump** (docker). xfreerdp на jump логинится на цель с vault-учёткой; mstsc без пароля цели (NLA к jump отключён в `.rdp`).
 5. Download: `GET /api/v1/admin/sessions/{id}/rdp.rdp`.
 
-Каналы cliprdr/rdpdr режутся в ini proxy по тем же флагам политики.
+Каналы cliprdr/rdpdr: на jump — `/drive:KeepPAM` и clipboard xfreerdp по тем же флагам политики. Файлы на диске KeepPAM индексируются `IngestRDPSession` как HTML5.
 
 ## Ограничения
 
-- Полная `.guac`-запись и MP4/OCR — HTML5-путь (браузер).
-- Native mstsc: **SessionCapture** freerdp-proxy → `recordings/rdp-native/{id}/` (pcap/PDU). Replay — скачивание файла, не HTML5-плеер. FreeRDP 2.x читает `[SessionCapture]`; 3.x может проигнорировать секцию — тогда остаётся HTML5-путь для полной картинки.
+- Replay native через jump — тот же HTML5-плеер `.guac` (MP4/OCR как у браузерных сессий).
+- Без jump-образа: запасной **SessionCapture** freerdp-proxy → `recordings/rdp-native/{id}/` (pcap/PDU, не плеер). FreeRDP 3.x секцию может проигнорировать.
+- Без jump и без proxy bin: `.rdp` прямо на актив — записи на PAM нет.
 - freerdp-proxy module API / RD Gateway SSO — вне среза.
 - Citrix — КП-3 SOCKS MVP (`docs/citrix-socks.txt`); HDX — SOW.
-- RDS RemoteApp — `docs/remoteapp.txt` (поля актива → guac / `.rdp`).
+- RDS RemoteApp — `docs/remoteapp.txt` (поля актива → guac / `.rdp` / jump `REMOTE_APP`).
 
 ## DoD
 
 - DLP-strict: clipboard/drive/printer off в HTML5.
-- Full: флаги on → redirect в guac.
-- mstsc → KeepPAM (freerdp-proxy) → target без пароля в клиенте при broker (`KEEPPAM_RDP_PUBLIC_HOST`) + proxy bin. Галку `rdp_native` для новых политик не требуется (`KEEPPAM_RDP_NATIVE_DEFAULT`).
-- Native сессия с SessionCapture: файл в `recordings/rdp-native/{id}/`, `recording_path` указывает на захват, если HTML5 `.guac` нет.
+- Full: флаги on → redirect в guac / jump drive.
+- mstsc → KeepPAM (rdp-jump или freerdp-proxy) → target без пароля в клиенте при broker (`KEEPPAM_RDP_PUBLIC_HOST`). Галку `rdp_native` для новых политик не требуется (`KEEPPAM_RDP_NATIVE_DEFAULT`).
+- Native jump: `.guac` в `recordings/guac/{id}`, `recording_path` с create; replay открывается в портале.

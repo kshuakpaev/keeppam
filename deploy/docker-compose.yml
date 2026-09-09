@@ -63,6 +63,9 @@ services:
       KEEPPAM_TN3270_ADDR: ":2324"
       KEEPPAM_CITRIX_SOCKS_ADDR: ":1081"
       KEEPPAM_CITRIX_PUBLIC_HOST: "${KEEPPAM_CITRIX_PUBLIC_HOST:-localhost}"
+      KEEPPAM_RDP_PUBLIC_HOST: "${KEEPPAM_RDP_PUBLIC_HOST:-localhost}"
+      KEEPPAM_RDP_JUMP_IMAGE: "keeppam-rdp-jump:local"
+      KEEPPAM_SSH_PUBLIC_HOST: "${KEEPPAM_SSH_PUBLIC_HOST:-localhost}"
       KEEPPAM_K8S_API_ADDR: ":16443"
       KEEPPAM_K8S_PUBLIC_URL: "https://localhost:16443"
       KEEPPAM_DATABASE_URL: "postgres://keeppam:keeppam@postgres:5432/keeppam?sslmode=disable"
@@ -259,6 +262,12 @@ services:
     image: keeppam-iso-browser:local
     build:
       context: ./iso-browser
+    profiles: ["build"]
+
+  rdp-jump:
+    image: keeppam-rdp-jump:local
+    build:
+      context: ./rdp-jump
     profiles: ["build"]
 
   web:

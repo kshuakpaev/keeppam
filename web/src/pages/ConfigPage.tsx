@@ -17,6 +17,7 @@ import {
   type ResidencySettings,
   type UEBAMLSettings,
   type AISettings,
+  type AIModelCatalog,
 } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
@@ -34,6 +35,7 @@ const emptyAI: AISettings = {
   endpoint: "mock://local",
   model: "mock",
   embed_model: "mock",
+  preset: "mock",
   max_input_chars: 48000,
   timeout_s: 90,
   lang: "ru",
@@ -263,6 +265,9 @@ export function ConfigPage() {
     endpoint: "mock://local",
     model: "mock",
     embed_model: "mock",
+    preset: "mock",
+    api_key: "",
+    has_api_key: false,
     max_input_chars: 48000,
     timeout_s: 90,
     lang: "ru",
@@ -270,6 +275,7 @@ export function ConfigPage() {
     licensed: true,
     allow_external: false,
   });
+  const [aiCatalog, setAiCatalog] = useState<AIModelCatalog>({ presets: [] });
   const [notify, setNotify] = useState<NotifySettings>(emptyNotify);
   const [notifyAuth, setNotifyAuth] = useState("");
   const [notifySmtpPass, setNotifySmtpPass] = useState("");
@@ -368,6 +374,7 @@ export function ConfigPage() {
           api.getArchiveSettings().catch(() => emptyArchive),
         ]);
         void api.getDigitalIDLabPreset().then(setDidLab).catch(() => setDidLab(null));
+        void api.getAIModels().then(setAiCatalog).catch(() => setAiCatalog({ presets: [] }));
         setForm({ ...empty, ...s });
         setGroupMapText(formatGroupRoleMap(s.saml_group_role_map));
         setSiem({ ...emptySIEM, ...si });
@@ -432,6 +439,9 @@ export function ConfigPage() {
           endpoint: aiSet.endpoint || "mock://local",
           model: aiSet.model || "mock",
           embed_model: aiSet.embed_model || "mock",
+          preset: aiSet.preset || "mock",
+          api_key: "",
+          has_api_key: !!aiSet.has_api_key,
           max_input_chars: aiSet.max_input_chars || 48000,
           timeout_s: aiSet.timeout_s || 90,
           lang: aiSet.lang || "ru",
@@ -655,20 +665,28 @@ export function ConfigPage() {
     setError("");
     setMsg("");
     try {
-      const saved = await api.putAISettings({
+      const body: Partial<AISettings> = {
         mode: aiForm.mode,
         endpoint: aiForm.endpoint,
         model: aiForm.model,
         embed_model: aiForm.embed_model,
+        preset: aiForm.preset,
         max_input_chars: Number(aiForm.max_input_chars) || 48000,
         timeout_s: Number(aiForm.timeout_s) || 90,
         lang: aiForm.lang,
-      });
+      };
+      if (aiForm.api_key.trim()) {
+        body.api_key = aiForm.api_key.trim();
+      }
+      const saved = await api.putAISettings(body);
       setAiForm({
         mode: saved.mode || "off",
         endpoint: saved.endpoint || "mock://local",
         model: saved.model || "mock",
         embed_model: saved.embed_model || "mock",
+        preset: saved.preset || "",
+        api_key: "",
+        has_api_key: !!saved.has_api_key,
         max_input_chars: saved.max_input_chars || 48000,
         timeout_s: saved.timeout_s || 90,
         lang: saved.lang || "ru",
@@ -677,12 +695,105 @@ export function ConfigPage() {
         allow_external: !!saved.allow_external,
       });
       setMsg(t("config.aiSaved"));
+      void api.getAIModels().then(setAiCatalog).catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("config.aiSaveFailed"));
     } finally {
       setBusy(false);
     }
   }
+
+  const chatPresets = (aiCatalog.presets || []).filter((p) => p.kind !== "embed");
+  const embedPresets = (aiCatalog.presets || []).filter((p) => p.kind === "embed" || p.id === "mock");
+  const selectedChat = chatPresets.find((p) => p.id === aiForm.preset);
+  const chatSelectValue = selectedChat ? selectedChat.id : "__custom__";
+  const selectedNeedsKey = !!selectedChat?.needs_key;
+  const selectedPull = !!selectedChat?.pull;
+  const runtimeHasModel = (name: string) =>
+    (aiCatalog.runtime || []).some((m) => m.id === name || m.id.startsWith(`${name}:`));
+
+  function applyChatPreset(id: string) {
+    if (id === "__custom__") {
+      setAiForm({ ...aiForm, preset: "" });
+      return;
+    }
+    const p = chatPresets.find((x) => x.id === id);
+    if (!p) {
+      setAiForm({
+        ...aiForm,
+        preset: "",
+        model: id,
+        mode: aiForm.mode === "off" ? "on" : aiForm.mode,
+      });
+      return;
+    }
+    let nextMode = aiForm.mode;
+    if (aiForm.mode === "off") {
+      nextMode = p.mode || "on";
+    } else if (p.mode === "external") {
+      nextMode = "external";
+    } else if (p.mode === "on" && aiForm.mode === "external") {
+      nextMode = "on";
+    }
+    setAiForm({
+      ...aiForm,
+      preset: p.id,
+      mode: nextMode,
+      endpoint: p.endpoint,
+      model: p.model,
+      embed_model: p.embed_model || aiForm.embed_model,
+    });
+  }
+
+  function applyEmbedPreset(id: string) {
+    if (id === "__custom__") return;
+    const p = embedPresets.find((x) => x.id === id);
+    if (!p) {
+      setAiForm({ ...aiForm, embed_model: id });
+      return;
+    }
+    setAiForm({
+      ...aiForm,
+      embed_model: p.embed_model || p.model,
+      endpoint: aiForm.endpoint.startsWith("mock") && p.endpoint ? p.endpoint : aiForm.endpoint,
+    });
+  }
+
+  async function onPullAIModel() {
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const name = selectedChat?.model || aiForm.model;
+      const r = await api.pullAIModel(name);
+      setMsg(t("config.aiPulled").replace("{model}", r.pulled || name));
+      const cat = await api.getAIModels();
+      setAiCatalog(cat);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("config.aiPullFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function aiGroupLabel(group: string) {
+    switch (group) {
+      case "mock":
+        return t("config.aiGroupMock");
+      case "ollama":
+        return t("config.aiGroupOllama");
+      case "groq":
+        return t("config.aiGroupGroq");
+      case "openrouter":
+        return t("config.aiGroupOpenRouter");
+      default:
+        return group;
+    }
+  }
+
+  const chatGroups = ["mock", "ollama", "groq", "openrouter"]
+    .map((g) => [g, chatPresets.filter((p) => p.group === g)] as const)
+    .filter(([, list]) => list.length > 0);
 
   async function onSaveProbeAgents(e: FormEvent) {
     e.preventDefault();
@@ -2689,7 +2800,7 @@ export function ConfigPage() {
         </div>
       </form>
 
-      <form id="ai" className="card" onSubmit={onSaveAI} style={{ maxWidth: 640 }}>
+      <form id="ai" className="card" onSubmit={onSaveAI} style={{ maxWidth: 720 }}>
         <h2>{t("config.aiTitle")}</h2>
         <p className="muted">{t("config.aiLead")}</p>
         <p className="muted">{aiForm.licensed ? t("config.aiLicensed") : t("config.aiUnlicensed")}</p>
@@ -2699,19 +2810,69 @@ export function ConfigPage() {
           <option value="on">on</option>
           {aiForm.allow_external ? <option value="external">external</option> : null}
         </select>
+        <label>{t("config.aiPick")}</label>
+        <select value={chatSelectValue} onChange={(e) => applyChatPreset(e.target.value)}>
+          {chatGroups.map(([group, list]) => (
+            <optgroup key={group} label={aiGroupLabel(group)}>
+              {list.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                  {p.cpu_friendly ? " · CPU" : ""}
+                  {p.pull && runtimeHasModel(p.model) ? " · ✓" : ""}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          {(aiCatalog.runtime || []).length > 0 ? (
+            <optgroup label={t("config.aiGroupRuntime")}>
+              {(aiCatalog.runtime || []).map((m) => (
+                <option key={`rt-${m.id}`} value={m.id}>
+                  {m.id}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+          <option value="__custom__">{t("config.aiCustom")}</option>
+        </select>
+        {selectedChat?.notes ? <p className="muted">{selectedChat.notes}</p> : null}
+        {aiCatalog.runtime_error ? <p className="muted">{t("config.aiRuntimeHint")}: {aiCatalog.runtime_error}</p> : null}
+        <label>{t("config.aiEmbedPick")}</label>
+        <select
+          value={embedPresets.find((p) => (p.embed_model || p.model) === aiForm.embed_model)?.id || "__custom__"}
+          onChange={(e) => applyEmbedPreset(e.target.value)}
+        >
+          {embedPresets.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+          <option value="__custom__">{t("config.aiCustom")}</option>
+        </select>
         <label>{t("config.aiEndpoint")}</label>
-        <input value={aiForm.endpoint} onChange={(e) => setAiForm({ ...aiForm, endpoint: e.target.value })} />
+        <input value={aiForm.endpoint} onChange={(e) => setAiForm({ ...aiForm, endpoint: e.target.value, preset: "" })} />
         <label>{t("config.aiModel")}</label>
-        <input value={aiForm.model} onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })} />
+        <input value={aiForm.model} onChange={(e) => setAiForm({ ...aiForm, model: e.target.value, preset: "" })} />
         <label>{t("config.aiEmbed")}</label>
         <input value={aiForm.embed_model} onChange={(e) => setAiForm({ ...aiForm, embed_model: e.target.value })} />
+        {selectedNeedsKey || aiForm.mode === "external" ? (
+          <>
+            <label>{t("config.aiApiKey")}</label>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder={aiForm.has_api_key ? t("config.aiApiKeySet") : t("config.aiApiKeyHint")}
+              value={aiForm.api_key}
+              onChange={(e) => setAiForm({ ...aiForm, api_key: e.target.value })}
+            />
+          </>
+        ) : null}
         <label>Lang</label>
         <select value={aiForm.lang} onChange={(e) => setAiForm({ ...aiForm, lang: e.target.value })}>
           <option value="ru">ru</option>
           <option value="en">en</option>
         </select>
         {aiForm.last_error ? <p className="error">{aiForm.last_error}</p> : null}
-        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem" }}>
+        <div className="row" style={{ gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
           <button
             className="btn secondary"
             type="button"
@@ -2724,6 +2885,19 @@ export function ConfigPage() {
             }
           >
             Test
+          </button>
+          {selectedPull ? (
+            <button className="btn secondary" type="button" disabled={busy} onClick={() => void onPullAIModel()}>
+              {t("config.aiPull")}
+            </button>
+          ) : null}
+          <button
+            className="btn secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void api.getAIModels().then(setAiCatalog).catch((err) => setError(String(err)))}
+          >
+            {t("config.aiRefreshModels")}
           </button>
           <button className="btn" type="submit" disabled={busy}>
             {t("config.save")}

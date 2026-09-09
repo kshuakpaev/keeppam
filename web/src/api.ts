@@ -479,6 +479,9 @@ export type AISettings = {
   endpoint?: string;
   model?: string;
   embed_model?: string;
+  preset?: string;
+  api_key?: string;
+  has_api_key?: boolean;
   max_input_chars?: number;
   timeout_s?: number;
   lang?: string;
@@ -487,6 +490,28 @@ export type AISettings = {
   updated_at?: string;
   allow_external?: boolean;
   licensed?: boolean;
+};
+
+export type AIModelPreset = {
+  id: string;
+  group: string;
+  kind: string;
+  label: string;
+  model: string;
+  embed_model: string;
+  endpoint: string;
+  mode: string;
+  needs_key?: boolean;
+  pull?: boolean;
+  cpu_friendly?: boolean;
+  notes?: string;
+};
+
+export type AIModelCatalog = {
+  presets: AIModelPreset[];
+  runtime?: { id: string; source?: string; installed?: boolean }[];
+  preset?: string;
+  runtime_error?: string;
 };
 
 export type AISummary = {
@@ -1206,10 +1231,19 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getAIModels: () => request<AIModelCatalog>("/api/v1/admin/settings/ai/models"),
   testAISettings: () =>
-    request<{ ok: boolean; mode?: string; model?: string; skipped?: boolean }>("/api/v1/admin/settings/ai/test", {
+    request<{ ok: boolean; mode?: string; model?: string; skipped?: boolean; preset?: string }>(
+      "/api/v1/admin/settings/ai/test",
+      {
+        method: "POST",
+        body: JSON.stringify({ probe: true }),
+      },
+    ),
+  pullAIModel: (name: string) =>
+    request<{ ok: boolean; pulled?: string }>("/api/v1/admin/settings/ai/pull", {
       method: "POST",
-      body: JSON.stringify({ probe: true }),
+      body: JSON.stringify({ name }),
     }),
   getSessionAISummary: (id: string) => request<AISummary>(`/api/v1/admin/sessions/${id}/ai-summary`),
   postSessionAISummary: (id: string, force?: boolean) =>
@@ -1900,6 +1934,39 @@ export const api = {
     }),
   getRecordingMp4Url: (id: string) => `/api/v1/admin/sessions/${id}/recording.mp4`,
   downloadRdpUrl: (id: string) => `/api/v1/admin/sessions/${id}/rdp.rdp`,
+  downloadSSHConfigUrl: (assetId: string, accountId: string) =>
+    `/api/v1/admin/assets/${assetId}/accounts/${accountId}/ssh.config`,
+  downloadSSHConfig: async (assetId: string, accountId: string, filename?: string) => {
+    const res = await fetch(`/api/v1/admin/assets/${assetId}/accounts/${accountId}/ssh.config`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(text || res.statusText, res.status);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^";]+)"?/i.exec(cd);
+    const name = filename || m?.[1] || "keeppam.sshconfig";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+  /** Native Client Connection File + Launcher bundle (SSH). */
+  downloadNativeSSHBundle: (assetId: string, accountId: string) =>
+    request<{
+      native_conn_file: string;
+      native_conn_filename: string;
+      native_launcher: string;
+      native_launcher_filename: string;
+      native_launcher_sh?: string;
+      native_launcher_sh_filename?: string;
+      native_hint?: string;
+    }>(`/api/v1/admin/assets/${assetId}/accounts/${accountId}/ssh.config?bundle=1`),
+  downloadSessionSSHConfigUrl: (id: string) => `/api/v1/admin/sessions/${id}/ssh.config`,
   createSession: (
     asset_id: string,
     account_id: string,
@@ -2689,6 +2756,23 @@ export type PamSession = {
   rdp_file?: string;
   rdp_proxy?: boolean;
   rdp_filename?: string;
+  rdp_launcher?: string;
+  rdp_launcher_filename?: string;
+  ssh_file?: string;
+  ssh_filename?: string;
+  ssh_hint?: string;
+  ssh_addr?: string;
+  ssh_launcher?: string;
+  ssh_launcher_filename?: string;
+  ssh_launcher_sh?: string;
+  ssh_launcher_sh_filename?: string;
+  native_conn_file?: string;
+  native_conn_filename?: string;
+  native_launcher?: string;
+  native_launcher_filename?: string;
+  native_launcher_sh?: string;
+  native_launcher_sh_filename?: string;
+  native_hint?: string;
   rdp_width?: number;
   rdp_height?: number;
   kubeconfig?: string;
@@ -2985,4 +3069,14 @@ export type DRStatus = {
 
 export function hasPerm(user: User | null, perm: string): boolean {
   return !!user?.permissions?.includes(perm);
+}
+
+/** PAM platform admin: users.write or role admin (not auditor/operator). */
+export function isPamAdmin(user: User | null): boolean {
+  if (!user) return false;
+  if (hasPerm(user, "users.write")) return true;
+  return (user.roles || []).some((r) => {
+    const n = r.toLowerCase().replace(/^keeppam-/, "");
+    return n === "admin";
+  });
 }

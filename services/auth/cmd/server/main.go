@@ -344,7 +344,7 @@ func main() {
 	complianceSvc.SetEidas(eidasSvc)
 	uebamlSvc := uebaml.New(db, auditSvc, sessSvc, notifySvc)
 	castIdx.SetUEBAML(uebamlSvc)
-	aiSvc := ai.New(db, auditSvc, sessSvc, policySvc)
+	aiSvc := ai.New(db, auditSvc, sessSvc, policySvc, env)
 	aiSvc.SetLicense(func() bool { return licFile.AllowAICopilot() })
 	castIdx.SetAfterIndex(func(ctx context.Context, id uuid.UUID) {
 		aiSvc.EnqueueAfterIndex(ctx, id)
@@ -572,8 +572,9 @@ func main() {
 			rdpBrokerInit = rdpgw.NewBroker(cfg.RDPPublicHost, cfg.RDPProxyBin, cert, key,
 				filepath.Join(cfg.RecordingsDir, "rdp-proxy"), sessions.Redis(), assetsSvc, sessSvc)
 			rdpBrokerInit.NativeDefault = cfg.RDPNativeDefault
+			rdpBrokerInit.Jump = rdpgw.JumpConfigFromEnv(cfg.RecordingsDir, cfg.GuacdAddr)
 			rdpBroker = rdpBrokerInit
-			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off", "native_default", cfg.RDPNativeDefault)
+			slog.Info("native RDP broker", "public_host", cfg.RDPPublicHost, "proxy_bin", cfg.RDPProxyBin != "" && cfg.RDPProxyBin != "off", "native_default", cfg.RDPNativeDefault, "jump_image", rdpBrokerInit.Jump.Image)
 		}
 		handler := httpapi.New(cfg, authSvc, usersSvc, assetsSvc, policySvc, sessSvc, auditSvc, sessions, live, settingsSvc, siemSvc, discoverySvc, analyticsSvc, appsSvc, complianceSvc, drSvc, dbEphSvc, attackSimSvc, sshCASvc, itsmSvc, notifySvc, k8sGw, opsSvc, scimSvc, firewallSvc, nacSvc, eidasSvc, uebamlSvc, archSvc, filesSvc, life, rdpBroker, castIdx, aiSvc)
 		srv = &http.Server{Addr: cfg.HTTPAddr, Handler: handler}
@@ -696,6 +697,7 @@ func main() {
 	if runSSH {
 		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
 		sshGw.SetLegacy(cfg.SSHLegacy)
+		sshGw.SetRedis(sessions.Redis())
 		sshGw.SetSessionFence(func() error {
 			wcfg := geo.WitnessConfig{
 				Mode: cfg.GeoWitnessMode, RedisURL: cfg.GeoWitnessRedisURL,

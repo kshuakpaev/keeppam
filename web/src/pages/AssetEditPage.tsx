@@ -3,9 +3,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, hasPerm, type AccessBinding, type AccessPolicy, type AppIntegration, type AppLease, type AppObjectPack, type Asset, type AssetAccount, type CommandPolicyPack, type HTTPPolicyPack, type PamGroup, type Role, type SQLPolicyPack, type User } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
+import { downloadNativeClientBundle } from "../nativeClient";
 import { isSQLProtocol, kindForProtocol, useSessionTabs } from "../sessionTabs";
 import { rdpResolutionById, loadRdpResolutionId, RDP_RESOLUTIONS, saveRdpResolutionId } from "../rdpResolution";
 import { StepUpDialog } from "./StepUpDialog";
+import { startNativeClient } from "../assetConnect";
 
 const PROTOCOLS = ["ssh", "rdp", "vnc", "https", "postgres", "mysql", "mssql", "oracle", "ftp", "kubectl", "telnet", "tn3270", "citrix"];
 const TYPES = ["host", "db", "k8s", "api"];
@@ -355,15 +357,19 @@ export function AssetEditPage() {
         }
         setMsg(sess.wire_hint || `Citrix SOCKS ${sess.wire_addr || ":1081"}`);
       }
-      if (asset.protocol === "rdp" && sess.rdp_file) {
-        const blob = new Blob([sess.rdp_file], { type: "application/x-rdp" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = sess.rdp_filename || `keeppam-${sess.id.slice(0, 8)}.rdp`;
-        a.click();
-        URL.revokeObjectURL(url);
-        setMsg(sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`);
+      if (asset.protocol === "rdp" && (sess.rdp_file || sess.native_conn_file)) {
+        setMsg(
+          downloadNativeClientBundle(sess, { protocol: "rdp" }) ||
+            sess.rdp_hint ||
+            `Native RDP: ${sess.rdp_addr || ""}`,
+        );
+      }
+      if (asset.protocol === "ssh" && (sess.ssh_file || sess.native_conn_file)) {
+        setMsg(
+          downloadNativeClientBundle(sess, { protocol: "ssh" }) ||
+            sess.ssh_hint ||
+            `SSH gateway: ${sess.ssh_addr || ":2222"}`,
+        );
       }
       if (asset.protocol === "ftp") {
         setMsg(
@@ -1985,20 +1991,65 @@ export function AssetEditPage() {
                               </button>
                             </>
                           ) : (
-                            <button
-                              className="btn"
-                              type="button"
-                              disabled={connecting === acc.id}
-                              onClick={() => void onConnect(acc)}
-                            >
-                              {connecting === acc.id
-                                ? "…"
-                                : asset.protocol === "ssh"
-                                  ? t("assets.connectSsh")
-                                  : isSQLProtocol(asset.protocol)
-                                    ? t("assets.connectSql")
-                                    : t("assets.connectOpen", { proto: asset.protocol.toUpperCase() })}
-                            </button>
+                            <>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={connecting === acc.id}
+                                onClick={() => void onConnect(acc)}
+                              >
+                                {connecting === acc.id
+                                  ? "…"
+                                  : asset.protocol === "ssh"
+                                    ? t("assets.connectSsh")
+                                    : isSQLProtocol(asset.protocol)
+                                      ? t("assets.connectSql")
+                                      : t("assets.connectOpen", { proto: asset.protocol.toUpperCase() })}
+                              </button>
+                              {(asset.protocol === "ssh" || asset.protocol === "rdp") && (
+                                <button
+                                  className="btn secondary"
+                                  type="button"
+                                  title={t("assets.nativeClientTitle")}
+                                  disabled={!!connecting}
+                                  onClick={() => {
+                                    void (async () => {
+                                      setError("");
+                                      setConnecting(acc.id + ":native");
+                                      try {
+                                        const res = await startNativeClient(asset, acc, {
+                                          supervisorDenied: t("assets.supervisorDenied"),
+                                          supervisorTimeout: t("assets.supervisorTimeout"),
+                                          rdp_width:
+                                            asset.protocol === "rdp"
+                                              ? rdpResolutionById(loadRdpResolutionId()).width || undefined
+                                              : undefined,
+                                          rdp_height:
+                                            asset.protocol === "rdp"
+                                              ? rdpResolutionById(loadRdpResolutionId()).height || undefined
+                                              : undefined,
+                                        });
+                                        setMsg(res.msg || t("assets.nativeClientOk"));
+                                        if (!res.skipTab && res.sessionId) {
+                                          openTab({
+                                            id: res.sessionId,
+                                            kind: res.kind,
+                                            title: res.title,
+                                            protocol: res.protocol,
+                                          });
+                                        }
+                                      } catch (err) {
+                                        setError(te(err, "assets.nativeClientError"));
+                                      } finally {
+                                        setConnecting(null);
+                                      }
+                                    })();
+                                  }}
+                                >
+                                  {connecting === acc.id + ":native" ? "…" : t("assets.nativeClient")}
+                                </button>
+                              )}
+                            </>
                           )}
                           {asset.protocol === "https" &&
                             (appForm.recording_mode === "full" || appForm.recording_mode === "isolated") &&

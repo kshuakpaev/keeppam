@@ -328,8 +328,10 @@ RAG по `web/src/help/content.ts` + выбранным `docs/*.txt` (не sessi
 
 | Метод | Путь | Право |
 |-------|------|--------|
-| GET/PUT | `/api/v1/admin/settings/ai` | `users.write` |
+| GET/PUT | `/api/v1/admin/settings/ai` | `users.write` / `settings.write` |
+| GET | `/api/v1/admin/settings/ai/models` | каталог бесплатных моделей + список runtime |
 | POST | `/api/v1/admin/settings/ai/test` | `users.write` |
+| POST | `/api/v1/admin/settings/ai/pull` | скачать вес в Ollama (`{"name":"llama3.2"}`) |
 | GET/POST | `/api/v1/admin/sessions/{id}/ai-summary` | `sessions.read` |
 | GET | `/api/v1/admin/sessions/{id}/ai-risk` | `sessions.read` |
 | GET | `/api/v1/admin/sessions/events?nl=1&q=` | `sessions.read` |
@@ -341,7 +343,7 @@ RAG по `web/src/help/content.ts` + выбранным `docs/*.txt` (не sessi
 
 ## 8. UI
 
-- Config → ИИ-помощник: mode, endpoint, model, test, last_error.
+- Config → ИИ-помощник: **выбор бесплатной модели** (Mock / Ollama Llama·Qwen·Mistral·Gemma·Phi / Groq и OpenRouter :free при `KEEPPAM_AI_ALLOW_EXTERNAL=1`), endpoint, test, «Скачать в Ollama», last_error.
 - Replay: блок сводки.
 - Сессии → События: тумблер «смысловой поиск» (P2).
 - Запросы: «Контекст» (P3).

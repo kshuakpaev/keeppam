@@ -4,6 +4,7 @@ import {
   connectButtonLabel,
   connectableAccounts,
   startAssetSession,
+  startNativeClient,
 } from "../assetConnect";
 import { api, ApiError, hasPerm, type Asset, type AssetAccount } from "../api";
 import { useAuth } from "../auth";
@@ -184,6 +185,39 @@ export function AssetsPage() {
         return;
       }
       setError(te(err, "assets.connectError"));
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  async function onNativeClient(asset: Asset, acc: AssetAccount, stepUpToken?: string) {
+    setError("");
+    setMsg("");
+    const key = connectKey(asset.id, acc.id) + ":native";
+    setConnecting(key);
+    try {
+      const res = await startNativeClient(asset, acc, {
+        step_up_token: stepUpToken,
+        supervisorDenied: t("assets.supervisorDenied"),
+        supervisorTimeout: t("assets.supervisorTimeout"),
+        ...rdpSizeForConnect(asset.protocol),
+      });
+      setStepUp(null);
+      setMsg(res.msg || t("assets.nativeClientOk"));
+      if (!res.skipTab && res.sessionId) {
+        openTab({
+          id: res.sessionId,
+          kind: res.kind,
+          title: res.title,
+          protocol: res.protocol,
+        });
+      }
+    } catch (err) {
+      if (!stepUpToken && ApiError.isStepUp(err)) {
+        setStepUp({ err, retry: (tok) => onNativeClient(asset, acc, tok) });
+        return;
+      }
+      setError(te(err, "assets.nativeClientError"));
     } finally {
       setConnecting(null);
     }
@@ -526,18 +560,30 @@ export function AssetsPage() {
                         accounts.map((acc) => {
                           const key = connectKey(a.id, acc.id);
                           return (
-                            <button
-                              key={acc.id}
-                              className="btn"
-                              type="button"
-                              disabled={connecting === key}
-                              onClick={() => void onConnect(a, acc)}
-                              title={acc.username}
-                            >
-                              {connecting === key
-                                ? "…"
-                                : connectButtonLabel(a.protocol, t, acc, multi)}
-                            </button>
+                            <span key={acc.id} className="row" style={{ gap: "0.35rem" }}>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={connecting === key}
+                                onClick={() => void onConnect(a, acc)}
+                                title={acc.username}
+                              >
+                                {connecting === key
+                                  ? "…"
+                                  : connectButtonLabel(a.protocol, t, acc, multi)}
+                              </button>
+                              {(a.protocol === "ssh" || a.protocol === "rdp") && (
+                                <button
+                                  className="btn secondary"
+                                  type="button"
+                                  title={t("assets.nativeClientTitle")}
+                                  disabled={connecting === key + ":native"}
+                                  onClick={() => void onNativeClient(a, acc)}
+                                >
+                                  {connecting === key + ":native" ? "…" : t("assets.nativeClient")}
+                                </button>
+                              )}
+                            </span>
                           );
                         })}
                       {tab === "listed" && canRequest && !fullCatalog && !a.entitled && (

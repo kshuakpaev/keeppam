@@ -1,0 +1,36 @@
+# Native Client Connection File + Launcher (SSH / RDP)
+
+Единый путь для **нативных клиентов** без браузерной сессии (или в дополнение к ней).
+
+| Термин | Смысл |
+|--------|--------|
+| **Native Client Connection File** | Конфиг для клиента: `.rdp` (mstsc) или `.sshconfig` (OpenSSH) |
+| **Native Client Launcher** | Скрипт рядом с файлом: `.cmd` (Windows) / `.sh` (Unix для SSH) |
+
+Секреты цели (vault): в **SSH** Connection File не попадают.
+В **RDP** пароль **не** пишется в `.rdp` (mstsc падает с «ошибка при загрузке из файла» на `password:s:`).
+Автологин — через **Launcher** `.cmd` (`cmdkey` + `mstsc`), рядом с `.rdp`.
+
+## SSH
+
+- **Windows:** `*-putty.cmd` — PuTTY с **автопаролем** (`-pw` + one-time wire token сессии), как Fudo CONNECT.
+- Native-клиент создаёт сессию на портале → token → launcher; gateway принимает `user=session UUID`, `password=wire token`.
+- `.sshconfig` — для OpenSSH (без автопароля).
+- Env: `KEEPPAM_SSH_PUBLIC_HOST`
+
+Подробнее: `docs/ssh-connection-file.txt`.
+
+## RDP
+
+- Connection File: **`keeppam-*.rdp`** — адрес KeepPAM (jump/proxy) или актива, без пароля (открывается в mstsc).
+- Launcher: **`keeppam-*.cmd`** — `cmdkey` подставляет пароль из vault, затем `mstsc`, затем удаляет cred (прямой путь на актив).
+- С **rdp-jump**: `full address` = KeepPAM, vault inject на jump, сессия пишется в `.guac` (replay в портале).
+- С `freerdp-proxy` (если jump нет): `full address` = KeepPAM, inject на шлюзе.
+- UI: **Native-клиент** скачивает `.rdp` и `.cmd` (с задержкой).
+- Env: `KEEPPAM_RDP_*` — `docs/native-rdp.txt`.
+
+## DoD
+
+- SSH и RDP: в UI одна кнопка **Native-клиент**.
+- RDP → `.rdp` + `.cmd`; SSH → `.sshconfig` + launchers.
+- Двойной клик по `.rdp` не должен давать ошибку загрузки mstsc.

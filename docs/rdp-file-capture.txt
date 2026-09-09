@@ -39,7 +39,8 @@
 
 | В scope | Вне scope |
 |---------|-----------|
-| guacd HTML5 path | Native mstsc freerdp-proxy file channel parse |
+| guacd HTML5 path | — |
+| Native mstsc через rdp-jump (`/drive:KeepPAM` на Xvfb) | Native mstsc **напрямую** на актив или только freerdp-proxy без jump (нет staging на PAM) |
 | Drive + clipboard staging | Live fsnotify (ingest на end) |
 | ≤512 MiB на файл | Bidirectional metadata-only без файла |
 

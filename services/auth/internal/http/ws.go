@@ -472,18 +472,17 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			out["wire_hint"] = fmt.Sprintf("export KUBECONFIG=./keeppam-%s.yaml && kubectl get ns", created.ID.String()[:8])
 		}
 	}
-	if created.Protocol == "rdp" && !created.WaitingSupervisor && s.rdp != nil && s.rdp.Enabled() {
-		info, err := s.rdp.Prepare(r.Context(), created, created.PolicySnapshot, s.cfg.SessionTTL)
-		if err == nil && info != nil {
-			out["rdp_token"] = info.Token
-			out["rdp_addr"] = info.Addr
-			out["rdp_port"] = info.Port
-			out["rdp_user"] = info.User
-			out["rdp_hint"] = info.Hint
-			out["rdp_file"] = info.File
-			out["rdp_proxy"] = info.ProxyOK
-			out["rdp_filename"] = info.Filename
+	if created.Protocol == "ssh" && !created.WaitingSupervisor {
+		tok, err := dbproxy.IssueWireToken(r.Context(), s.sessions.Redis(), created.ID, s.cfg.SessionTTL)
+		if err != nil {
+			slog.Warn("ssh wire token", "err", err, "session", created.ID)
+			s.attachSSHConnFile(out, r, sess.Username, creds.Asset.Name, creds.Account.Username, "", "")
+		} else {
+			s.attachSSHConnFile(out, r, sess.Username, creds.Asset.Name, creds.Account.Username, created.ID.String(), tok)
 		}
+	}
+	if created.Protocol == "rdp" && !created.WaitingSupervisor {
+		s.attachRDPNativeFiles(out, r, created, creds)
 	}
 	writeJSON(w, http.StatusCreated, out)
 }

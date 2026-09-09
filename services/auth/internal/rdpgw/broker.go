@@ -34,6 +34,7 @@ type Broker struct {
 	KeyFile       string
 	WorkDir       string
 	NativeDefault bool // mstsc without policy rdp_native when broker is enabled
+	Jump          JumpConfig
 	rdb           *redis.Client
 	assets        *assets.Service
 	sessions      *sessionsvc.Service
@@ -47,6 +48,8 @@ type proxyProc struct {
 	port       int
 	dir        string
 	captureDir string
+	jumpName   string
+	recStop    func()
 }
 
 func NewBroker(publicHost, proxyBin, cert, key, workDir string, rdb *redis.Client, assetsSvc *assets.Service, sess *sessionsvc.Service) *Broker {
@@ -108,14 +111,16 @@ func (b *Broker) ValidateToken(ctx context.Context, sessionID uuid.UUID, tok str
 
 // ConnectInfo is returned to the portal after session create when native RDP is allowed.
 type ConnectInfo struct {
-	Token    string `json:"rdp_token"`
-	Addr     string `json:"rdp_addr"`
-	Port     int    `json:"rdp_port"`
-	User     string `json:"rdp_user"`
-	Hint     string `json:"rdp_hint"`
-	File     string `json:"rdp_file"`
-	ProxyOK  bool   `json:"rdp_proxy"`
-	Filename string `json:"rdp_filename"`
+	Token            string `json:"rdp_token"`
+	Addr             string `json:"rdp_addr"`
+	Port             int    `json:"rdp_port"`
+	User             string `json:"rdp_user"`
+	Hint             string `json:"rdp_hint"`
+	File             string `json:"rdp_file"`
+	ProxyOK          bool   `json:"rdp_proxy"`
+	Filename         string `json:"rdp_filename"`
+	Launcher         string `json:"rdp_launcher,omitempty"`
+	LauncherFilename string `json:"rdp_launcher_filename,omitempty"`
 }
 
 // Prepare starts optional freerdp-proxy and builds mstsc/.rdp connect info.
@@ -140,6 +145,15 @@ func (b *Broker) Prepare(ctx context.Context, row sessionsvc.Session, snap *poli
 	}
 	port := b.PortOf(row.ID)
 	proxyOK := port > 0
+	if !proxyOK && b.Jump.Enabled() {
+		p, err := b.startJump(ctx, row.ID, creds, snap, row.RDPWidth, row.RDPHeight)
+		if err != nil {
+			slog.Warn("rdp jump", "err", err, "session", row.ID.String())
+		} else {
+			port = p
+			proxyOK = true
+		}
+	}
 	if !proxyOK && b.ProxyAvailable() {
 		p, err := b.startProxy(ctx, row.ID, creds, rdp)
 		if err != nil {
@@ -162,19 +176,22 @@ func (b *Broker) Prepare(ctx context.Context, row sessionsvc.Session, snap *poli
 		Dir:     creds.Asset.RDPRemoteAppDir,
 		Args:    creds.Asset.RDPRemoteAppArgs,
 	})
-	hint := "mstsc: скачайте .rdp (без пароля цели). Нужен freerdp-proxy на PAM (KEEPPAM_RDP_PROXY_BIN)."
+	hint := "mstsc: скачайте .rdp (без пароля цели). Нужен rdp-jump или freerdp-proxy на PAM."
 	if proxyOK {
-		hint = fmt.Sprintf("mstsc /v:%s — пароль цели не нужен (inject на шлюзе). Token=%s для аудита.", addr, tok[:8]+"…")
+		hint = fmt.Sprintf("mstsc /v:%s — пароль цели не нужен (inject на шлюзе). Запись сессии пишется в replay. Token=%s для аудита.", addr, tok[:8]+"…")
 	}
+	filename := fmt.Sprintf("keeppam-%s.rdp", row.ID.String()[:8])
 	return &ConnectInfo{
-		Token:    tok,
-		Addr:     addr,
-		Port:     port,
-		User:     row.ID.String(),
-		Hint:     hint,
-		File:     file,
-		ProxyOK:  proxyOK,
-		Filename: fmt.Sprintf("keeppam-%s.rdp", row.ID.String()[:8]),
+		Token:            tok,
+		Addr:             addr,
+		Port:             port,
+		User:             row.ID.String(),
+		Hint:             hint,
+		File:             file,
+		ProxyOK:          proxyOK,
+		Filename:         filename,
+		Launcher:         BuildRDPLauncherCMD(filename),
+		LauncherFilename: RDPLauncherFilename(filename),
 	}, nil
 }
 
@@ -188,6 +205,12 @@ func (b *Broker) Stop(sessionID uuid.UUID) {
 	b.mu.Unlock()
 	if p == nil {
 		return
+	}
+	if p.recStop != nil {
+		p.recStop()
+	}
+	if p.jumpName != "" {
+		_ = dockerStop(context.Background(), b.Jump.DockerSock, p.jumpName)
 	}
 	if p.cmd != nil && p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
@@ -394,53 +417,139 @@ type RemoteAppOpts struct {
 	Args    string
 }
 
-// BuildRDPFile returns an .rdp body for mstsc (NLA to proxy disabled; creds injected by freerdp-proxy).
+// BuildRDPFile returns an .rdp body for mstsc via freerdp-proxy (NLA to proxy disabled; vault creds injected).
 func BuildRDPFile(host string, port int, sessionUser string, rdp policy.RDPRedir, width, height int, remote ...RemoteAppOpts) string {
+	return buildRDPFile(host, port, sessionUser, rdp, width, height, false, false, remote...)
+}
+
+// BuildDirectRDPFile returns a mstsc-safe .rdp pointing at the target asset.
+// Password is NOT written into the file — mstsc rejects password:s: / non-DPAPI password 51:b:
+// ("Произошла ошибка при загрузке из файла"). Use BuildRDPCredLauncherCMD + cmdkey instead.
+func BuildDirectRDPFile(host string, port int, accountUser string, rdp policy.RDPRedir, width, height int, promptCreds bool, remote ...RemoteAppOpts) string {
+	return buildRDPFile(host, port, accountUser, rdp, width, height, true, promptCreds, remote...)
+}
+
+func escapeRDPString(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
+func rdpLine(b *strings.Builder, format string, args ...any) {
+	fmt.Fprintf(b, format, args...)
+	b.WriteString("\r\n")
+}
+
+func buildRDPFile(host string, port int, username string, rdp policy.RDPRedir, width, height int, direct, promptCreds bool, remote ...RemoteAppOpts) string {
 	addr := host
 	if port > 0 {
 		addr = fmt.Sprintf("%s:%d", host, port)
 	}
 	var b strings.Builder
-	b.WriteString("full address:s:" + addr + "\n")
-	b.WriteString("username:s:" + sessionUser + "\n")
-	b.WriteString("prompt for credentials:i:0\n")
-	b.WriteString("authentication level:i:0\n")
-	b.WriteString("negotiate security layer:i:0\n")
-	b.WriteString("enablecredsspsupport:i:0\n")
-	b.WriteString("autoreconnection enabled:i:0\n")
-	if rdp.Clipboard {
-		b.WriteString("redirectclipboard:i:1\n")
+	rdpLine(&b, "full address:s:%s", addr)
+	rdpLine(&b, "username:s:%s", escapeRDPString(username))
+	if direct {
+		if promptCreds {
+			rdpLine(&b, "prompt for credentials:i:1")
+		} else {
+			rdpLine(&b, "prompt for credentials:i:0")
+		}
+		rdpLine(&b, "authentication level:i:2")
+		rdpLine(&b, "negotiate security layer:i:1")
+		rdpLine(&b, "enablecredsspsupport:i:1")
 	} else {
-		b.WriteString("redirectclipboard:i:0\n")
+		rdpLine(&b, "prompt for credentials:i:0")
+		rdpLine(&b, "authentication level:i:0")
+		rdpLine(&b, "negotiate security layer:i:0")
+		rdpLine(&b, "enablecredsspsupport:i:0")
+		rdpLine(&b, "autoreconnection enabled:i:0")
+	}
+	if rdp.Clipboard {
+		rdpLine(&b, "redirectclipboard:i:1")
+	} else {
+		rdpLine(&b, "redirectclipboard:i:0")
 	}
 	if rdp.Drive {
-		b.WriteString("drivestoredirect:s:*\n")
+		rdpLine(&b, "drivestoredirect:s:*")
 	} else {
-		b.WriteString("drivestoredirect:s:\n")
+		rdpLine(&b, "drivestoredirect:s:")
 	}
 	if rdp.Printer {
-		b.WriteString("redirectprinters:i:1\n")
+		rdpLine(&b, "redirectprinters:i:1")
 	} else {
-		b.WriteString("redirectprinters:i:0\n")
+		rdpLine(&b, "redirectprinters:i:0")
 	}
 	var ra RemoteAppOpts
 	if len(remote) > 0 {
 		ra = remote[0]
 	}
 	if prog := strings.TrimSpace(ra.Program); prog != "" {
-		b.WriteString("remoteapplicationmode:i:1\n")
-		b.WriteString("remoteapplicationprogram:s:" + escapeINI(prog) + "\n")
+		rdpLine(&b, "remoteapplicationmode:i:1")
+		rdpLine(&b, "remoteapplicationprogram:s:%s", escapeINI(prog))
 		if d := strings.TrimSpace(ra.Dir); d != "" {
-			b.WriteString("remoteapplicationdir:s:" + escapeINI(d) + "\n")
+			rdpLine(&b, "remoteapplicationdir:s:%s", escapeINI(d))
 		}
 		if a := strings.TrimSpace(ra.Args); a != "" {
-			b.WriteString("remoteapplicationcmdline:s:" + escapeINI(a) + "\n")
+			rdpLine(&b, "remoteapplicationcmdline:s:%s", escapeINI(a))
 		}
-		b.WriteString("disableremoteappcapscheck:i:1\n")
+		rdpLine(&b, "disableremoteappcapscheck:i:1")
 	}
 	w, h := NormalizeSize(width, height)
-	b.WriteString(fmt.Sprintf("desktopwidth:i:%d\n", w))
-	b.WriteString(fmt.Sprintf("desktopheight:i:%d\n", h))
-	b.WriteString("session bpp:i:24\n")
+	rdpLine(&b, "desktopwidth:i:%d", w)
+	rdpLine(&b, "desktopheight:i:%d", h)
+	rdpLine(&b, "session bpp:i:24")
 	return b.String()
+}
+
+// BuildRDPLauncherCMD starts mstsc with the .rdp (no credential inject).
+func BuildRDPLauncherCMD(rdpFilename string) string {
+	name := strings.TrimSpace(rdpFilename)
+	if name == "" {
+		name = "keeppam.rdp"
+	}
+	var b strings.Builder
+	b.WriteString("@echo off\r\n")
+	b.WriteString("REM KeepPAM Native Client Launcher (RDP / mstsc)\r\n")
+	b.WriteString("REM Place this .cmd next to the .rdp connection file.\r\n")
+	fmt.Fprintf(&b, "start \"\" mstsc \"%%~dp0%s\"\r\n", name)
+	return b.String()
+}
+
+// BuildRDPCredLauncherCMD stores vault creds via cmdkey, opens mstsc, then removes the cred.
+// mstsc cannot load plaintext password:s: in .rdp; this is the Windows-native equivalent of Fudo auto-login.
+func BuildRDPCredLauncherCMD(rdpFilename, host, user, password string) string {
+	name := strings.TrimSpace(rdpFilename)
+	if name == "" {
+		name = "keeppam.rdp"
+	}
+	host = strings.TrimSpace(host)
+	user = strings.TrimSpace(user)
+	// PowerShell single-quoted string: double embedded quotes.
+	psQuote := func(s string) string {
+		return strings.ReplaceAll(s, "'", "''")
+	}
+	var b strings.Builder
+	b.WriteString("@echo off\r\n")
+	b.WriteString("REM KeepPAM Native Client Launcher — cmdkey + mstsc (пароль не в .rdp)\r\n")
+	b.WriteString("REM Положите этот .cmd рядом с .rdp и запускайте .cmd\r\n")
+	fmt.Fprintf(&b, "set \"RDPFILE=%%~dp0%s\"\r\n", name)
+	fmt.Fprintf(&b,
+		"powershell -NoProfile -ExecutionPolicy Bypass -Command "+
+			"\"cmdkey /generic:'TERMSRV/%s' /user:'%s' /pass:'%s' | Out-Null; "+
+			"Start-Process -Wait -FilePath mstsc -ArgumentList $env:RDPFILE; "+
+			"cmdkey /delete:'TERMSRV/%s' | Out-Null\"\r\n",
+		psQuote(host), psQuote(user), psQuote(password), psQuote(host))
+	return b.String()
+}
+
+// RDPLauncherFilename returns keeppam-xxxxxxxx.cmd for a .rdp name.
+func RDPLauncherFilename(rdpFilename string) string {
+	name := strings.TrimSpace(rdpFilename)
+	if name == "" {
+		return "keeppam-rdp.cmd"
+	}
+	if strings.HasSuffix(strings.ToLower(name), ".rdp") {
+		return name[:len(name)-4] + ".cmd"
+	}
+	return name + ".cmd"
 }

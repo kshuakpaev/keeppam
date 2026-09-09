@@ -20,12 +20,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/keeppam/auth/internal/assets"
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/auth"
 	"github.com/keeppam/auth/internal/crypto"
+	"github.com/keeppam/auth/internal/dbproxy"
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/firewall"
@@ -55,6 +57,7 @@ type Gateway struct {
 	ops         *opapprove.Service
 	firewall    *firewall.Service
 	files       *filexfer.Service
+	rdb         *redis.Client
 	conns       sync.Map // *ssh.ServerConn → *sshConnState
 
 	lnMu     sync.Mutex
@@ -107,6 +110,13 @@ func (g *Gateway) SetLegacy(on bool) {
 	}
 }
 
+// SetRedis enables portal wire-token auth (session UUID + token) for native PuTTY -pw.
+func (g *Gateway) SetRedis(rdb *redis.Client) {
+	if g != nil {
+		g.rdb = rdb
+	}
+}
+
 func (g *Gateway) SetSessionFence(fn func() error) {
 	if g != nil {
 		g.sessFence = fn
@@ -124,8 +134,14 @@ func (g *Gateway) ListenAndServe() error {
 		PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 			ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			login, hint := splitSSHLogin(conn.User())
-			u, err := g.auth.AuthenticatePassword(context.Background(), login, string(password), ip)
-			crypto.Wipe(password)
+			pass := string(password)
+			defer crypto.Wipe(password)
+
+			if p, ok := g.tryWirePassword(context.Background(), login, pass, hint); ok {
+				return p, nil
+			}
+
+			u, err := g.auth.AuthenticatePassword(context.Background(), login, pass, ip)
 			if err != nil {
 				return nil, fmt.Errorf("access denied")
 			}
@@ -561,114 +577,175 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 	} else if ext["mfa"] == "true" {
 		_ = g.audit.Record(ctx, &userID, "user.login.success", "user", userID.String(), ip, "ssh", map[string]any{"mfa": true, "via": "ssh", "file_transfer": true, "session_totp": "skipped"})
 	} else {
-		_ = g.audit.Record(ctx, &userID, "user.login.success", "user", userID.String(), ip, "ssh", map[string]any{"mfa": false, "via": "ssh"})
-	}
-
-	targets, err := g.listTargets(ctx, userID, roles, perms)
-	if err != nil {
-		_, _ = fmt.Fprintf(ch, "error listing targets: %v\n", err)
-		return
-	}
-	if len(targets) == 0 {
-		_, _ = io.WriteString(ch, "No SSH targets available (check ACL policy).\n")
-		_ = g.audit.Record(ctx, &userID, "session.denied", "session", "", ip, "ssh", map[string]any{"reason": "no_targets"})
-		return
+		_ = g.audit.Record(ctx, &userID, "user.login.success", "user", userID.String(), ip, "ssh", map[string]any{"mfa": false, "via": "ssh", "auth_method": ext["auth_method"]})
 	}
 
 	var chosen *targetRef
 	var ticketID string
 	var remotePath string
-	if isFX {
-		cmd := strings.TrimSpace(fx.dest)
-		cmd, ticketID = splitTicket(cmd)
-		chosen, remotePath, err = resolveTransferDest(targets, cmd, ext["target_hint"])
-		if err != nil {
-			_, _ = fmt.Fprintf(ch, "%v\n", err)
-			return
-		}
-	} else if cmd := strings.TrimSpace(start.execCmd); cmd != "" {
-		cmd, ticketID = splitTicket(cmd)
-		chosen, err = resolveTarget(targets, cmd)
-		if err != nil {
-			_, _ = fmt.Fprintf(ch, "%v\n", err)
-			return
-		}
-	} else {
-		chosen, err = interactivePick(ch, targets)
-		if err != nil {
-			_, _ = fmt.Fprintf(ch, "%v\n", err)
-			return
-		}
-		_, _ = io.WriteString(ch, "Ticket ID (optional): ")
-		if line, err := readLine(ch); err == nil {
-			ticketID = strings.TrimSpace(line)
-		}
-	}
-
+	var pamSess sessionsvc.Session
+	var frozen policy.Snapshot
+	var usedBreakGlass bool
 	bypassConnect := rbac.HasPermission(perms, "users.write")
-	usedBreakGlass := false
-	evPolicy, err := g.policy.Evaluate(ctx, policy.AccessCheck{
-		UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: false, Now: time.Now(), TicketID: ticketID, ClientIP: ip,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(ch, "policy error: %v\n", err)
-		return
-	}
-	okPolicy := evPolicy.OK
-	if !okPolicy {
-		if bg, berr := g.policy.HasActiveBreakGlass(ctx, userID, chosen.AssetID); berr == nil && bg {
-			okPolicy = true
-			usedBreakGlass = true
-		}
-	}
-	if !okPolicy && bypassConnect {
-		_ = g.audit.Record(ctx, &userID, "session.admin_bypass", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{"severity": "high", "ticket_id": ticketID})
-		okPolicy = true
-	}
-	if !okPolicy && evPolicy.NeedsStepUp() {
-		methods, _ := g.auth.MFAMethods(ctx, userID)
-		if !methods.TOTP {
-			_, _ = fmt.Fprintf(ch, "step-up MFA required (score %d > %d) but TOTP is not enrolled\r\n", evPolicy.RiskScore, evPolicy.MaxRisk)
-			payload := map[string]any{"reason": "risk", "ticket_id": ticketID, "code": "mfa_not_enrolled"}
-			evPolicy.FillDenyPayload(payload)
-			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
-			return
-		}
-		_, _ = fmt.Fprintf(ch, "Step-up MFA (risk %d > %d). TOTP: ", evPolicy.RiskScore, evPolicy.MaxRisk)
-		code, rerr := readLine(ch)
-		if rerr != nil {
-			return
-		}
-		if err := g.auth.VerifyUserTOTP(ctx, userID, strings.TrimSpace(code), ip, "ssh", "ssh", chosen.AssetID); err != nil {
-			_, _ = io.WriteString(ch, "invalid MFA code\r\n")
-			payload := map[string]any{"reason": "risk", "ticket_id": ticketID}
-			evPolicy.FillDenyPayload(payload)
-			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
-			return
-		}
-		okPolicy = true
-	}
-	if !okPolicy {
-		_, _ = fmt.Fprintf(ch, "%s\r\n", evPolicy.DenyMessage())
-		payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
-		evPolicy.FillDenyPayload(payload)
-		_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
-		return
-	}
-	if g.itsm != nil && !usedBreakGlass && !bypassConnect {
-		if err := g.itsm.Enforce(ctx, "connect", ticketID); err != nil {
-			_, _ = fmt.Fprintf(ch, "ITSM gate: %v\r\n", err)
-			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{
-				"reason": "itsm", "ticket_id": ticketID, "error": err.Error(),
-			})
-			return
-		}
-	}
+	var creds assets.TargetCreds
 
-	if isFX && policy.FileTransferDenied(evPolicy.FileTransfer) {
-		_, _ = io.WriteString(ch, "file transfer denied by DLP\r\n")
-		g.auditSSHDLP(sc, "ssh file transfer denied by DLP", fx.raw)
-		return
+	if wireSID := strings.TrimSpace(ext["wire_session_id"]); wireSID != "" {
+		sid, err := uuid.Parse(wireSID)
+		if err != nil {
+			_, _ = io.WriteString(ch, "invalid wire session\r\n")
+			return
+		}
+		row, err := g.sessions.Get(ctx, sid)
+		if err != nil || row.UserID != userID || row.Protocol != "ssh" {
+			_, _ = io.WriteString(ch, "wire session not found\r\n")
+			return
+		}
+		pamSess = row
+		chosen = &targetRef{
+			AssetID: row.AssetID, AccountID: row.AccountID,
+			AssetName: row.AssetName, AccountName: row.AccountUsername,
+			Label: TargetSpec(row.AssetName, row.AccountUsername),
+		}
+		if row.PolicySnapshot != nil {
+			frozen = *row.PolicySnapshot
+		}
+		creds, err = g.assets.GetTargetCreds(ctx, chosen.AssetID, chosen.AccountID)
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "target credentials: %v\n", err)
+			return
+		}
+		dbproxy.ClearWireToken(ctx, g.rdb, sid)
+		_ = g.audit.Record(ctx, &userID, "session.wire_auth", "session", sid.String(), ip, "ssh", map[string]any{"via": "putty_native"})
+	} else {
+		targets, err := g.listTargets(ctx, userID, roles, perms)
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "error listing targets: %v\n", err)
+			return
+		}
+		if len(targets) == 0 {
+			_, _ = io.WriteString(ch, "No SSH targets available (check ACL policy).\n")
+			_ = g.audit.Record(ctx, &userID, "session.denied", "session", "", ip, "ssh", map[string]any{"reason": "no_targets"})
+			return
+		}
+
+		if isFX {
+			cmd := strings.TrimSpace(fx.dest)
+			cmd, ticketID = splitTicket(cmd)
+			chosen, remotePath, err = resolveTransferDest(targets, cmd, ext["target_hint"])
+			if err != nil {
+				_, _ = fmt.Fprintf(ch, "%v\n", err)
+				return
+			}
+		} else if cmd := strings.TrimSpace(start.execCmd); cmd != "" {
+			cmd, ticketID = splitTicket(cmd)
+			chosen, err = resolveTarget(targets, cmd)
+			if err != nil {
+				_, _ = fmt.Fprintf(ch, "%v\n", err)
+				return
+			}
+		} else {
+			chosen, err = interactivePick(ch, targets)
+			if err != nil {
+				_, _ = fmt.Fprintf(ch, "%v\n", err)
+				return
+			}
+			_, _ = io.WriteString(ch, "Ticket ID (optional): ")
+			if line, err := readLine(ch); err == nil {
+				ticketID = strings.TrimSpace(line)
+			}
+		}
+
+		usedBreakGlass = false
+		evPolicy, err := g.policy.Evaluate(ctx, policy.AccessCheck{
+			UserID: userID, AssetID: chosen.AssetID, RoleNames: roles, Bypass: false, Now: time.Now(), TicketID: ticketID, ClientIP: ip,
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "policy error: %v\n", err)
+			return
+		}
+		okPolicy := evPolicy.OK
+		if !okPolicy {
+			if bg, berr := g.policy.HasActiveBreakGlass(ctx, userID, chosen.AssetID); berr == nil && bg {
+				okPolicy = true
+				usedBreakGlass = true
+			}
+		}
+		if !okPolicy && bypassConnect {
+			_ = g.audit.Record(ctx, &userID, "session.admin_bypass", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{"severity": "high", "ticket_id": ticketID})
+			okPolicy = true
+		}
+		if !okPolicy && evPolicy.NeedsStepUp() {
+			methods, _ := g.auth.MFAMethods(ctx, userID)
+			if !methods.TOTP {
+				_, _ = fmt.Fprintf(ch, "step-up MFA required (score %d > %d) but TOTP is not enrolled\r\n", evPolicy.RiskScore, evPolicy.MaxRisk)
+				payload := map[string]any{"reason": "risk", "ticket_id": ticketID, "code": "mfa_not_enrolled"}
+				evPolicy.FillDenyPayload(payload)
+				_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
+				return
+			}
+			_, _ = fmt.Fprintf(ch, "Step-up MFA (risk %d > %d). TOTP: ", evPolicy.RiskScore, evPolicy.MaxRisk)
+			code, rerr := readLine(ch)
+			if rerr != nil {
+				return
+			}
+			if err := g.auth.VerifyUserTOTP(ctx, userID, strings.TrimSpace(code), ip, "ssh", "ssh", chosen.AssetID); err != nil {
+				_, _ = io.WriteString(ch, "invalid MFA code\r\n")
+				payload := map[string]any{"reason": "risk", "ticket_id": ticketID}
+				evPolicy.FillDenyPayload(payload)
+				_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
+				return
+			}
+			okPolicy = true
+		}
+		if !okPolicy {
+			_, _ = fmt.Fprintf(ch, "%s\r\n", evPolicy.DenyMessage())
+			payload := map[string]any{"reason": "policy", "ticket_id": ticketID}
+			evPolicy.FillDenyPayload(payload)
+			_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", payload)
+			return
+		}
+		if g.itsm != nil && !usedBreakGlass && !bypassConnect {
+			if err := g.itsm.Enforce(ctx, "connect", ticketID); err != nil {
+				_, _ = fmt.Fprintf(ch, "ITSM gate: %v\r\n", err)
+				_ = g.audit.Record(ctx, &userID, "session.denied", "asset", chosen.AssetID.String(), ip, "ssh", map[string]any{
+					"reason": "itsm", "ticket_id": ticketID, "error": err.Error(),
+				})
+				return
+			}
+		}
+
+		if isFX && policy.FileTransferDenied(evPolicy.FileTransfer) {
+			_, _ = io.WriteString(ch, "file transfer denied by DLP\r\n")
+			g.auditSSHDLP(sc, "ssh file transfer denied by DLP", fx.raw)
+			return
+		}
+
+		creds, err = g.assets.GetTargetCreds(ctx, chosen.AssetID, chosen.AccountID)
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "target credentials: %v\n", err)
+			return
+		}
+
+		labels := sessionsvc.MergeLabels()
+		if ut, err := g.policy.UserTags(ctx, userID); err == nil {
+			labels = sessionsvc.MergeLabels(labels, ut)
+		}
+		if at, err := g.policy.AssetTags(ctx, chosen.AssetID); err == nil {
+			labels = sessionsvc.MergeLabels(labels, at)
+		}
+		frozen = g.policy.Freeze(ctx, evPolicy, usedBreakGlass, bypassConnect)
+		frozen.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
+		snap := &frozen
+		pamSess, err = g.sessions.Create(ctx, userID, sessionsvc.CreateInput{
+			AssetID: chosen.AssetID, AccountID: chosen.AccountID, Protocol: "ssh", ClientIP: ip, TicketID: ticketID,
+			BreakGlass: usedBreakGlass, RiskScore: evPolicy.RiskScore, RiskFactors: evPolicy.RiskFactors,
+			Labels: labels, AccessPolicyID: evPolicy.AccessPolicyID, ClientCountry: g.policy.ClientCountry(ip),
+			PolicySnapshot: snap,
+		}, "ssh-gateway")
+		if err != nil {
+			_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
+			return
+		}
 	}
 
 	cols, rows := 120, 40
@@ -679,32 +756,6 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		rows = int(start.pty.Height)
 	}
 
-	creds, err := g.assets.GetTargetCreds(ctx, chosen.AssetID, chosen.AccountID)
-	if err != nil {
-		_, _ = fmt.Fprintf(ch, "target credentials: %v\n", err)
-		return
-	}
-
-	labels := sessionsvc.MergeLabels()
-	if ut, err := g.policy.UserTags(ctx, userID); err == nil {
-		labels = sessionsvc.MergeLabels(labels, ut)
-	}
-	if at, err := g.policy.AssetTags(ctx, chosen.AssetID); err == nil {
-		labels = sessionsvc.MergeLabels(labels, at)
-	}
-	frozen := g.policy.Freeze(ctx, evPolicy, usedBreakGlass, bypassConnect)
-	frozen.TerminalCharset = termcharset.Normalize(creds.Asset.TerminalCharset)
-	snap := &frozen
-	pamSess, err := g.sessions.Create(ctx, userID, sessionsvc.CreateInput{
-		AssetID: chosen.AssetID, AccountID: chosen.AccountID, Protocol: "ssh", ClientIP: ip, TicketID: ticketID,
-		BreakGlass: usedBreakGlass, RiskScore: evPolicy.RiskScore, RiskFactors: evPolicy.RiskFactors,
-		Labels: labels, AccessPolicyID: evPolicy.AccessPolicyID, ClientCountry: g.policy.ClientCountry(ip),
-		PolicySnapshot: snap,
-	}, "ssh-gateway")
-	if err != nil {
-		_, _ = fmt.Fprintf(ch, "session create: %v\n", err)
-		return
-	}
 	if pamSess.IsWaitingSupervisor() {
 		_, _ = fmt.Fprintf(ch, "Waiting for supervisor authorization (four eyes). Session %s\r\n", pamSess.ID.String()[:8])
 		if err := g.sessions.WaitSupervisor(ctx, pamSess.ID, 0); err != nil {
@@ -785,7 +836,7 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 		UserID: userID, AssetID: chosen.AssetID, SessionID: pamSess.ID,
 		Username: ext["username"], AssetName: chosen.AssetName, IP: ip,
 		Roles: roles, Bypass: bypassConnect, BreakGlass: usedBreakGlass,
-		TicketID: ticketID, Snap: snap,
+		TicketID: ticketID, Snap: &frozen,
 		Inject: func(p []byte) {
 			injectMu.Lock()
 			defer injectMu.Unlock()
@@ -1058,6 +1109,45 @@ func sshPerms(u store.User) (*ssh.Permissions, error) {
 			"auth_method": "password",
 		},
 	}, nil
+}
+
+// tryWirePassword accepts portal native-client credentials: user=session UUID, password=wire token.
+func (g *Gateway) tryWirePassword(ctx context.Context, login, pass, hint string) (*ssh.Permissions, bool) {
+	if g == nil || g.rdb == nil || pass == "" {
+		return nil, false
+	}
+	sid, err := uuid.Parse(strings.TrimSpace(login))
+	if err != nil {
+		return nil, false
+	}
+	if !dbproxy.CheckWireToken(ctx, g.rdb, sid, pass) {
+		return nil, false
+	}
+	row, err := g.sessions.Get(ctx, sid)
+	if err != nil || row.Protocol != "ssh" {
+		return nil, false
+	}
+	if row.Status == "ended" || row.Status == "failed" {
+		return nil, false
+	}
+	u, err := g.auth.Me(ctx, row.UserID)
+	if err != nil {
+		return nil, false
+	}
+	p, err := sshPerms(u)
+	if err != nil {
+		return nil, false
+	}
+	p.Extensions["auth_method"] = "wire_token"
+	p.Extensions["wire_session_id"] = sid.String()
+	p.Extensions["mfa"] = "false" // portal already authenticated
+	p.Extensions["must_setup"] = "false"
+	if hint != "" {
+		p.Extensions["target_hint"] = hint
+	} else if row.AssetName != "" {
+		p.Extensions["target_hint"] = TargetSpec(row.AssetName, row.AccountUsername)
+	}
+	return p, true
 }
 
 func parsePtyReq(b []byte) (ptyInfo, bool) {

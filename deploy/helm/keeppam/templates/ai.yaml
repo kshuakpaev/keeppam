@@ -31,6 +31,8 @@ spec:
               value: ":8080"
             - name: KEEPPAM_AI_ALLOW_EXTERNAL
               value: {{ if .Values.ai.allowExternal }}"1"{{ else }}"0"{{ end }}
+            - name: KEEPPAM_AI_API_KEY
+              value: {{ .Values.ai.apiKey | default "" | quote }}
             - name: KEEPPAM_DATABASE_URL
               valueFrom:
                 secretKeyRef:

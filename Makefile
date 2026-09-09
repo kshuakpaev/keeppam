@@ -24,9 +24,11 @@ geoip-mmdb:
 # Сборка на хосте — без pull golang/node из Docker Hub (офлайн / IPv6).
 up: api-build web-build
 	docker compose -f deploy/docker-compose.yml build web demo-ssh
-	docker compose -f deploy/docker-compose.yml --profile build build iso-browser
+	docker compose -f deploy/docker-compose.yml --profile build build iso-browser rdp-jump
 	docker compose -f deploy/docker-compose.yml --profile obs up -d
 	docker compose -f deploy/docker-compose.yml --profile obs restart api session-worker
+	# nginx caches upstream IPs unless using Docker DNS variables — recreate web after api restart
+	docker compose -f deploy/docker-compose.yml up -d --force-recreate web
 
 logs:
 	docker compose -f deploy/docker-compose.yml logs -f api session-worker web

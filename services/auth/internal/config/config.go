@@ -33,6 +33,7 @@ type Config struct {
 	S3ObjectLockDays       int
 	SSHAddr                string
 	SSHHostKeyPath         string
+	SSHPublicHost          string // hostname in SSH connection file; empty = request Host / localhost
 	TelnetAddr             string // native telnet gateway; empty/off = disabled
 	FTPAddr                string // native FTP gateway; empty/off = disabled
 	FTPPublicHost          string // PASV advertised address
@@ -136,6 +137,7 @@ func Load() (Config, error) {
 		S3ObjectLockDays:       intEnv("KEEPPAM_S3_OBJECT_LOCK_DAYS", 90),
 		SSHAddr:                env("KEEPPAM_SSH_ADDR", ":2222"),
 		SSHHostKeyPath:         env("KEEPPAM_SSH_HOST_KEY", "/tmp/keeppam-ssh-hostkey"),
+		SSHPublicHost:          env("KEEPPAM_SSH_PUBLIC_HOST", ""),
 		TelnetAddr:             env("KEEPPAM_TELNET_ADDR", ":2323"),
 		FTPAddr:                env("KEEPPAM_FTP_ADDR", ":2121"),
 		FTPPublicHost:          env("KEEPPAM_FTP_PUBLIC_HOST", ""),

@@ -44,15 +44,15 @@ export const HELP_TOPICS: HelpTopic[] = [
     href: "/",
     title: t("Обзор", "Overview", "Шолу"),
     summary: t(
-      "Домашняя страница со сводкой состояния PAM: активные сессии, аномалии, неудачные входы.",
-      "Home dashboard with PAM health: active sessions, anomalies, failed logins.",
-      "PAM күйінің басты беті: белсенді сеанстар, аномалиялар, сәтсіз кірулер.",
+      "Домашняя страница: у администратора PAM — дашборд с аналитикой и графиками за 24 часа; у остальных — вход в работу.",
+      "Home: PAM admins see a 24h analytics dashboard with charts; others get a work entry point.",
+      "Басты бет: PAM әкімшісіне 24 сағаттық аналитика мен графиктер; қалғандарына жұмыс кірісі.",
     ),
     body: [
       t(
-        "Обзор доступен всем аутентифицированным пользователям. Карточки статистики появляются при праве audit.read. Это точка входа: отсюда обычно переходят в Активы или Сессии.",
-        "Overview is available to every signed-in user. Stat cards appear with audit.read. Typical next steps: Assets or Sessions.",
-        "Шолу барлық кірген пайдаланушыға қолжетімді. Статистика audit.read құқығында. Келесі қадам: Активтер немесе Сеанстар.",
+        "Дашборд на «Обзоре» виден только администратору PAM (роль admin / право users.write) и требует audit.read. Карточки, график входов, протоколы, топ пользователей/активов и аномалии — за 24 часа. Полный отчёт — раздел Аналитика.",
+        "The Overview dashboard is for PAM admins only (admin role / users.write) and needs audit.read. Cards, login chart, protocols, top users/assets, and anomalies cover 24 hours. Full report: Analytics.",
+        "«Шолу» дашборды тек PAM әкімшісіне (admin / users.write) және audit.read қажет. 24 сағат: карточкалар, кіру графигі, хаттамалар, топ, аномалиялар. Толық есеп — Аналитика.",
       ),
       t(
         "Уведомления (колокольчик в шапке сайдбара) показывают очередь запросов и событий. «Прочитать все» снимает непрочитанные; клик по уведомлению открывает Запросы.",
@@ -60,7 +60,7 @@ export const HELP_TOPICS: HelpTopic[] = [
         "Сайдбардағы қоңырау сұрау/оқиға кезегін көрсетеді. «Барлығын оқу» оқылмағандарды өшіреді; басу Сұрауларды ашады.",
       ),
     ],
-    related: ["assets", "sessions", "requests"],
+    related: ["assets", "sessions", "requests", "analytics"],
   },
   {
     id: "nav",
@@ -115,6 +115,16 @@ export const HELP_TOPICS: HelpTopic[] = [
         "«Подключить» / «Открыть SSH» / SQL / kubectl создаёт PAM-сессию с учётом ACL, JIT и Access Policy. Если нужен тикет или reason — форма запросит их до connect. При four-eyes сессия ждёт супервайзера.",
         "Connect / Open SSH / SQL / kubectl creates a PAM session under ACL, JIT, and Access Policy. Ticket/reason prompts appear before connect when required. With four-eyes the session waits for a supervisor.",
         "Қосу / SSH / SQL / kubectl ACL, JIT және Access Policy бойынша PAM-сеанс құрады. Тикет/reason қажет болса — connect алдында сұралады. Four-eyes кезінде супервайзер күтіледі.",
+      ),
+      t(
+        "SSH «Файл подключения» скачивает OpenSSH config для шлюза :2222 (User = логин KeepPAM, RemoteCommand = актив/учётка). Секрет цели в файл не попадает — см. docs/ssh-connection-file.txt.",
+        "SSH Connection file downloads an OpenSSH config for gateway :2222 (User = KeepPAM login, RemoteCommand = asset/account). Target vault secret is not in the file — see docs/ssh-connection-file.txt.",
+        "SSH «Қосылым файлы» :2222 шлюзі үшін OpenSSH config жүктейді. Мақсат құпиясы файлда жоқ — docs/ssh-connection-file.txt.",
+      ),
+      t(
+        "Кнопка «Native-клиент» (SSH/RDP): Connection File + Launcher (.cmd/.sh). RDP — mstsc + .rdp; запись replay через rdp-jump (.guac). SSH — OpenSSH config + ssh. Документация: docs/native-client.txt, docs/native-rdp.txt.",
+        "Native client (SSH/RDP): Connection File + Launcher (.cmd/.sh). RDP — mstsc + .rdp; replay via rdp-jump (.guac). SSH — OpenSSH config + ssh. See docs/native-client.txt, docs/native-rdp.txt.",
+        "«Native-клиент» (SSH/RDP): Connection File + Launcher. docs/native-client.txt, docs/native-rdp.txt.",
       ),
       t(
         "Для RDP можно выбрать разрешение экрана перед подключением. Буфер обмена RDP управляется политикой (см. JEA → Policy → RDP clipboard), а не кнопкой на списке активов.",
@@ -731,9 +741,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Отдельного пункта «ИИ» в меню нет. Сначала включите помощник: Конфигурация → ссылка «ИИ-помощник» (или прокрутка после UEBA-ML). Режим on, endpoint по умолчанию mock://local. Без этого сводки и поиск отвечают 503. Лицензия: флаг ai_copilot.",
-        "There is no sidebar item named AI. Enable it first: Configuration → “AI copilot” (or scroll past UEBA-ML). Mode on, default endpoint mock://local. Otherwise summaries and search return 503. License flag: ai_copilot.",
-        "Мәзірде «ИИ» пункті жоқ. Алдымен Конфигурация → «ИИ-помощник». Режим on, endpoint mock://local. Әйтпесе 503. Лицензия: ai_copilot.",
+        "Отдельного пункта «ИИ» в меню нет. Сначала включите помощник: Конфигурация → ссылка «ИИ-помощник». Режим on, выберите бесплатную модель (Mock или Ollama: Llama 3.2 / Qwen 2.5 / Mistral / Gemma 2 / Phi-3). Endpoint для Ollama: http://ai-runtime:11434, кнопка «Скачать в Ollama». Без включения сводки отвечают 503. Лицензия: флаг ai_copilot. Облачные free-tier (Groq, OpenRouter) — только при KEEPPAM_AI_ALLOW_EXTERNAL=1.",
+        "There is no sidebar item named AI. Enable it first: Configuration → “AI copilot”. Mode on, pick a free model (Mock or Ollama: Llama 3.2 / Qwen 2.5 / Mistral / Gemma 2 / Phi-3). Ollama endpoint: http://ai-runtime:11434, then “Pull into Ollama”. Otherwise summaries return 503. License flag: ai_copilot. Cloud free tiers (Groq, OpenRouter) only with KEEPPAM_AI_ALLOW_EXTERNAL=1.",
+        "Мәзірде «ИИ» пункті жоқ. Конфигурация → «ИИ-помощник». Режим on, тегін модель (Mock немесе Ollama). Ollama: http://ai-runtime:11434. Лицензия: ai_copilot.",
       ),
       t(
         "Модель не вызывается из SSH PTY, JEA MatchCommand и live deny и не нажимает Approve сама. Записи сессий в облачный LLM не уходят.",

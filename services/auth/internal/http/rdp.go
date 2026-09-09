@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -36,25 +37,48 @@ func (s *Server) handleDownloadRDP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "waiting for supervisor")
 		return
 	}
-	if s.rdp == nil || !s.rdp.Enabled() {
-		writeErr(w, http.StatusServiceUnavailable, "native RDP disabled")
-		return
-	}
 	rdp := policy.RDPRedir{}
 	if row.PolicySnapshot != nil {
 		rdp = row.PolicySnapshot.RDP()
 	}
-	if !s.rdp.NativeAllowed(row.PolicySnapshot) {
-		writeErr(w, http.StatusForbidden, "rdp_native not enabled in policy")
-		return
-	}
-	port := s.rdp.PortOf(id)
-	if port == 0 && s.rdp.ProxyAvailable() {
-		if _, err := s.rdp.Prepare(r.Context(), row, row.PolicySnapshot, s.cfg.SessionTTL); err == nil {
-			port = s.rdp.PortOf(id)
+	var remote rdpgw.RemoteAppOpts
+	creds, credErr := s.assets.GetTargetCreds(r.Context(), row.AssetID, row.AccountID)
+	if credErr == nil {
+		remote = rdpgw.RemoteAppOpts{
+			Program: creds.Asset.RDPRemoteApp,
+			Dir:     creds.Asset.RDPRemoteAppDir,
+			Args:    creds.Asset.RDPRemoteAppArgs,
 		}
 	}
-	body := rdpgw.BuildRDPFile(s.rdp.PublicHost, port, row.ID.String(), rdp, row.RDPWidth, row.RDPHeight)
+
+	if s.rdp != nil && s.rdp.Enabled() {
+		if !s.rdp.NativeAllowed(row.PolicySnapshot) {
+			writeErr(w, http.StatusForbidden, "rdp_native not enabled in policy")
+			return
+		}
+		port := s.rdp.PortOf(id)
+		if port == 0 && s.rdp.ProxyAvailable() {
+			if _, err := s.rdp.Prepare(r.Context(), row, row.PolicySnapshot, s.cfg.SessionTTL); err == nil {
+				port = s.rdp.PortOf(id)
+			}
+		}
+		if port > 0 {
+			host := s.rdpPublicHost(r)
+			body := rdpgw.BuildRDPFile(host, port, row.ID.String(), rdp, row.RDPWidth, row.RDPHeight, remote)
+			w.Header().Set("Content-Type", "application/x-rdp")
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="keeppam-%s.rdp"`, id.String()[:8]))
+			_, _ = w.Write([]byte(body))
+			return
+		}
+	}
+
+	if credErr != nil {
+		writeErr(w, http.StatusBadRequest, "asset credentials unavailable")
+		return
+	}
+	host, port, user := assetRDPTarget(creds)
+	hasSecret := strings.TrimSpace(creds.Secret) != ""
+	body := rdpgw.BuildDirectRDPFile(host, port, user, rdp, row.RDPWidth, row.RDPHeight, !hasSecret, remote)
 	w.Header().Set("Content-Type", "application/x-rdp")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="keeppam-%s.rdp"`, id.String()[:8]))
 	_, _ = w.Write([]byte(body))

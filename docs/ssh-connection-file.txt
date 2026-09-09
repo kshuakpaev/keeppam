@@ -1,0 +1,35 @@
+# KeepPAM SSH connection file (native clients)
+
+См. также единый обзор: `docs/native-client.txt` (Connection File + Launcher для SSH и RDP).
+
+Аналог RDP `.rdp` для PuTTY / OpenSSH / MobaXterm: клиент подключается к **SSH gateway KeepPAM** (`:2222`), а не напрямую к цели.
+
+## Выдача
+
+| Способ | Что происходит |
+|--------|----------------|
+| UI «Файл подключения» | `GET /api/v1/admin/assets/{id}/accounts/{accountId}/ssh.config` |
+| «Открыть SSH» (create session) | в ответе `ssh_file` / `ssh_filename` / `ssh_hint` → авто-скачивание |
+| Повтор | `GET /api/v1/admin/sessions/{id}/ssh.config` |
+
+Файл — OpenSSH config (`*.sshconfig`) + **PuTTY launcher** (`*-putty.cmd`).  
+Внутри config: `HostName`, `Port`, `User` (логин KeepPAM), `RemoteCommand asset/account`.  
+Launcher: `putty -ssh user@host -P port -m <target>` (цель выбирается автоматически).
+
+## Env
+
+| Переменная | Назначение |
+|------------|------------|
+| `KEEPPAM_SSH_ADDR` | listen gateway (default `:2222`) — порт в файле |
+| `KEEPPAM_SSH_PUBLIC_HOST` | hostname в config; пусто → Host API-запроса / `localhost` |
+
+## Auth
+
+- Клиент → gateway: **PAM** password или SSH-ключ пользователя KeepPAM.
+- Gateway → цель: vault (`GetTargetCreds` / `DialSSH`) — **не** в connection file.
+
+```bash
+ssh -F keeppam-demo-linux-01-root.sshconfig keeppam-demo-linux-01-root
+# или
+ssh -p 2222 -t ops@pam.example.com 'demo-linux-01/root'
+```

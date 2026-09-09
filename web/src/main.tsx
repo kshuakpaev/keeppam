@@ -1,7 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AppLayout, HomePage } from "./App";
+import { AppLayout } from "./App";
+import { HomePage } from "./pages/HomePage";
 import { AuthProvider } from "./auth";
 import { I18nProvider } from "./i18n";
 import { SessionTabsProvider } from "./sessionTabs";

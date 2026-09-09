@@ -178,7 +178,7 @@ HA 2+2 / 3+2: см. `docs/ha.txt`. Одна Virtual Appliance **не** заме�
 | Режим | Ресурсы |
 |-------|---------|
 | **mock://local** (стенд, CI) | +0 GPU; worker делит RAM API; сводки без модели |
-| **On-prem runtime (CPU, ~7B Q4)** | +8–16 GiB RAM (лучше 32 GiB), отдельный контейнер `ai-worker`; GPU не обязателен, P1 post-session ок |
+| **Ollama on-prem (Llama 3.2 / Qwen 2.5 / Mistral / Gemma 2 / Phi-3)** | контейнер `ai-runtime`, веса по кнопке «Скачать в Ollama»; 3B CPU-friendly, 7–9B ≈ +8–16 GiB RAM |
 | **Веса моделей offline** | `dist/keeppam-ai-models-*.tar`; install не ходит в интернет |
 
 ИИ **не** в live deny / JEA / SSH PTY. Подробности: `docs/ai-plan.txt`.

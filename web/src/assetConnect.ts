@@ -1,4 +1,5 @@
 import { api, type Asset, type AssetAccount } from "./api";
+import { downloadNativeClientBundle } from "./nativeClient";
 import { isSQLProtocol, kindForProtocol, type SessionTabKind } from "./sessionTabs";
 
 const CONNECT_PROTOCOLS = new Set([
@@ -73,6 +74,8 @@ export type StartAssetSessionOpts = {
   rdp_width?: number;
   rdp_height?: number;
   httpsIsolated?: boolean;
+  /** Download Native Client Connection File (+ launcher); skip browser tab for ssh/rdp. */
+  nativeClientOnly?: boolean;
   supervisorDenied: string;
   supervisorTimeout: string;
 };
@@ -169,16 +172,45 @@ export async function startAssetSession(
     }
     msg = sess.wire_hint || `Citrix SOCKS ${sess.wire_addr || ":1081"}`;
   }
-  if (asset.protocol === "rdp" && sess.rdp_file) {
-    const blob = new Blob([sess.rdp_file], { type: "application/x-rdp" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = sess.rdp_filename || `keeppam-${sess.id.slice(0, 8)}.rdp`;
-    a.click();
-    URL.revokeObjectURL(url);
-    msg = sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`;
+  if (asset.protocol === "rdp") {
+    if (sess.rdp_file || sess.native_conn_file) {
+      const hint = downloadNativeClientBundle(sess, { protocol: "rdp" });
+      msg = hint || sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`;
+    } else if (opts.nativeClientOnly && sess.id) {
+      // After supervisor wait GET session has no rdp_file — pull .rdp from download API.
+      const res = await fetch(api.downloadRdpUrl(sess.id), { credentials: "include" });
+      if (!res.ok) {
+        throw new Error(
+          "RDP Connection File не выдан. Проверьте адрес ассета и повторите.",
+        );
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="?([^";]+)"?/i.exec(cd);
+      const name = m?.[1] || `keeppam-${sess.id.slice(0, 8)}.rdp`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name.endsWith(".rdp") ? name : `${name}.rdp`;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(url), 2500);
+      msg = `Native Client: ${a.download}`;
+    } else if (opts.nativeClientOnly) {
+      throw new Error(
+        "RDP Connection File не выдан (нет rdp_file). Проверьте адрес ассета и API.",
+      );
+    }
   }
+  if (asset.protocol === "ssh" && (sess.ssh_file || sess.native_conn_file)) {
+    const hint = downloadNativeClientBundle(sess, { protocol: "ssh" });
+    msg = hint || sess.ssh_hint || `SSH gateway: ${sess.ssh_addr || ":2222"}`;
+  }
+
+  const skipNativeTab =
+    !!opts.nativeClientOnly && (asset.protocol === "ssh" || asset.protocol === "rdp");
 
   return {
     sessionId: sess.id,
@@ -186,6 +218,18 @@ export async function startAssetSession(
     title,
     protocol: asset.protocol,
     msg,
-    skipTab: asset.protocol === "ftp",
+    skipTab: asset.protocol === "ftp" || skipNativeTab,
   };
+}
+
+/** Native Client Connection File + Launcher for SSH/RDP (no browser session tab). */
+export async function startNativeClient(
+  asset: Asset,
+  acc: AssetAccount,
+  opts: StartAssetSessionOpts,
+): Promise<StartAssetSessionResult> {
+  if (asset.protocol === "ssh" || asset.protocol === "rdp") {
+    return startAssetSession(asset, acc, { ...opts, nativeClientOnly: true });
+  }
+  throw new Error("native client is only for SSH and RDP");
 }

@@ -29,6 +29,9 @@ type Settings struct {
 	Endpoint      string     `json:"endpoint"`
 	Model         string     `json:"model"`
 	EmbedModel    string     `json:"embed_model"`
+	Preset        string     `json:"preset"`
+	APIKey        string     `json:"api_key,omitempty"`
+	HasAPIKey     bool       `json:"has_api_key"`
 	MaxInputChars int        `json:"max_input_chars"`
 	TimeoutS      int        `json:"timeout_s"`
 	Lang          string     `json:"lang"`
@@ -37,6 +40,7 @@ type Settings struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 	AllowExternal bool       `json:"allow_external,omitempty"`
 	Licensed      bool       `json:"licensed"`
+	runtimeKey    string     `json:"-"`
 }
 
 type Bullet struct {
