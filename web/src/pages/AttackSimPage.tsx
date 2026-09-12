@@ -6,7 +6,6 @@ import { useI18n } from "../i18n";
 export function AttackSimPage() {
   const { user } = useAuth();
   const { t, te } = useI18n();
-  const canRead = hasPerm(user, "attacksim.read");
   const canWrite = hasPerm(user, "attacksim.write");
   const [scenarios, setScenarios] = useState<AttackSimScenario[]>([]);
   const [runs, setRuns] = useState<AttackSimRun[]>([]);
@@ -28,11 +27,11 @@ export function AttackSimPage() {
   }
 
   useEffect(() => {
-    if (!canRead) return;
+    if (!canWrite) return;
     void load();
-  }, [canRead]);
+  }, [canWrite]);
 
-  if (!canRead) {
+  if (!canWrite) {
     return <p className="error">{t("attacksim.forbidden")}</p>;
   }
 

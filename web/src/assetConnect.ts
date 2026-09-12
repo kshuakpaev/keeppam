@@ -172,11 +172,12 @@ export async function startAssetSession(
     }
     msg = sess.wire_hint || `Citrix SOCKS ${sess.wire_addr || ":1081"}`;
   }
-  if (asset.protocol === "rdp") {
+  // Native files are only for the «Native-клиент» button — HTML5 «Открыть SSH/RDP» must not download.
+  if (opts.nativeClientOnly && asset.protocol === "rdp") {
     if (sess.rdp_file || sess.native_conn_file) {
       const hint = downloadNativeClientBundle(sess, { protocol: "rdp" });
       msg = hint || sess.rdp_hint || `Native RDP: ${sess.rdp_addr || ""}`;
-    } else if (opts.nativeClientOnly && sess.id) {
+    } else if (sess.id) {
       // After supervisor wait GET session has no rdp_file — pull .rdp from download API.
       const res = await fetch(api.downloadRdpUrl(sess.id), { credentials: "include" });
       if (!res.ok) {
@@ -198,13 +199,16 @@ export async function startAssetSession(
       document.body.removeChild(a);
       window.setTimeout(() => URL.revokeObjectURL(url), 2500);
       msg = `Native Client: ${a.download}`;
-    } else if (opts.nativeClientOnly) {
+    } else {
       throw new Error(
         "RDP Connection File не выдан (нет rdp_file). Проверьте адрес ассета и API.",
       );
     }
   }
-  if (asset.protocol === "ssh" && (sess.ssh_file || sess.native_conn_file)) {
+  if (opts.nativeClientOnly && asset.protocol === "ssh") {
+    if (!(sess.ssh_file || sess.native_conn_file)) {
+      throw new Error("SSH Connection File не выдан. Повторите Native-клиент.");
+    }
     const hint = downloadNativeClientBundle(sess, { protocol: "ssh" });
     msg = hint || sess.ssh_hint || `SSH gateway: ${sess.ssh_addr || ":2222"}`;
   }

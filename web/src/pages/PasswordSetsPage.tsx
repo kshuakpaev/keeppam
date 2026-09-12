@@ -8,7 +8,6 @@ type AccOpt = { id: string; label: string; asset_id: string };
 export function PasswordSetsPage() {
   const { user } = useAuth();
   const { t } = useI18n();
-  const canRead = hasPerm(user, "assets.read");
   const canWrite = hasPerm(user, "assets.write");
   const [sets, setSets] = useState<PasswordSet[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -51,9 +50,9 @@ export function PasswordSetsPage() {
   }
 
   useEffect(() => {
-    if (!canRead) return;
+    if (!canWrite) return;
     void load();
-  }, [canRead]);
+  }, [canWrite]);
 
   function startCreate() {
     setEditId(null);
@@ -150,7 +149,7 @@ export function PasswordSetsPage() {
     }
   }
 
-  if (!canRead) {
+  if (!canWrite) {
     return <p className="muted">{t("common.noAccess")}</p>;
   }
 

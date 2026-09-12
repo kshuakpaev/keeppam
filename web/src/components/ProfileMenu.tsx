@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useI18n } from "../i18n";
+import { hasPerm, type User } from "../api";
 
 type Props = {
+  user: User;
   name: string;
   onLogout: () => void;
 };
 
-export function ProfileMenu({ name, onLogout }: Props) {
+export function ProfileMenu({ user, name, onLogout }: Props) {
   const nav = useNavigate();
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -43,9 +45,11 @@ export function ProfileMenu({ name, onLogout }: Props) {
           <button type="button" role="menuitem" onClick={() => go("/profile")}>
             {t("nav.profile")}
           </button>
-          <button type="button" role="menuitem" onClick={() => go("/config")}>
-            {t("nav.config")}
-          </button>
+          {hasPerm(user, "settings.write") && (
+            <button type="button" role="menuitem" onClick={() => go("/config")}>
+              {t("nav.config")}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

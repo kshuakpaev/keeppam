@@ -79,7 +79,7 @@ export function SidebarNav({ user, requestsBadge }: Props) {
         items: [
           { to: "/assets", label: "nav.assets", show: hasPerm(user, "assets.read"), match: ["/assets"] },
           { to: "/discovery", label: "nav.discovery", show: hasPerm(user, "discovery.read") },
-          { to: "/password-sets", label: "nav.passwordSets", show: hasPerm(user, "assets.read") },
+          { to: "/password-sets", label: "nav.passwordSets", show: hasPerm(user, "assets.write") },
           {
             to: "/access-requests",
             label: "nav.requests",
@@ -98,9 +98,9 @@ export function SidebarNav({ user, requestsBadge }: Props) {
         id: "security",
         label: "nav.group.security",
         items: [
-          { to: "/jea", label: "nav.jea", show: hasPerm(user, "jea.read") },
+          { to: "/jea", label: "nav.jea", show: hasPerm(user, "jea.write") },
           { to: "/forensic", label: "nav.forensic", show: hasPerm(user, "sessions.read") },
-          { to: "/attack-sim", label: "nav.attacksim", show: hasPerm(user, "attacksim.read") },
+          { to: "/attack-sim", label: "nav.attacksim", show: hasPerm(user, "attacksim.write") },
           { to: "/audit", label: "nav.audit", show: hasPerm(user, "audit.read") },
           { to: "/analytics", label: "nav.analytics", show: hasPerm(user, "audit.read") },
           { to: "/compliance", label: "nav.compliance", show: hasPerm(user, "compliance.read") },

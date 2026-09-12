@@ -271,6 +271,7 @@ export function AppLayout() {
         )}
         <SidebarNav user={user} requestsBadge={badge} />
         <ProfileMenu
+          user={user}
           name={user.display_name || user.username}
           onLogout={() => void logout()}
         />

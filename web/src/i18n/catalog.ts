@@ -206,6 +206,18 @@ export const catalog = {
   "profile.mfaLine": { ru: "MFA: {mfa} · источник {src}", en: "MFA: {mfa} · source {src}", kk: "MFA: {mfa} · көзі {src}" },
   "profile.lastLogin": { ru: "Последний вход: {at}", en: "Last sign-in: {at}", kk: "Соңғы кіру: {at}" },
   "profile.userCard": { ru: "Карточка пользователя →", en: "User card →", kk: "Пайдаланушы картасы →" },
+  "profile.passwordTitle": { ru: "Смена пароля", en: "Change password", kk: "Құпия сөзді өзгерту" },
+  "profile.passwordHint": {
+    ru: "Минимум 10 символов. Нужен текущий пароль портала.",
+    en: "At least 10 characters. Current portal password is required.",
+    kk: "Кемінде 10 таңба. Порталдың ағымдағы құпия сөзі керек.",
+  },
+  "profile.passwordOk": { ru: "Пароль обновлён", en: "Password updated", kk: "Құпия сөз жаңартылды" },
+  "profile.passwordExternal": {
+    ru: "Пароль задаёт каталог или IdP ({src}). Смена в KeepPAM недоступна.",
+    en: "Password is managed by the directory or IdP ({src}). Change it there, not in KeepPAM.",
+    kk: "Құпия сөзді каталог немесе IdP ({src}) басқарады. KeepPAM-да өзгерту жоқ.",
+  },
   "assets.title": { ru: "Активы", en: "Assets", kk: "Активтер" },
   "assets.lead": { ru: "Целевые хосты и сервисы для привилегированного доступа", en: "Target hosts and services for privileged access", kk: "Артықшылықты қолжетімділікке арналған мақсатты хосттар мен қызметтер" },
   "assets.leadOperator": {
@@ -967,7 +979,7 @@ export const catalog = {
     kk: "KeepPAM бақылауларының қauipсіз тексерулері (auth deny, JEA packs, ACL deny-by-default, schema). Мақсатты хосттарға шабуылдамайды.",
   },
   "attacksim.loadError": { ru: "Ошибка загрузки", en: "Failed to load", kk: "Жүктеу қатесі" },
-  "attacksim.forbidden": { ru: "Недостаточно прав (attacksim.read)", en: "Insufficient permissions (attacksim.read)", kk: "Құқық жеткіліксіз (attacksim.read)" },
+  "attacksim.forbidden": { ru: "Недостаточно прав (attacksim.write)", en: "Insufficient permissions (attacksim.write)", kk: "Құқық жеткіліксіз (attacksim.write)" },
   "attacksim.startError": { ru: "Ошибка запуска", en: "Failed to start", kk: "Іске қосу қатесі" },
   "attacksim.openError": { ru: "Ошибка", en: "Error", kk: "Қате" },
   "attacksim.runStarted": { ru: "Прогон {status}: pass={pass} fail={fail}", en: "Run {status}: pass={pass} fail={fail}", kk: "Іске қосу {status}: pass={pass} fail={fail}" },
@@ -1359,7 +1371,7 @@ export const catalog = {
   "jea.deleteSqlPackConfirm": { ru: "Удалить SQL-пакет «{name}»?", en: "Delete SQL pack «{name}»?", kk: "SQL-пакет «{name}» жою керек пе?" },
   "jea.deleteSshPackConfirm": { ru: "Удалить пакет «{name}»?", en: "Delete pack «{name}»?", kk: "«{name}» пакетін жою керек пе?" },
   "jea.deleted": { ru: "Удалён", en: "Deleted", kk: "Жойылды" },
-  "jea.forbidden": { ru: "Недостаточно прав (jea.read)", en: "Insufficient permissions (jea.read)", kk: "Құқық жеткіліксіз (jea.read)" },
+  "jea.forbidden": { ru: "Недостаточно прав (jea.write)", en: "Insufficient permissions (jea.write)", kk: "Құқық жеткіліксіз (jea.write)" },
   "jea.lead": {
     ru: "SSH / SQL / HTTP-пакеты, Policy, Command Risk и ACL на теги активов (путь prod/linux, без строки на каждый хост).",
     en: "SSH / SQL / HTTP packs, Policy, Command Risk and asset tag ACL (prod/linux path).",

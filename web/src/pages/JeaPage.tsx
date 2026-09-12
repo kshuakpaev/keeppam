@@ -164,7 +164,6 @@ export function JeaPage() {
     () => [t("cal.0"), t("cal.1"), t("cal.2"), t("cal.3"), t("cal.4"), t("cal.5"), t("cal.6")],
     [t],
   );
-  const canRead = hasPerm(user, "jea.read");
   const canWrite = hasPerm(user, "jea.write");
   const canACL = hasPerm(user, "assets.acl");
   const canSeeACL = hasPerm(user, "assets.read");
@@ -270,11 +269,11 @@ export function JeaPage() {
   }
 
   useEffect(() => {
-    if (!canRead) return;
+    if (!canWrite) return;
     void load();
-  }, [canRead]);
+  }, [canWrite]);
 
-  if (!canRead) {
+  if (!canWrite) {
     return <p className="error">{t("jea.forbidden")}</p>;
   }
 

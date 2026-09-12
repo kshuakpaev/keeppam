@@ -78,9 +78,9 @@ export const HELP_TOPICS: HelpTopic[] = [
         "Топтар аккордеонмен ашылады және браузерде сақталады. Ағымдағы бөлім тобы автоматты ашылады. Сұраулар бейджі (және жабық Жұмыс тобында) күтудегі мақұлдау санын көрсетеді.",
       ),
       t(
-        "Пункты без соответствующего права (например jea.read) не отображаются. Профиль и выход — в нижней части сайдбара.",
-        "Items without the matching permission (e.g. jea.read) are hidden. Profile and sign-out live at the bottom of the sidebar.",
-        "Қажетті құқықсыз пункттер (мыс. jea.read) көрсетілмейді. Профиль мен шығу — сайдбардың төменінде.",
+        "Пункты без соответствующего права (например jea.write) не отображаются. Профиль и выход — в нижней части сайдбара.",
+        "Items without the matching permission (e.g. jea.write) are hidden. Profile and sign-out live at the bottom of the sidebar.",
+        "Қажетті құқықсыз пункттер (мыс. jea.write) көрсетілмейді. Профиль мен шығу — сайдбардың төменінде.",
       ),
     ],
     related: ["overview", "profile"],
@@ -112,9 +112,9 @@ export const HELP_TOPICS: HelpTopic[] = [
         "«Белсенді» және «Мұрағат» қойындылары: алдымен мұрағат; мұрағаттан қалпына келтіру немесе толығымен жою (сеанс тарихы сақталады).",
       ),
       t(
-        "«Подключить» / «Открыть SSH» / SQL / kubectl создаёт PAM-сессию с учётом ACL, JIT и Access Policy. Если нужен тикет или reason — форма запросит их до connect. При four-eyes сессия ждёт супервайзера.",
-        "Connect / Open SSH / SQL / kubectl creates a PAM session under ACL, JIT, and Access Policy. Ticket/reason prompts appear before connect when required. With four-eyes the session waits for a supervisor.",
-        "Қосу / SSH / SQL / kubectl ACL, JIT және Access Policy бойынша PAM-сеанс құрады. Тикет/reason қажет болса — connect алдында сұралады. Four-eyes кезінде супервайзер күтіледі.",
+        "«Подключить» / «Открыть SSH» / SQL / kubectl создаёт PAM-сессию в браузере (вкладка терминала/RDP). Файлы Native-клиента при этом не скачиваются. Если нужен тикет или reason — форма запросит их до connect. При four-eyes сессия ждёт супервайзера.",
+        "Connect / Open SSH / SQL / kubectl opens a browser PAM session (terminal/RDP tab). Native-client files are not downloaded. Ticket/reason prompts appear before connect when required. With four-eyes the session waits for a supervisor.",
+        "Қосу / SSH / SQL / kubectl браузерде PAM-сеанс ашады (терминал/RDP). Native-клиент файлдары жүктелмейді. Тикет/reason қажет болса — connect алдында сұралады. Four-eyes кезінде супервайзер күтіледі.",
       ),
       t(
         "SSH «Файл подключения» скачивает OpenSSH config для шлюза :2222 (User = логин KeepPAM, RemoteCommand = актив/учётка). Секрет цели в файл не попадает — см. docs/ssh-connection-file.txt.",
@@ -249,9 +249,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Набор объединяет password-учётки. «Rotate all» генерирует секрет и пушит участникам в порядке sync (сначала host, потом AD — или наоборот). directory_last удобен, если AD сразу инвалидирует старый пароль.",
-        "A set groups password accounts. Rotate all generates a secret and pushes members in sync order (hosts then AD — or reverse). directory_last helps when AD invalidates the old password immediately.",
-        "Жинақ password-тіркелгілерді біріктіреді. Rotate all құпияны sync ретімен жібереді. directory_last AD ескі құпияны бірден жарамсыз еткенде ыңғайлы.",
+        "Набор объединяет password-учётки. Пункт меню и API — только с assets.write (не у operator). «Rotate all» генерирует секрет и пушит участникам в порядке sync (сначала host, потом AD — или наоборот). directory_last удобен, если AD сразу инвалидирует старый пароль.",
+        "A set groups password accounts. Menu and API require assets.write (not operator). Rotate all generates a secret and pushes members in sync order (hosts then AD — or reverse). directory_last helps when AD invalidates the old password immediately.",
+        "Жинақ password-тіркелгілерді біріктіреді. Мәзір мен API — тек assets.write (operator емес). Rotate all құпияны sync ретімен жібереді. directory_last AD ескі құпияны бірден жарамсыз еткенде ыңғайлы.",
       ),
     ],
     actions: [
@@ -491,9 +491,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Вкладки: SSH commands, SQL, HTTP URL ACL, App objects, Policy, Теги активов. Пакеты привязываются через Access Policy и ACL актива (или Tag ACL). Try/parse проверяет команду до сохранения.",
-        "Tabs: SSH commands, SQL, HTTP URL ACL, App objects, Policy, Asset tags. Packs bind via Access Policy and asset ACL (or Tag ACL). Try/parse checks a command before save.",
-        "Қойындылар: SSH, SQL, HTTP, Objects, Policy, Тегтер. Пакеттер Access Policy және ACL арқылы байланады.",
+        "Вкладки: SSH commands, SQL, HTTP URL ACL, App objects, Policy, Теги активов. Меню — jea.write (не у operator). Пакеты привязываются через Access Policy и ACL актива (или Tag ACL). Try/parse проверяет команду до сохранения.",
+        "Tabs: SSH commands, SQL, HTTP URL ACL, App objects, Policy, Asset tags. Menu requires jea.write (not operator). Packs bind via Access Policy and asset ACL (or Tag ACL). Try/parse checks a command before save.",
+        "Қойындылар: SSH, SQL, HTTP, Objects, Policy, Тегтер. Мәзір — jea.write (operator емес). Пакеттер Access Policy және ACL арқылы байланады.",
       ),
       t(
         "Policy: ticket/reason, CIDR, страны, устройства, namespaces, egress, PII/NLP DLP, file_transfer, OCR (интервал / каждый кадр / live / SSH-вывод), max_risk / risk_action (deny, require_approval, require_mfa, terminate, lock_account), флаги rdp_clipboard|drive|printer|native. Default clipboard off (DLP-strict). Изменения действуют на новые сессии.",
@@ -529,9 +529,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Запуск suite создаёт прогон с результатами pass/fail по сценариям (JEA deny, policy gates и т.д.). Используйте после изменения пакетов Policy/команд.",
-        "Running a suite creates a run with per-scenario pass/fail (JEA deny, policy gates, etc.). Use after changing Policy/command packs.",
-        "Suite іске қосу pass/fail нәтижелі прогон құрады. Policy/команда пакеттерін өзгерткеннен кейін қолданыңыз.",
+        "Запуск suite создаёт прогон с результатами pass/fail по сценариям (JEA deny, policy gates и т.д.). Меню — attacksim.write (не у operator). Используйте после изменения пакетов Policy/команд.",
+        "Running a suite creates a run with per-scenario pass/fail (JEA deny, policy gates, etc.). Menu requires attacksim.write (not operator). Use after changing Policy/command packs.",
+        "Suite іске қосу pass/fail нәтижелі прогон құрады. Мәзір — attacksim.write (operator емес). Policy/команда пакеттерін өзгерткеннен кейін қолданыңыз.",
       ),
     ],
     related: ["jea", "audit"],
@@ -795,15 +795,15 @@ export const HELP_TOPICS: HelpTopic[] = [
     href: "/profile",
     title: t("Профиль", "Profile", "Профиль"),
     summary: t(
-      "Ваши роли, группы, MFA и ссылка на карточку пользователя.",
-      "Your roles, groups, MFA, and a link to the user card.",
-      "Рөлдеріңіз, топтар, MFA және пайдаланушы карточкасы сілтемесі.",
+      "Роли, MFA и смена пароля портала.",
+      "Roles, MFA, and portal password change.",
+      "Рөлдер, MFA және портал құпия сөзін өзгерту.",
     ),
     body: [
       t(
-        "Первый вход может требовать смены пароля и включения MFA (/setup). Выход для SAML идёт через SLO.",
-        "First sign-in may require password change and MFA (/setup). SAML sign-out uses SLO.",
-        "Алғашқы кіру құпия сөз ауыстыру мен MFA талап етуі мүмкін (/setup). SAML шығу — SLO.",
+        "Локальный пользователь меняет пароль портала на этой странице (текущий + новый, мин. 10 символов). Первый вход может требовать смены пароля и MFA (/setup). SAML/LDAP/OIDC пароль в KeepPAM не меняют. Выход для SAML идёт через SLO. Конфигурация в меню профиля — только с settings.write.",
+        "Local users change the portal password here (current + new, min. 10 characters). First sign-in may require password change and MFA (/setup). SAML/LDAP/OIDC passwords are not changed in KeepPAM. SAML sign-out uses SLO. Configuration in the profile menu requires settings.write.",
+        "Жергілікті пайдаланушы құпия сөзді осы бетте өзгертеді (мин. 10 таңба). Алғашқы кіру /setup болуы мүмкін. SAML шығу — SLO. Конфигурация — тек settings.write.",
       ),
     ],
     related: ["users", "config"],
