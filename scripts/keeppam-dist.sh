@@ -150,7 +150,7 @@ KeepPAM ${VER} — offline distribution (${SET})
   ./install.sh
 
 Портал: http://<host>:5173
-API:    http://<host>:8080
+API:    http://<host>:8080  (если занят: KEEPPAM_API_HOST_PORT=8008 в deploy/.env)
 
 Смените пароль в deploy/.env → KEEPPAM_BOOTSTRAP_ADMIN_PASSWORD.
 Лицензия: UI «Конфигурация → Лицензия KeepPAM».

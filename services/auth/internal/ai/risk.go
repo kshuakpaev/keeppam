@@ -11,6 +11,7 @@ var factorDict = map[string]struct{ RU, EN string }{
 	"ueba_new_ip":         {RU: "подключение с нового IP вне 30-дневного профиля", EN: "source IP not in 30-day baseline"},
 	"ueba_new_subnet":     {RU: "подключение из новой подсети вне 30-дневного профиля", EN: "source subnet not in 30-day baseline"},
 	"ueba_spread":         {RU: "резкий рост числа уникальных активов за сутки", EN: "sudden spread across many assets"},
+	"ueba_unusual_hour":   {RU: "вход в час, которого не было в 30-дневном профиле", EN: "login hour absent from 30-day profile"},
 	"ueba_keystroke_fast": {RU: "аномально быстрый ввод с клавиатуры", EN: "anomalously fast typing"},
 	"ueba_mouse_fast":     {RU: "аномально быстрое движение мыши", EN: "anomalously fast mouse"},
 	"ueba_peer_outlier":   {RU: "актив редко посещают коллеги по группе", EN: "asset rarely used by peer group"},

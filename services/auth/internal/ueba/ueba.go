@@ -8,6 +8,7 @@ import (
 const (
 	FactorNewAsset       = "ueba_new_asset"
 	FactorSpread         = "ueba_spread"
+	FactorUnusualHour    = "ueba_unusual_hour"
 	FactorKeystrokeFast  = "ueba_keystroke_fast"
 	FactorKeystrokeStats = "keystroke_stats"
 	FactorMouseFast      = "ueba_mouse_fast"
@@ -15,12 +16,14 @@ const (
 
 	NewAssetPoints      = 25
 	SpreadPoints        = 20
+	UnusualHourPoints   = 20
 	KeystrokeFastPoints = 30
 	MouseFastPoints     = 25
 
 	MinBaseline     = 3
 	BaselineDays    = 30
 	SpreadMinRecent = 6
+	MinHourBaseline = 8
 
 	MinKeystrokeKeys     = 20
 	MinKeystrokeBaseline = 3
@@ -52,6 +55,18 @@ func Spread(baselineDistinct, last24hDistinct int) bool {
 		return false
 	}
 	return last24hDistinct >= SpreadMinRecent && last24hDistinct >= baselineDistinct*2
+}
+
+// UnusualHour is true when the user has a stable 30-day login volume and never
+// connected in this UTC hour.
+func UnusualHour(hourHits [24]int, currentHour, total int) bool {
+	if total < MinHourBaseline {
+		return false
+	}
+	if currentHour < 0 || currentHour > 23 {
+		return false
+	}
+	return hourHits[currentHour] == 0
 }
 
 // ZScore returns (x-mean)/std; std<=0 → 0.

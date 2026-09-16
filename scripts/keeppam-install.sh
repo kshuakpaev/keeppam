@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # If this tree is an unpacked bundle, ROOT is the bundle root (has images.tar + deploy/).
 BUNDLE="${1:-}"
-API="${API:-http://127.0.0.1:8080}"
+API="${API:-}"
 
 # shellcheck source=keeppam-compose.inc.sh
 source "$ROOT/scripts/keeppam-compose.inc.sh"
@@ -70,6 +70,11 @@ if [[ ! -f "$ROOT/deploy/.env" && -f "$ROOT/deploy/.env.example" ]]; then
   cp "$ROOT/deploy/.env.example" "$ROOT/deploy/.env"
   echo "wrote $ROOT/deploy/.env from .env.example — change the bootstrap password"
 fi
+
+if [[ -z "${API:-}" ]]; then
+  API="$(keeppam_api_url)"
+fi
+export API
 
 keeppam_retag
 

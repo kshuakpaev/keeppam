@@ -102,6 +102,7 @@ export function SidebarNav({ user, requestsBadge }: Props) {
           { to: "/forensic", label: "nav.forensic", show: hasPerm(user, "sessions.read") },
           { to: "/attack-sim", label: "nav.attacksim", show: hasPerm(user, "attacksim.write") },
           { to: "/audit", label: "nav.audit", show: hasPerm(user, "audit.read") },
+          { to: "/file-vault", label: "nav.fileVault", show: hasPerm(user, "files.vault.read") },
           { to: "/analytics", label: "nav.analytics", show: hasPerm(user, "audit.read") },
           { to: "/compliance", label: "nav.compliance", show: hasPerm(user, "compliance.read") },
         ],

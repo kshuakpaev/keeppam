@@ -71,6 +71,18 @@ func TestComputeRiskUEBA(t *testing.T) {
 	}
 }
 
+func TestComputeRiskUnusualHour(t *testing.T) {
+	now := time.Date(2026, 8, 13, 14, 0, 0, 0, time.UTC)
+	score, factors := computeRisk(RiskInputs{Now: now, UnusualHour: true})
+	if score != 20 || len(factors) != 1 || factors[0] != "ueba_unusual_hour" {
+		t.Fatalf("unusual hour score=%d factors=%v", score, factors)
+	}
+	score, factors = computeRisk(RiskInputs{Now: time.Date(2026, 8, 13, 3, 0, 0, 0, time.UTC), UnusualHour: true})
+	if score != 45 {
+		t.Fatalf("off_hours+unusual hour score=%d want 45", score)
+	}
+}
+
 func TestComputeRiskNewIPSubnet(t *testing.T) {
 	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	score, factors := computeRisk(RiskInputs{Now: now, NewIP: true})

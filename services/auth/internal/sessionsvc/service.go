@@ -117,6 +117,13 @@ func (s *Service) SetRecordingStore(st recstore.Store) {
 	}
 }
 
+func (s *Service) DB() *store.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 func (s *Service) RecordingStore() recstore.Store { return s.store }
 
 func (s *Service) RecordingsDir() string { return s.recordingsDir }

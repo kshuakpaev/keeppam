@@ -34,6 +34,7 @@ import { UserEditPage } from "./pages/UserEditPage";
 import { PasswordSetsPage } from "./pages/PasswordSetsPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { HelpPage } from "./pages/HelpPage";
+import { FileVaultPage } from "./pages/FileVaultPage";
 import { UsersPage } from "./pages/UsersPage";
 import "./styles.css";
 
@@ -74,6 +75,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/users/:id" element={<UserEditPage />} />
               <Route path="/groups" element={<GroupsPage />} />
               <Route path="/audit" element={<AuditPage />} />
+              <Route path="/file-vault" element={<FileVaultPage />} />
               <Route path="/config" element={<ConfigPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

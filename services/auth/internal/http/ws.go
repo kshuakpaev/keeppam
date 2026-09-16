@@ -794,6 +794,10 @@ func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if !s.canViewSessionIO(sess, row) {
+		writeErr(w, http.StatusForbidden, "session I/O hidden")
+		return
+	}
 	path, err := s.sessionsvc.RecordingFile(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err.Error())

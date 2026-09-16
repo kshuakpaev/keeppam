@@ -54,6 +54,8 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hideIO := !s.canViewSessionIO(authSess, row)
+
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -81,8 +83,35 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 	if err := writeJSON(map[string]any{
 		"type": "ready", "protocol": row.Protocol, "readonly": true,
 		"username": row.Username, "asset": row.AssetName, "account": row.AccountUsername,
+		"io_hidden": hideIO,
 	}); err != nil {
 		return
+	}
+	if hideIO {
+		_ = writeJSON(map[string]any{"type": "io_hidden"})
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		conn.SetReadLimit(4096)
+		go func() {
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				_ = conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+				writeMu.Unlock()
+			}
+		}
 	}
 
 	if snap := s.live.Snapshot(r.Context(), id); len(snap) > 0 {
@@ -100,6 +129,9 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	if row.Protocol == "rdp" || row.Protocol == "vnc" || row.Isolated {
+		go s.tailGuacRecording(ctx, id, row.Protocol, writeJSON)
+	}
 	ch, unsub := s.live.Subscribe(ctx, id)
 	defer unsub()
 

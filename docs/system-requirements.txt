@@ -146,7 +146,7 @@ HA 2+2 / 3+2: см. `docs/ha.txt`. Одна Virtual Appliance **не** заме�
 | Порт | Сервис |
 |------|--------|
 | 5173 | Web UI |
-| 8080 | API |
+| 8080 | API (хост; внутри контейнера всегда :8080; иначе `KEEPPAM_API_HOST_PORT`) |
 | 2222 | SSH gateway (session-worker) |
 | 2121 | FTP gateway (session-worker) |
 | 2323 | Telnet gateway (session-worker) |

@@ -1,0 +1,17 @@
+# Host-порт API (когда :8080 занят)
+
+Контейнер API слушает **внутри** сети Docker `:8080` (nginx UI → `api:8080`).
+На хост по умолчанию публикуется `8080:8080`. Если порт 8080 на сервере уже занят:
+
+```
+# deploy/.env
+KEEPPAM_API_HOST_PORT=8008
+```
+
+`docker compose up -d --force-recreate --no-deps api`
+
+Портал `:5173` не меняется. Прямой API: `http://<host>:8008`.
+
+Для уже развёрнутого offline-бандла 1.0.8 без переменной в compose:
+
+  `deploy/patches/api-host-8008/README.txt`

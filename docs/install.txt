@@ -60,6 +60,8 @@ cd keeppam-1.0.0-offline-core
 
 Исходящего pull нет. Смените `KEEPPAM_BOOTSTRAP_ADMIN_PASSWORD` в `deploy/.env`.
 
+Если на хосте **:8080 занят**, в `deploy/.env` задайте `KEEPPAM_API_HOST_PORT=8008` (портал `:5173` без изменений). Патч для уже распакованного бандла: `deploy/patches/api-host-8008/`. Подробности: `docs/api-host-port.txt`.
+
 HA:
 
 ```bash

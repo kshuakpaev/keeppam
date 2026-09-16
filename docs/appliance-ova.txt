@@ -8,7 +8,7 @@
 |------|-----------|
 | `dist/appliance/keeppam-<ver>.ova` | VMware vSphere / ESXi / Workstation / Fusion |
 | `dist/appliance/keeppam-<ver>.vhdx` | Hyper-V Generation 2 |
-| `dist/appliance/keeppam-appliance.qcow2` | промежуточный диск (KVM/lab) |
+| `dist/appliance/keeppam-appliance.qcow2` | KVM / Proxmox / Nutanix AHV (один и тот же диск) |
 
 Внутри гостя: Ubuntu 24.04 LTS, Docker CE, дерево `/opt/keeppam` (если образ собран с offline-бандлом), сервис `keeppam-firstboot` на tty1.
 
@@ -26,6 +26,8 @@ BUNDLE=dist/keeppam-1.0.0-offline-core ./scripts/appliance-build.sh
 # 3) экспорт
 ./scripts/appliance-export-ova.sh
 ./scripts/appliance-export-vhdx.sh
+./scripts/appliance-export-proxmox.sh
+./scripts/appliance-export-ahv.sh
 ```
 
 Без `BUNDLE=` образ поднимается, но KeepPAM ставится с USB: положить `keeppam-*-offline-*.tar.gz` в `/opt/keeppam` и вызвать `./install.sh`, либо пересобрать с бандлом.
@@ -78,6 +80,34 @@ Set-VMProcessor KeepPAM -Count 4
 # Secure Boot: Microsoft UEFI Certificate Authority или Off на стенде
 Start-VM KeepPAM
 ```
+
+## Импорт Proxmox VE
+
+Тот же qcow2, что собирает `appliance-build.sh`:
+
+```bash
+./scripts/appliance-export-proxmox.sh
+# dist/appliance/keeppam-<ver>.qcow2 + keeppam-<ver>-proxmox.txt
+```
+
+Кратко на узле PVE:
+
+```bash
+qm create 800 --name KeepPAM --memory 8192 --cores 4 --net0 virtio,bridge=vmbr0 --bios ovmf
+qm importdisk 800 keeppam-<ver>.qcow2 local-lvm
+qm set 800 --scsi0 local-lvm:vm-800-disk-0 --boot order=scsi0
+qm start 800
+```
+
+## Импорт Nutanix AHV
+
+Сертифицированного Nutanix image нет: гость тот же Ubuntu 24.04 + Docker.
+
+```bash
+./scripts/appliance-export-ahv.sh
+```
+
+В Prism/acli: image DISK_IMAGE из qcow2 → VM 4 vCPU / 8 GiB → first-boot wizard.
 
 ## Порты (как у compose)
 

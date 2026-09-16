@@ -39,6 +39,7 @@ type RiskInputs struct {
 	UEBABaseline     int
 	NewIP            bool
 	NewSubnet        bool
+	UnusualHour      bool
 	ClientIP         string
 }
 
@@ -47,6 +48,10 @@ func computeRisk(in RiskInputs) (score int, factors []string) {
 	if hour < 6 {
 		score += 25
 		factors = append(factors, "off_hours")
+	}
+	if in.UnusualHour {
+		score += ueba.UnusualHourPoints
+		factors = append(factors, ueba.FactorUnusualHour)
 	}
 	if in.BreakGlass {
 		score += 40
@@ -255,6 +260,7 @@ func (s *Service) loadRiskInputs(ctx context.Context, userID, assetID uuid.UUID,
 	in.UnusualAsset = ueba.NewAsset(in.UEBABaseline, seen30)
 	in.SpreadBurst = ueba.Spread(in.UEBABaseline, recent)
 	in.NewIP, in.NewSubnet = s.sourceAnomaly(ctx, userID, baselineFrom, in.ClientIP)
+	in.UnusualHour = s.unusualLoginHour(ctx, userID, baselineFrom, in.Now.UTC().Hour())
 	return in, nil
 }
 
@@ -296,6 +302,31 @@ func (s *Service) sourceAnomaly(ctx context.Context, userID uuid.UUID, since tim
 	return newIP, newSubnet
 }
 
+func (s *Service) unusualLoginHour(ctx context.Context, userID uuid.UUID, since time.Time, hour int) bool {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT (EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC'))::int, COUNT(*)
+		FROM sessions
+		WHERE user_id=$1 AND created_at >= $2 AND `+ueba.SessionSQL+`
+		GROUP BY 1`, userID, since)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	var hits [24]int
+	total := 0
+	for rows.Next() {
+		var h, n int
+		if err := rows.Scan(&h, &n); err != nil {
+			return false
+		}
+		if h >= 0 && h <= 23 {
+			hits[h] = n
+		}
+		total += n
+	}
+	return ueba.UnusualHour(hits, hour, total)
+}
+
 func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResult, expires *time.Time) {
 	if in.SkipRisk || in.Bypass || expires != nil {
 		return
@@ -318,12 +349,13 @@ func (s *Service) applyRisk(ctx context.Context, in AccessCheck, res *AccessResu
 		"score": res.RiskScore, "max_risk": res.MaxRisk, "action": res.RiskAction,
 		"factors": res.RiskFactors, "decision": decision, "denied_by_risk": res.DeniedByRisk,
 	}
-	if inputs.UnusualAsset || inputs.SpreadBurst || inputs.NewIP || inputs.NewSubnet {
+	if inputs.UnusualAsset || inputs.SpreadBurst || inputs.NewIP || inputs.NewSubnet || inputs.UnusualHour {
 		payload["ueba_baseline"] = inputs.UEBABaseline
 		payload["ueba_new_asset"] = inputs.UnusualAsset
 		payload["ueba_spread"] = inputs.SpreadBurst
 		payload["ueba_new_ip"] = inputs.NewIP
 		payload["ueba_new_subnet"] = inputs.NewSubnet
+		payload["ueba_unusual_hour"] = inputs.UnusualHour
 	}
 	if res.BindingID != nil {
 		payload["binding_id"] = res.BindingID.String()

@@ -48,7 +48,7 @@ export function SessionReplayPage() {
   const [processes, setProcesses] = useState<TranscriptLine[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
-  const [sshSpeed, setSshSpeed] = useState(1);
+  const [playSpeed, setPlaySpeed] = useState(1);
   const [aiSum, setAiSum] = useState<AISummary | null>(null);
   const recordingRef = useRef<{
     play: () => void;
@@ -57,6 +57,8 @@ export function SessionReplayPage() {
     getPosition: () => number;
     getDuration: () => number;
     isPlaying: () => boolean;
+    setSpeed?: (speed: number) => void;
+    getSpeed?: () => number;
   } | null>(null);
   const sshRef = useRef<{
     term: Terminal;
@@ -71,6 +73,7 @@ export function SessionReplayPage() {
     let timer: number | undefined;
     const container = hostRef.current;
     setReady(false);
+    setPlaySpeed(1);
 
     (async () => {
       try {
@@ -94,15 +97,16 @@ export function SessionReplayPage() {
         }
         if (sess.protocol === "ssh" || sess.protocol === "rdp" || sess.protocol === "vnc" || sess.isolated) {
           try {
-            const t = await api.getSessionTranscript(id);
+            const tr = await api.getSessionTranscript(id);
             if (!cancelled) {
-              setTranscript(t.lines || []);
-              setOutputLines(t.output || []);
-              setKeystrokes(t.keystrokes || []);
-              setScreenText(t.screen_text || []);
-              setTransferFiles(t.files || []);
-              setWindowTitles(t.window_titles || []);
-              setProcesses(t.processes || []);
+              setTranscript(tr.lines || []);
+              setOutputLines(tr.output || []);
+              setKeystrokes(tr.keystrokes || []);
+              setScreenText(tr.screen_text || []);
+              setTransferFiles(tr.files || []);
+              setWindowTitles(tr.window_titles || []);
+              setProcesses(tr.processes || []);
+              if (tr.io_hidden) setError(t("replay.ioHidden"));
             }
           } catch {
             /* replay still works */
@@ -118,6 +122,9 @@ export function SessionReplayPage() {
         }
 
         const res = await fetch(api.getRecordingUrl(id), { credentials: "include" });
+        if (res.status === 403) {
+          throw new Error(t("replay.ioHidden"));
+        }
         if (!res.ok) throw new Error(t("replay.unavailable"));
 
         if (isNativeRdp) {
@@ -280,6 +287,8 @@ export function SessionReplayPage() {
       if (protocol === "rdp" || protocol === "vnc") {
         const rec = recordingRef.current;
         if (!rec) throw new Error(t("replay.notLoaded"));
+        rec.setSpeed?.(1);
+        setPlaySpeed(1);
         await recordElementToWebM(hostRef.current, {
           filename,
           fps: 15,
@@ -392,14 +401,19 @@ export function SessionReplayPage() {
     const ssh = sshRef.current;
     if (!ssh) return;
     ssh.stop?.();
-    const stop = ssh.replay(sshSpeed, Math.max(0, ms / 1000));
+    const stop = ssh.replay(playSpeed, Math.max(0, ms / 1000));
     ssh.stop = stop;
   }
 
-  function playSshAt(speed: number) {
+  function setPlaybackSpeed(speed: number) {
+    setPlaySpeed(speed);
+    const rec = recordingRef.current;
+    if (rec?.setSpeed) {
+      rec.setSpeed(speed);
+      return;
+    }
     const ssh = sshRef.current;
     if (!ssh) return;
-    setSshSpeed(speed);
     ssh.stop?.();
     const from = position / 1000;
     const stop = ssh.replay(speed, from);
@@ -443,16 +457,16 @@ export function SessionReplayPage() {
               {playing ? t("replay.pause") : t("replay.play")}
             </button>
           )}
-          {protocol === "ssh" && ready && (
+          {(isGuac || protocol === "ssh") && ready && (
             <span className="row" style={{ gap: 4, alignItems: "center" }}>
               <span className="muted">{t("replay.speed")}</span>
               {[1, 2, 4].map((s) => (
                 <button
                   key={s}
-                  className={sshSpeed === s ? "btn" : "btn secondary"}
+                  className={playSpeed === s ? "btn" : "btn secondary"}
                   type="button"
                   disabled={exporting}
-                  onClick={() => playSshAt(s)}
+                  onClick={() => setPlaybackSpeed(s)}
                 >
                   {s}×
                 </button>
@@ -490,6 +504,11 @@ export function SessionReplayPage() {
           {id && (
             <a className="btn secondary" href={api.getRecordingUrl(id)}>
               {t("sess.download")}
+            </a>
+          )}
+          {id && (
+            <a className="btn secondary" href={api.getRecordingPcapUrl(id)}>
+              {t("replay.exportPcap")}
             </a>
           )}
           <Link className="btn secondary" to="/sessions">

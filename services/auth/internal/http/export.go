@@ -35,6 +35,10 @@ func (s *Server) handleExportMP4(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if !s.canViewSessionIO(sess, row) {
+		writeErr(w, http.StatusForbidden, "session I/O hidden")
+		return
+	}
 	if row.Protocol != "rdp" && row.Protocol != "vnc" {
 		writeErr(w, http.StatusBadRequest, "MP4 export is only for rdp/vnc")
 		return
@@ -121,6 +125,10 @@ func (s *Server) handleGetRecordingMP4(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if !s.canViewSessionIO(sess, row) {
+		writeErr(w, http.StatusForbidden, "session I/O hidden")
 		return
 	}
 	if row.Protocol != "rdp" && row.Protocol != "vnc" {

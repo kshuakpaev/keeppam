@@ -2051,6 +2051,7 @@ export const api = {
     request<{
       indexed: boolean;
       protocol: string;
+      io_hidden?: boolean;
       lines: TranscriptLine[];
       output?: TranscriptLine[];
       keystrokes?: TranscriptLine[];
@@ -2212,6 +2213,31 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   getRecordingUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording`,
+  getRecordingPcapUrl: (id: string) => `/api/v1/admin/sessions/${id}/recording.pcap`,
+  listProtectedFiles: () => request<{ files: ProtectedFile[] }>("/api/v1/admin/file-vault"),
+  uploadProtectedFile: (file: File, meta?: { name?: string; description?: string }) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (meta?.name) fd.append("name", meta.name);
+    if (meta?.description) fd.append("description", meta.description);
+    return request<ProtectedFile>("/api/v1/admin/file-vault", { method: "POST", body: fd });
+  },
+  deleteProtectedFile: (id: string) =>
+    request<{ status: string }>(`/api/v1/admin/file-vault/${id}`, { method: "DELETE" }),
+  requestProtectedFile: (id: string, body: { reason?: string; ttl_minutes?: number }) =>
+    request<ProtectedFileGrant>(`/api/v1/admin/file-vault/${id}/request`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listProtectedFileGrants: (pending?: boolean) =>
+    request<{ grants: ProtectedFileGrant[] }>(
+      `/api/v1/admin/file-vault/grants${pending ? "?pending=1" : ""}`,
+    ),
+  approveProtectedFileGrant: (id: string) =>
+    request<ProtectedFileGrant>(`/api/v1/admin/file-vault/grants/${id}/approve`, { method: "POST" }),
+  denyProtectedFileGrant: (id: string) =>
+    request<ProtectedFileGrant>(`/api/v1/admin/file-vault/grants/${id}/deny`, { method: "POST" }),
+  getProtectedFileUrl: (id: string) => `/api/v1/admin/file-vault/${id}/content`,
   listSessionFiles: (id: string) =>
     request<{ files: SessionFile[] }>(`/api/v1/admin/sessions/${id}/files`),
   getSessionFileUrl: (sessionId: string, fileId: string) =>
@@ -2688,6 +2714,33 @@ export type AccessPolicyInput = {
   app_object_pack_id?: string;
   max_risk?: number;
   risk_action?: string;
+};
+
+export type ProtectedFile = {
+  id: string;
+  name: string;
+  description: string;
+  content_type: string;
+  sha256: string;
+  size_bytes: number;
+  created_by?: string;
+  created_at: string;
+  access?: string;
+};
+
+export type ProtectedFileGrant = {
+  id: string;
+  file_id: string;
+  requester_id: string;
+  reason: string;
+  ttl_minutes: number;
+  status: string;
+  approver_id?: string;
+  decided_at?: string;
+  expires_at?: string;
+  created_at: string;
+  file_name?: string;
+  requester?: string;
 };
 
 export type TranscriptLine = {

@@ -1,0 +1,26 @@
+# Сейф файлов (nit2 3.12)
+
+Отдельный объект «защищённый файл» с JIT-доступом. Не путать с захватом SCP/SFTP/RDP внутри сессии (`file_transfer=capture`).
+
+## Права
+
+| Permission | Кто | Что |
+|------------|-----|-----|
+| `files.vault.write` | admin | Загрузка, удаление, очередь грантов, одобрение/отказ, скачивание без гранта |
+| `files.vault.read` | operator, auditor, admin | Список, запрос доступа, скачивание по действующему гранту |
+| `sessions.io.read` | admin, auditor | Чужой поток I/O (replay/watch/transcript). Владелец сессии видит свой I/O всегда |
+
+Самоодобрение запрещено. TTL гранта 1–10080 минут (по умолчанию 60).
+
+## API
+
+- `GET/POST /api/v1/admin/file-vault`
+- `GET /api/v1/admin/file-vault/{id}/content`
+- `POST /api/v1/admin/file-vault/{id}/request` `{reason, ttl_minutes}`
+- `DELETE /api/v1/admin/file-vault/{id}`
+- `GET /api/v1/admin/file-vault/grants?pending=1`
+- `POST /api/v1/admin/file-vault/grants/{id}/approve|deny`
+
+Тело файла в Postgres (`blob_enc`, AES-GCM envelope data key), до 32 МиБ. Аудит: `file.vault.*`.
+
+UI: меню «Сейф файлов».

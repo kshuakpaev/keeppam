@@ -5,6 +5,7 @@ import { Terminal } from "xterm";
 import { api, hasPerm, type PamSession } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
+import { createLiveGuacPlayer } from "../guacRecording";
 import "xterm/css/xterm.css";
 
 type SqlPayload = {
@@ -58,6 +59,8 @@ export function WatchPage() {
   const { user } = useAuth();
   const { t, te } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
+  const guacHostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<{ feed: (chunk: string) => void; dispose: () => void } | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const [sess, setSess] = useState<PamSession | null>(null);
   const [status, setStatus] = useState("term.connecting");
@@ -65,6 +68,8 @@ export function WatchPage() {
   const [log, setLog] = useState<LogLine[]>([]);
   const [ended, setEnded] = useState(false);
   const [killing, setKilling] = useState(false);
+  const [ioHidden, setIoHidden] = useState(false);
+  const [hasGuac, setHasGuac] = useState(false);
 
   const pushLog = useCallback((line: LogLine) => {
     setLog((prev) => [...prev.slice(-200), line]);
@@ -133,9 +138,26 @@ export function WatchPage() {
           asset?: string;
           account?: string;
           ts?: string;
+          chunk?: string;
+          io_hidden?: boolean;
         };
         if (msg.type === "ready") {
           setStatus("watch.liveView");
+          if (msg.io_hidden) setIoHidden(true);
+        } else if (msg.type === "io_hidden") {
+          setIoHidden(true);
+        } else if (msg.type === "guac" && msg.chunk) {
+          let binary = "";
+          try {
+            binary = atob(msg.chunk);
+          } catch {
+            return;
+          }
+          if (!playerRef.current && guacHostRef.current) {
+            playerRef.current = createLiveGuacPlayer(guacHostRef.current);
+          }
+          playerRef.current?.feed(binary);
+          setHasGuac(true);
         } else if (msg.type === "ended") {
           setEnded(true);
           setStatus("term.ended");
@@ -185,6 +207,8 @@ export function WatchPage() {
       ws.close();
       term?.dispose();
       termRef.current = null;
+      playerRef.current?.dispose();
+      playerRef.current = null;
     };
   }, [id, sess, pushLog]);
 
@@ -237,14 +261,38 @@ export function WatchPage() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      {(desktop || https) && (
+      {https && !sess?.isolated && (
         <div className="card" style={{ padding: "1rem", marginBottom: "0.75rem" }}>
-          <p>
-            {desktop ? t("watch.noDesktop") : t("watch.noHttps")}
-          </p>
-          <p className="muted">
-            {ended ? t("watch.alreadyEnded") : t("watch.operatorContinues")}
-          </p>
+          <p>{t("watch.noHttps")}</p>
+          <p className="muted">{ended ? t("watch.alreadyEnded") : t("watch.operatorContinues")}</p>
+        </div>
+      )}
+      {desktop && (
+        <div className="card" style={{ padding: "1rem", marginBottom: "0.75rem", position: "relative", background: "#0b0b0b", minHeight: 280 }}>
+          {ioHidden ? (
+            <p>{t("watch.ioHidden")}</p>
+          ) : (
+            <>
+              <div ref={guacHostRef} style={{ minHeight: 240, overflow: "auto" }} />
+              <div
+                style={{
+                  position: "absolute",
+                  top: 12,
+                  right: 16,
+                  color: "rgba(255,255,255,0.55)",
+                  fontSize: 12,
+                  pointerEvents: "none",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                {user?.username} · {t("watch.watermark")}
+              </div>
+              {!hasGuac && !ended && <p className="muted">{t("watch.waitingScreen")}</p>}
+              {!hasGuac && ended && <p>{t("watch.noDesktop")}</p>}
+              {hasGuac && <p className="muted">{t("watch.operatorContinues")}</p>}
+            </>
+          )}
         </div>
       )}
       {showTerm && <div className="terminal-host card" ref={hostRef} />}

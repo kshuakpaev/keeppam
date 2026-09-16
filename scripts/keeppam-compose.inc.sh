@@ -44,8 +44,17 @@ keeppam_compose() {
   docker compose "${args[@]}" "$@"
 }
 
+keeppam_api_url() {
+  local port="${KEEPPAM_API_HOST_PORT:-}"
+  if [[ -z "$port" && -f "${ROOT:-}/deploy/.env" ]]; then
+    port="$(grep -E '^[[:space:]]*KEEPPAM_API_HOST_PORT=' "$ROOT/deploy/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' \r"')"
+  fi
+  port="${port:-8080}"
+  echo "http://127.0.0.1:${port}"
+}
+
 keeppam_wait_ready() {
-  local api="${API:-http://127.0.0.1:8080}"
+  local api="${API:-$(keeppam_api_url)}"
   local i ok=0
   for i in $(seq 1 40); do
     if curl -sf "$api/readyz" >/dev/null 2>&1 || curl -sf "$api/healthz" >/dev/null 2>&1; then

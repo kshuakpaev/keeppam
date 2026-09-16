@@ -122,6 +122,10 @@ func (s *Server) handleGetAISummary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if !s.canViewSessionIO(sess, row) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "skip_reason": "io_hidden", "session_id": id})
+		return
+	}
 	sum, err := s.ai.GetSummary(r.Context(), id)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "skipped", "skip_reason": "none", "session_id": id})
@@ -151,6 +155,10 @@ func (s *Server) handlePostAISummary(w http.ResponseWriter, r *http.Request) {
 	sess := mustSess(r)
 	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if !s.canViewSessionIO(sess, row) {
+		writeErr(w, http.StatusForbidden, "session I/O hidden")
 		return
 	}
 	var body struct {

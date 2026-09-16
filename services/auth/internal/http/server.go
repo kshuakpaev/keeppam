@@ -29,6 +29,7 @@ import (
 	"github.com/keeppam/auth/internal/citrix/hdx"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
+	"github.com/keeppam/auth/internal/crypto"
 	"github.com/keeppam/auth/internal/dbephemeral"
 	"github.com/keeppam/auth/internal/device"
 	"github.com/keeppam/auth/internal/digitalidlab"
@@ -36,6 +37,7 @@ import (
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/eidas"
 	"github.com/keeppam/auth/internal/filexfer"
+	"github.com/keeppam/auth/internal/filevault"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/health"
@@ -100,6 +102,7 @@ type Server struct {
 	ai         *ai.Service
 	archive    *recarch.Service
 	files      *filexfer.Service
+	filevault  *filevault.Service
 	health     *health.State
 	rdp        *rdpgw.Broker
 	hdx        *hdx.Client
@@ -115,6 +118,13 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 		lic.Source = "error:" + err.Error()
 	}
 	s := &Server{cfg: cfg, auth: authSvc, users: usersSvc, assets: assetsSvc, policy: policySvc, sessionsvc: sessSvc, audit: auditSvc, sessions: sessions, live: live, settings: settingsSvc, siem: siemSvc, discovery: discoverySvc, analytics: analyticsSvc, apps: appsSvc, compliance: complianceSvc, dr: drSvc, dbEph: dbEph, attacksim: attackSim, sshca: sshCA, itsm: itsmSvc, notify: notifySvc, k8s: k8sGw, ops: ops, scim: scimSvc, firewall: firewallSvc, nac: nacSvc, eidas: eidasSvc, uebaml: uebamlSvc, archive: archiveSvc, files: filesSvc, health: life, rdp: rdpBroker, castidx: castIdx, license: lic, hdx: hdx.NewClient(cfg.CitrixHDXPluginURL), ai: aiSvc}
+	if sessSvc != nil && auditSvc != nil {
+		if db := sessSvc.DB(); db != nil {
+			if env, err := crypto.NewEnvelope(cfg.DataKey); err == nil {
+				s.filevault = filevault.New(db, env, auditSvc)
+			}
+		}
+	}
 	if cfg.DigitalIDLab && sessions != nil {
 		s.didLab = &digitalidlab.Lab{KV: digitalidlab.RedisKV{C: sessions.Redis()}}
 	}
@@ -444,8 +454,17 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("sessions.connect")).Post("/sessions/{id}/k8s/portforward", s.handleK8sPortForwardHTTP)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording", s.handleGetRecording)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.mp4", s.handleGetRecordingMP4)
+				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/recording.pcap", s.handleExportPCAP)
 				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files", s.handleListSessionFiles)
 				r.With(s.requirePerm("sessions.files.read")).Get("/sessions/{id}/files/{fileId}", s.handleGetSessionFile)
+				r.With(s.requirePerm("files.vault.read")).Get("/file-vault", s.handleListProtectedFiles)
+				r.With(s.requirePerm("files.vault.write")).Post("/file-vault", s.handleUploadProtectedFile)
+				r.With(s.requirePerm("files.vault.write")).Get("/file-vault/grants", s.handleListFileGrants)
+				r.With(s.requirePerm("files.vault.write")).Post("/file-vault/grants/{id}/approve", s.handleDecideFileGrant)
+				r.With(s.requirePerm("files.vault.write")).Post("/file-vault/grants/{id}/deny", s.handleDecideFileGrant)
+				r.With(s.requirePerm("files.vault.read")).Get("/file-vault/{id}/content", s.handleDownloadProtectedFile)
+				r.With(s.requirePerm("files.vault.read")).Post("/file-vault/{id}/request", s.handleRequestProtectedFile)
+				r.With(s.requirePerm("files.vault.write")).Delete("/file-vault/{id}", s.handleDeleteProtectedFile)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/transcript", s.handleGetTranscript)
 				r.With(s.requirePerm("sessions.read")).Post("/sessions/{id}/transcript", s.handleIndexTranscript)
 				r.With(s.requirePerm("sessions.read")).Get("/sessions/{id}/ai-summary", s.handleGetAISummary)
@@ -559,6 +578,13 @@ func (s *Server) requireAnyPerm(perms ...string) func(http.Handler) http.Handler
 
 func mustSess(r *http.Request) session.Session {
 	return r.Context().Value(sessKey).(session.Session)
+}
+
+func (s *Server) canViewSessionIO(sess session.Session, row sessionsvc.Session) bool {
+	if sess.UserID == row.UserID {
+		return true
+	}
+	return rbac.HasPermission(sess.Permissions, "sessions.io.read")
 }
 
 func (s *Server) bindSession(r *http.Request, sess session.Session) *http.Request {

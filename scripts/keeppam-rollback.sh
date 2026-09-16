@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATE="$ROOT/deploy/.upgrade-state"
-API="${API:-http://127.0.0.1:8080}"
+API="${API:-}"
 
 # shellcheck source=keeppam-compose.inc.sh
 source "$ROOT/scripts/keeppam-compose.inc.sh"

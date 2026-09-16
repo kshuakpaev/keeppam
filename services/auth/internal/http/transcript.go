@@ -30,6 +30,14 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
+	if !s.canViewSessionIO(sess, row) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"indexed": false, "protocol": row.Protocol, "io_hidden": true,
+			"lines": []any{}, "output": []any{}, "keystrokes": []any{}, "screen_text": []any{},
+			"files": []any{}, "window_titles": []any{}, "processes": []any{},
+		})
+		return
+	}
 	indexed, _ := s.sessionsvc.TranscriptIndexed(r.Context(), id)
 	lines, err := s.sessionsvc.ListCommandTranscript(r.Context(), id)
 	if err != nil {
@@ -65,6 +73,10 @@ func (s *Server) handleIndexTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.sessionVisible(r.Context(), sess, row) {
 		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if !s.canViewSessionIO(sess, row) {
+		writeErr(w, http.StatusForbidden, "session I/O hidden")
 		return
 	}
 	if s.castidx == nil {

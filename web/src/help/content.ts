@@ -267,6 +267,35 @@ export const HELP_TOPICS: HelpTopic[] = [
     related: ["assets", "asset-edit", "requests"],
   },
   {
+    id: "file-vault",
+    group: "security",
+    href: "/file-vault",
+    title: t("Сейф файлов", "File vault", "Файл сейфі"),
+    summary: t(
+      "Защищённые файлы с запросом JIT-доступа (не путать с захватом SCP/RDP в сессии).",
+      "Protected files with a JIT access request (not the same as SCP/RDP capture in a session).",
+      "JIT сұрауы бар қорғалған файлдар (сеанстағы SCP/RDP capture емес).",
+    ),
+    body: [
+      t(
+        "Хранитель (files.vault.write) загружает файл в сейф (AES-GCM, до 32 МиБ). Оператор (files.vault.read) видит список и запрашивает доступ с причиной и TTL; сам себя одобрить нельзя. Скачивание — по действующему гранту или правом хранителя. Аудит: uploaded/requested/approved/denied/downloaded.",
+        "A custodian (files.vault.write) uploads a file (AES-GCM, up to 32 MiB). An operator (files.vault.read) lists files and requests access with a reason and TTL; self-approve is denied. Download requires a live grant or custodian rights. Audit: uploaded/requested/approved/denied/downloaded.",
+        "Сақтаушы (files.vault.write) файлды жүктейді (AES-GCM, 32 МиБ дейін). Оператор тізімді көріп, TTL-мен сұрайды; өзін мақұлдауға болмайды.",
+      ),
+    ],
+    actions: [
+      {
+        name: t("Загрузить", "Upload", "Жүктеу"),
+        desc: t("Поместить файл в сейф.", "Store a file in the vault.", "Файлды сейфке қою."),
+      },
+      {
+        name: t("Запросить / Одобрить", "Request / Approve", "Сұрау / Мақұлдау"),
+        desc: t("JIT-грант на скачивание.", "JIT grant for download.", "Жүктеуге JIT-грант."),
+      },
+    ],
+    related: ["requests", "audit", "sessions"],
+  },
+  {
     id: "requests",
     group: "work",
     href: "/access-requests",
@@ -429,9 +458,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "SSH: live поток терминала (только чтение). RDP/VNC/isolated browser в этом режиме обычно без полной видеотрансляции — доступны статус и принудительное завершение. Закрытие страницы Watch не завершает сессию оператора.",
-        "SSH: live terminal stream (read-only). RDP/VNC/isolated browser usually lack full video here — status and force-end remain. Closing Watch does not end the operator’s session.",
-        "SSH: live терминал (тек оқу). RDP/VNC әдетте толық бейнесіз — күй және мәжбүрлі аяқтау бар. Watch жабу оператор сеансын аяқтамайды.",
+        "SSH: live поток терминала (только чтение). RDP/VNC/isolated browser — live-экран из хвоста .guac без ввода (водяной знак). Право sessions.io.read скрывает поток I/O чужих сессий. Закрытие страницы Watch не завершает сессию оператора.",
+        "SSH: live terminal stream (read-only). RDP/VNC/isolated browser: live screen from the .guac tail with no input (watermark). sessions.io.read hides other users’ I/O. Closing Watch does not end the operator’s session.",
+        "SSH: live терминал (тек оқу). RDP/VNC — .guac құйрығынан live экран, енгізусіз. sessions.io.read бөтен I/O-ны жасырады. Watch жабу оператор сеансын аяқтамайды.",
       ),
     ],
     related: ["sessions", "replay", "requests"],
@@ -447,9 +476,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Управление: Play/Pause, перемотка. Для RDP — WebM/MP4 (если guacenc обработал запись), OCR по кадрам при настройке политики. Файлы SCP/SFTP и RDP drive/clipboard — в списке файлов сессии при capture. Если включён ИИ-помощник — после индекса появляется сводка (клик по пункту перематывает запись).",
-        "Controls: Play/Pause, seek. For RDP — WebM/MP4 when guacenc processed the recording, OCR frames when policy enables it. SCP/SFTP and RDP drive/clipboard files appear when capture is on. With AI copilot enabled, a summary appears after indexing (click a bullet to seek).",
-        "Басқару: Play/Pause. RDP үшін WebM/MP4 (guacenc өңдесе), OCR саясат бойынша. SCP/SFTP және RDP файлдары capture кезінде. ИИ қосулы болса, индекс кейін жиынтық шығады.",
+        "Управление: Play/Pause, перемотка. Для RDP — WebM/MP4 (если guacenc обработал запись), OCR по кадрам при настройке политики. PCAP — исходный pcap native mstsc или синтетическая обёртка HTML5/SSH записи. Файлы SCP/SFTP и RDP drive/clipboard — в списке файлов сессии при capture.",
+        "Controls: Play/Pause, seek. For RDP — WebM/MP4 when guacenc processed the recording, OCR frames when policy enables it. PCAP is a native mstsc capture or a synthetic wrapper around HTML5/SSH bytes. SCP/SFTP and RDP drive/clipboard files appear when capture is on.",
+        "Басқару: Play/Pause. RDP үшін WebM/MP4 (guacenc өңдесе), OCR саясат бойынша. PCAP — native mstsc немесе HTML5/SSH жазбасының синтетикалық орамы.",
       ),
     ],
     related: ["sessions", "forensic", "jea", "ai-copilot"],

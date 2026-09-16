@@ -58,3 +58,19 @@ func TestMeanStd(t *testing.T) {
 		t.Fatalf("std=%v", s)
 	}
 }
+
+func TestUnusualHour(t *testing.T) {
+	var hits [24]int
+	for h := 9; h <= 17; h++ {
+		hits[h] = 2
+	}
+	if !UnusualHour(hits, 3, 18) {
+		t.Fatal("hour 03 should be unusual")
+	}
+	if UnusualHour(hits, 10, 18) {
+		t.Fatal("hour 10 is in baseline")
+	}
+	if UnusualHour(hits, 3, 4) {
+		t.Fatal("too few sessions")
+	}
+}
