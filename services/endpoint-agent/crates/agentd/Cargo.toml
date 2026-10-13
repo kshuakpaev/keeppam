@@ -1,0 +1,27 @@
+[package]
+name = "keeppam-agentd"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "keeppam_agentd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.89"
+axum = "0.7.7"
+base64 = "0.22.1"
+keeppam-agent-protocol = { path = "../protocol" }
+rand = "0.8.5"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.132"
+sha2 = "0.10.8"
+thiserror = "1.0.64"
+tokio = { version = "1.40.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+uuid = { version = "1.10.0", features = ["v4"] }

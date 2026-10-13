@@ -1,0 +1,24 @@
+# Отдельный контур Endpoint Agent. Не подключается к deploy/docker-compose.yml.
+services:
+  agentd:
+    build:
+      context: ../services/endpoint-agent
+    image: keeppam-agentd:local
+    ports:
+      - "8090:8090"
+    environment:
+      AGENTD_HTTP_ADDR: "0.0.0.0:8090"
+      AGENTD_DATA_DIR: /var/lib/agentd
+      AGENTD_DOWNLOADS_DIR: /usr/share/keeppam-agent/downloads
+      AGENTD_OPERATOR_USER: operator
+      AGENTD_OPERATOR_PASSWORD: operator-dev
+    volumes:
+      - agentd-data:/var/lib/agentd
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  agentd-data:

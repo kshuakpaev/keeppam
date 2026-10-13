@@ -1,4 +1,4 @@
-.PHONY: up down logs tidy api-run smoke acceptance-smoke geo-drill web-build api-build sbom geoip-mmdb pack dist bump install demo-seed
+.PHONY: up down logs tidy api-run smoke acceptance-smoke geo-drill web-build api-build sbom geoip-mmdb pack dist bump install demo-seed agent-build agent-build-windows agent-build-linux agent-build-macos agent-up agent-down
 
 web-build:
 
@@ -85,3 +85,22 @@ install:
 
 demo-seed:
 	./scripts/demo-seed.sh
+
+# Endpoint Agent — отдельный compose, основной `make up` его не поднимает.
+agent-build:
+	cd services/endpoint-agent && cargo build --release -p keeppam-agentd -p keeppam-endpoint-agent
+
+agent-build-windows:
+	cd services/endpoint-agent && cargo build --release --target x86_64-pc-windows-gnu -p keeppam-endpoint-agent
+
+agent-build-linux:
+	cd services/endpoint-agent && cargo build --release -p keeppam-endpoint-agent
+
+agent-build-macos:
+	cd services/endpoint-agent && cargo build --release --target aarch64-apple-darwin -p keeppam-endpoint-agent
+
+agent-up:
+	docker compose -f deploy/compose.agent.yml up -d --build
+
+agent-down:
+	docker compose -f deploy/compose.agent.yml down

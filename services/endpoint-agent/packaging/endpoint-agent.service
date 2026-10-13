@@ -1,0 +1,16 @@
+[Unit]
+Description=KeepPAM Endpoint Agent
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=AGENT_SERVER_URL=http://127.0.0.1:8090
+Environment=AGENT_STATE_DIR=%S/keeppam-agent
+ExecStart=/usr/local/bin/endpoint-agent
+ExecStop=/usr/local/bin/endpoint-agent stop
+Restart=on-failure
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
