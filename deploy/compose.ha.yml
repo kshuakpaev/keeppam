@@ -3,11 +3,14 @@
 #
 #   docker compose -f docker-compose.yml -f compose.ha.yml up -d
 #
-# Postgres auto-failover (repmgr + Pgpool), replaces pgbouncer DSN:
+# Production HA (2+2 + Postgres auto-failover):
+#   KEEPPAM_HA=1 KEEPPAM_PGHA=1 ./scripts/keeppam-ha-up.sh
 #   docker compose -f docker-compose.yml -f compose.ha.yml -f compose.pgha.yml up -d
 #
 # Optional streaming replica without auto-failover:
 #   docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
+#
+# Geo standby (second site): compose.geo-standby.yml — docs/geo-ha.txt
 
 services:
   api:

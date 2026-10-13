@@ -23,6 +23,11 @@ func (s *Server) handleK8sExecWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if err := s.touchOrExpire(r, c.Value, &authSess); err != nil {
+		s.clearCookies(w)
+		writeErr(w, http.StatusUnauthorized, "idle timeout")
+		return
+	}
 	if u, err := s.auth.Me(r.Context(), authSess.UserID); err == nil {
 		authSess.Roles = u.Roles
 		authSess.Permissions = u.Permissions
@@ -106,6 +111,11 @@ func (s *Server) handleK8sAttachWS(w http.ResponseWriter, r *http.Request) {
 	authSess, err := s.sessions.Get(r.Context(), c.Value)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := s.touchOrExpire(r, c.Value, &authSess); err != nil {
+		s.clearCookies(w)
+		writeErr(w, http.StatusUnauthorized, "idle timeout")
 		return
 	}
 	if u, err := s.auth.Me(r.Context(), authSess.UserID); err == nil {

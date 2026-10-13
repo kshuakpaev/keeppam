@@ -23,16 +23,17 @@ func (s *Server) handleAuthMethods(w http.ResponseWriter, r *http.Request) {
 	certReady := s.cfg.MTLSMode() != "off"
 	certPresented := r.TLS != nil && len(r.TLS.PeerCertificates) > 0
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":           m.Mode,
-		"oidc_ready":     m.OIDCReady,
-		"ldap_ready":     m.LDAPReady,
-		"saml_ready":     m.SAMLReady,
-		"saml_idps":      m.SAMLIdPs,
-		"radius_ready":   m.RADIUSReady,
-		"oauth_ready":    m.OAuthReady,
-		"digitalid_lab":  s.didLab != nil,
-		"cert_login":     certReady,
-		"cert_presented": certPresented,
+		"mode":             m.Mode,
+		"oidc_ready":       m.OIDCReady,
+		"ldap_ready":       m.LDAPReady,
+		"saml_ready":       m.SAMLReady,
+		"saml_idps":        m.SAMLIdPs,
+		"radius_ready":     m.RADIUSReady,
+		"oauth_ready":      m.OAuthReady,
+		"idle_timeout_min": m.IdleTimeoutMin,
+		"digitalid_lab":    s.didLab != nil,
+		"cert_login":       certReady,
+		"cert_presented":   certPresented,
 	})
 }
 
@@ -61,6 +62,7 @@ func (s *Server) handlePutAuthSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.invalidateIdleCache()
 	out.OIDCClientSecret = ""
 	out.LDAPBindPassword = ""
 	out.SCIMToken = ""

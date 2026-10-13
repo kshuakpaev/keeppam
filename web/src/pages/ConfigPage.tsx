@@ -125,6 +125,7 @@ const empty: AuthSettings = {
   scim_enabled: false,
   has_scim_token: false,
   scim_default_role: "operator",
+  idle_timeout_min: 5,
 };
 
 const emptyExtraIdP: SAMLIdP = {
@@ -1498,6 +1499,20 @@ export function ConfigPage() {
 
       <form className="card" onSubmit={onSave} style={{ maxWidth: 640, marginBottom: "1.25rem" }}>
         <h2>{t("config.authTitle")}</h2>
+        <label>{t("config.idleTimeout")}</label>
+        <select
+          value={form.idle_timeout_min || 5}
+          onChange={(e) => setForm({ ...form, idle_timeout_min: Number(e.target.value) })}
+        >
+          {Array.from({ length: 30 }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>
+              {t("config.idleTimeoutMinutes", { n })}
+            </option>
+          ))}
+        </select>
+        <p className="muted" style={{ marginTop: 0 }}>
+          {t("config.idleTimeoutHint")}
+        </p>
         <label>{t("config.loginMode")}</label>
         <select
           value={form.mode}

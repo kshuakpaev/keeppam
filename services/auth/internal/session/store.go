@@ -13,13 +13,14 @@ import (
 )
 
 type Session struct {
-	UserID      uuid.UUID `json:"user_id"`
-	Username    string    `json:"username"`
-	Roles       []string  `json:"roles"`
-	Permissions []string  `json:"permissions"`
-	SAMLNameID  string    `json:"saml_name_id,omitempty"`
-	SAMLIdP     string    `json:"saml_idp,omitempty"`
-	Devices     []string  `json:"devices,omitempty"`
+	UserID       uuid.UUID `json:"user_id"`
+	Username     string    `json:"username"`
+	Roles        []string  `json:"roles"`
+	Permissions  []string  `json:"permissions"`
+	SAMLNameID   string    `json:"saml_name_id,omitempty"`
+	SAMLIdP      string    `json:"saml_idp,omitempty"`
+	Devices      []string  `json:"devices,omitempty"`
+	LastActivity time.Time `json:"last_activity,omitempty"`
 }
 
 type Challenge struct {
@@ -82,6 +83,9 @@ func (s *Store) Create(ctx context.Context, sess Session, ttl time.Duration) (st
 	token, err := newToken()
 	if err != nil {
 		return "", err
+	}
+	if sess.LastActivity.IsZero() {
+		sess.LastActivity = time.Now().UTC()
 	}
 	data, err := json.Marshal(sess)
 	if err != nil {

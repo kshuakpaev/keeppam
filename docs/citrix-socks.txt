@@ -18,9 +18,9 @@ MVP как у One Identity SPS «SOCKS mode» и формулировки main22
 |-----|-----------|
 | Auth | SOCKS5 username/password = session UUID + wire token |
 | Allowlist | CONNECT только на `asset.address|hostname` порты `port` (ICA) и `2598` (CGP) |
-| Relay | transparent TCP copy |
+| Relay | transparent TCP copy + live pcap (рядом с JSONL) |
 | Audit | `session.started` / `citrix_connect` event; JSONL connect log |
-| Recording screen | **нет** (нет HDX decode) |
+| Recording | ICA/CGP байты в `.pcap` (Wireshark Follow TCP Stream). Пиксельный HDX — OEM plugin |
 
 ## Порты
 
@@ -32,12 +32,12 @@ MVP как у One Identity SPS «SOCKS mode» и формулировки main22
 
 ## Ограничения (явно в КП как C / SOW)
 
-- Нет terminate ICA/CGP на шлюзе (нет inject vault в сессию Citrix) — **SOW-CITRIX-HDX фаза 3**.
+- Нет terminate ICA/CGP на шлюзе (нет inject vault в сессию Citrix) — HDX plugin (`docs/citrix-hdx.txt`); mock в `compose.citrix-hdx.yml`.
 - STA: KeepPAM stub ticket + validate API — фаза 1 (`docs/citrix-hdx.txt`); полный CtxSta — фаза 2.
 - StoreFront broker integration — фаза 2+.
 - Нет SOCKS→TLS wrap ICA, EDT/UDP, Framehawk.
-- Нет пиксельной записи экрана ICA — OEM; KeepPAM ingest/OCR meta — фаза 4 (`docs/citrix-hdx-oem.txt`).
-- XenApp 6.5 / XenDesktop 7.x «как Fudo» — только после OEM модуля.
+- Нет пиксельной записи экрана ICA без OEM; KeepPAM пишет ICA pcap + ingest OCR/keystroke meta — фаза 4 (`docs/citrix-hdx-oem.txt`).
+- XenApp 6.5 / XenDesktop 7.x «как Fudo» (decode HDX frames) — только после OEM модуля.
 
 Миграции: `091_citrix.sql`, `094_citrix_hdx.sql`. Пакеты `internal/citrix`, `internal/citrixgw`.
 План модуля: `docs/citrix-hdx.txt`.

@@ -50,6 +50,11 @@ func (s *Server) handleSessionGuac(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if err := s.touchOrExpire(r, c.Value, &authSess); err != nil {
+		s.clearCookies(w)
+		http.Error(w, "idle timeout", http.StatusUnauthorized)
+		return
+	}
 	r = s.bindSession(r, authSess)
 	if !rbac.HasPermission(authSess.Permissions, "sessions.connect") {
 		http.Error(w, "forbidden", http.StatusForbidden)

@@ -1,4 +1,4 @@
-# Overlay: geo standby site (SOW-GEO-HA phase 1).
+# Overlay: geo standby site (phase 1).
 # Site B runs API/workers against a streaming PG replica and fences session writes.
 #
 # Prerequisites: site A postgres reachable as PGHOST (see postgres service below).

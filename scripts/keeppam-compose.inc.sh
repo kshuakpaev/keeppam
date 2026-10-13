@@ -41,6 +41,15 @@ keeppam_compose() {
   if [[ "${KEEPPAM_AI:-}" == "1" ]] && [[ -f "$ROOT/deploy/compose.ai.yml" ]]; then
     args+=(-f "$ROOT/deploy/compose.ai.yml")
   fi
+  if [[ "${KEEPPAM_PGHA:-}" == "1" ]] && [[ -f "$ROOT/deploy/compose.pgha.yml" ]]; then
+    args+=(-f "$ROOT/deploy/compose.pgha.yml")
+  fi
+  if [[ "${KEEPPAM_GEO:-}" == "1" ]] && [[ -f "$ROOT/deploy/compose.geo-standby.yml" ]]; then
+    args+=(-f "$ROOT/deploy/compose.geo-standby.yml")
+  fi
+  if [[ "${KEEPPAM_CITRIX_HDX:-}" == "1" ]] && [[ -f "$ROOT/deploy/compose.citrix-hdx.yml" ]]; then
+    args+=(-f "$ROOT/deploy/compose.citrix-hdx.yml")
+  fi
   docker compose "${args[@]}" "$@"
 }
 

@@ -42,12 +42,14 @@ import (
 	"github.com/keeppam/auth/internal/sshproxy"
 	"github.com/keeppam/auth/internal/store"
 	"github.com/keeppam/auth/internal/termcharset"
+	"github.com/keeppam/auth/internal/users"
 )
 
 type Gateway struct {
 	addr        string
 	hostKeyPath string
 	auth        *auth.Service
+	users       *users.Service
 	assets      *assets.Service
 	policy      *policy.Service
 	sessions    *sessionsvc.Service
@@ -101,6 +103,12 @@ func New(
 		auth: authSvc, assets: assetsSvc, policy: policySvc,
 		sessions: sessSvc, audit: auditSvc, live: live, itsm: itsmSvc, ops: opsSvc,
 		firewall: firewallSvc, files: filesSvc,
+	}
+}
+
+func (g *Gateway) SetUsers(u *users.Service) {
+	if g != nil {
+		g.users = u
 	}
 }
 
@@ -778,6 +786,18 @@ func (g *Gateway) handleSession(sc *ssh.ServerConn, ch ssh.Channel, requests <-c
 			}
 			st.mu.Unlock()
 		}()
+	}
+
+	if g.users != nil {
+		if err := g.users.ApplyVaultSSHKey(ctx, userID, &creds); err != nil {
+			_ = g.sessions.MarkEnded(ctx, pamSess.ID, err.Error())
+			_, _ = fmt.Fprintf(ch, "user ssh key: %v\n", err)
+			return
+		}
+	} else if creds.AuthMethod == "user_ssh_key" {
+		_ = g.sessions.MarkEnded(ctx, pamSess.ID, "user vault ssh key unavailable")
+		_, _ = io.WriteString(ch, "user ssh key: vault keys are not configured\n")
+		return
 	}
 
 	if isFX {

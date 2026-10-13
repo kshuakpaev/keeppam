@@ -143,6 +143,7 @@ export function LoginPage() {
           <LangSwitch />
         </div>
         <h1>{challenge ? t("login.mfaTitle") : t("login.title")}</h1>
+        {params.get("idle") === "1" && <p className="error">{t("login.idle")}</p>}
         <p className="muted">
           {mode === "oidc" && "SSO (OIDC)"}
           {mode === "oauth" && t("login.oauth")}

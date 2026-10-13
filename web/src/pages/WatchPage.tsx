@@ -48,6 +48,23 @@ function isSQL(s: PamSession | null): boolean {
   return s?.protocol === "postgres" || s?.protocol === "mysql" || s?.protocol === "mssql" || s?.protocol === "oracle";
 }
 
+function isCitrix(s: PamSession | null): boolean {
+  return s?.protocol === "citrix";
+}
+
+function formatCitrix(et: string, p: Record<string, unknown>): LogLine {
+  const host = String(p.host || p.vda || "");
+  const port = p.port != null ? `:${p.port}` : "";
+  const extra =
+    p.bytes_up != null || p.bytes_down != null ? ` ↑${p.bytes_up ?? 0} ↓${p.bytes_down ?? 0}` : "";
+  const text = String(p.text || p.line || p.command || "");
+  return {
+    ts: new Date().toLocaleTimeString(),
+    text: `${et}${host ? ` ${host}${port}` : ""}${extra}${text ? ` ${text}` : ""}`,
+    kind: et.includes("disconnect") || et.includes("ended") || et.includes("deny") ? "info" : "ok",
+  };
+}
+
 function canKillSession(userId: string | undefined, perms: string[] | undefined, sess: PamSession): boolean {
   if (!userId) return false;
   if (sess.user_id === userId) return !!perms?.includes("sessions.connect");
@@ -93,7 +110,7 @@ export function WatchPage() {
 
   useEffect(() => {
     if (!id || !sess) return;
-    const ssh = sess.protocol === "ssh" || (!isSQL(sess) && !isDesktop(sess) && sess.protocol !== "https");
+    const ssh = sess.protocol === "ssh" || (!isSQL(sess) && !isDesktop(sess) && !isCitrix(sess) && sess.protocol !== "https");
     let term: Terminal | null = null;
     let fit: FitAddon | null = null;
 
@@ -185,6 +202,15 @@ export function WatchPage() {
               text: `${prefix}: ${String((p as { command?: string }).command || (p as { reason?: string }).reason || et)}`,
               kind: et === "command" || et === "command_approved" ? "ok" : "deny",
             });
+          } else if (
+            et.startsWith("citrix_") ||
+            et.startsWith("hdx_") ||
+            et === "screen_text" ||
+            et === "keystroke"
+          ) {
+            const line = formatCitrix(et, (msg.payload || {}) as Record<string, unknown>);
+            if (msg.ts) line.ts = new Date(msg.ts).toLocaleTimeString();
+            pushLog(line);
           }
         }
       } catch {
@@ -233,8 +259,9 @@ export function WatchPage() {
 
   const desktop = isDesktop(sess);
   const sql = isSQL(sess);
+  const citrix = isCitrix(sess);
   const https = sess?.protocol === "https" && !sess.isolated;
-  const showTerm = sess && !desktop && !sql && !https;
+  const showTerm = sess && !desktop && !sql && !https && !citrix;
   const killOk = sess ? canKillSession(user?.id, user?.permissions, sess) : false;
 
   return (
@@ -296,12 +323,12 @@ export function WatchPage() {
         </div>
       )}
       {showTerm && <div className="terminal-host card" ref={hostRef} />}
-      {(sql || log.length > 0) && (
+      {(sql || citrix || log.length > 0) && (
         <div className="card watch-log">
           <div className="muted" style={{ marginBottom: "0.5rem" }}>
-            {sql ? t("watch.sqlLog") : t("watch.events")}
+            {sql ? t("watch.sqlLog") : citrix ? t("watch.citrixLog") : t("watch.events")}
           </div>
-          {log.length === 0 && <p className="muted">{t("watch.waitingQueries")}</p>}
+          {log.length === 0 && <p className="muted">{citrix ? t("watch.waitingCitrix") : t("watch.waitingQueries")}</p>}
           {log.map((l, i) => (
             <div key={i} className={`watch-log-line ${l.kind}`}>
               <span className="mono muted">{l.ts}</span> {l.text}

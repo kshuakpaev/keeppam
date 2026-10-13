@@ -648,26 +648,26 @@ func (s *Service) checkPAdES() ControlResult {
 
 func (s *Service) checkEIDAS(ctx context.Context) ControlResult {
 	if s.eidas == nil {
-		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "warn",
 			Detail: "SOW-EIDAS module not wired"}
 	}
 	mode, profile, qualified := s.eidas.StatusFields(ctx)
 	switch mode {
 	case "off", "":
-		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "warn",
 			Detail: "mode=off — advanced PAdES only (docs/pades.txt)"}
 	case "advanced":
-		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "pass",
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "pass",
 			Detail: "advanced · profile=" + profile + " · PAdES-" + s.PDFProfile()}
 	case "qualified":
 		if qualified {
-			return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "pass",
+			return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "pass",
 				Detail: "qualified · " + profile + " · " + s.PDFSignerCN()}
 		}
-		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "fail",
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "fail",
 			Detail: "qualified mode but certificate/policy check failed"}
 	default:
-		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS/ФСТЭК)", Status: "warn",
+		return ControlResult{ID: "eidas_pdf", Title: "Qualified PDF (eIDAS)", Status: "warn",
 			Detail: "unknown mode " + mode}
 	}
 }

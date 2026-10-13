@@ -1,6 +1,6 @@
-# KeepPAM: SOW-GEO-HA — multi-site async geo
+# KeepPAM: geo-HA — multi-site async
 
-HA внутри сайта: `docs/ha.txt`. Geo — два+ ЦОД.
+HA внутри сайта: `docs/ha.txt`. Geo — два+ ЦОД (`compose.geo-standby.yml`).
 
 ## Фазы
 

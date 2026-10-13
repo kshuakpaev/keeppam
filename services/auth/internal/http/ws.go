@@ -845,6 +845,11 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if err := s.touchOrExpire(r, c.Value, &authSess); err != nil {
+		s.clearCookies(w)
+		writeErr(w, http.StatusUnauthorized, "idle timeout")
+		return
+	}
 	if u, err := s.auth.Me(r.Context(), authSess.UserID); err == nil {
 		authSess.Roles = u.Roles
 		authSess.Permissions = u.Permissions
@@ -949,6 +954,12 @@ func (s *Server) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		}
 		bridge = tb
 	} else {
+		if err := s.users.ApplyVaultSSHKey(r.Context(), authSess.UserID, &creds); err != nil {
+			_ = rec.Close()
+			_ = writeWSJSON(conn, map[string]string{"type": "error", "message": err.Error()})
+			_ = s.sessionsvc.MarkEnded(r.Context(), id, err.Error())
+			return
+		}
 		client, err := s.assets.DialSSH(r.Context(), creds)
 		if err != nil {
 			slog.Error("ssh dial", "session", id, "asset", creds.Asset.Name, "err", err)

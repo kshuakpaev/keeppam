@@ -25,6 +25,7 @@ import (
 	"github.com/keeppam/auth/internal/buildinfo"
 	"github.com/keeppam/auth/internal/castindex"
 	"github.com/keeppam/auth/internal/citrix/hdx"
+	"github.com/keeppam/auth/internal/citrix/hdxmock"
 	"github.com/keeppam/auth/internal/citrixgw"
 	"github.com/keeppam/auth/internal/compliance"
 	"github.com/keeppam/auth/internal/config"
@@ -92,6 +93,10 @@ func (m mainHDXSink) AddEventAt(ctx context.Context, sessionID uuid.UUID, ts tim
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "readyz" {
 		os.Exit(probeReadyz())
+	}
+	if len(os.Args) > 1 && os.Args[1] == "hdx-mock" {
+		hdxmock.Run()
+		return
 	}
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
@@ -241,6 +246,7 @@ func main() {
 	notifySvc := notify.New(db, auditSvc, env)
 	authSvc := auth.New(db, sessions, auditSvc, env, cfg, settingsSvc)
 	usersSvc := users.New(db, auditSvc)
+	usersSvc.SetEnvelope(env)
 	scimSvc := scim.New(db, usersSvc, auditSvc)
 	assetsSvc := assets.New(db, env, auditSvc)
 	licFile, licErr := license.LoadAny(cfg.LicenseFile, cfg.LicenseEncryptionKey, cfg.LicenseSkipHW)
@@ -696,6 +702,7 @@ func main() {
 	var sshGw *sshgw.Gateway
 	if runSSH {
 		sshGw = sshgw.New(cfg.SSHAddr, cfg.SSHHostKeyPath, authSvc, assetsSvc, policySvc, sessSvc, auditSvc, live, itsmSvc, opsSvc, firewallSvc, filesSvc)
+		sshGw.SetUsers(usersSvc)
 		sshGw.SetLegacy(cfg.SSHLegacy)
 		sshGw.SetRedis(sessions.Redis())
 		sshGw.SetSessionFence(func() error {

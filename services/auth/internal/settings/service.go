@@ -21,8 +21,9 @@ import (
 )
 
 type AuthSettings struct {
-	Mode          string `json:"mode"`
-	PublicBaseURL string `json:"public_base_url"`
+	Mode           string `json:"mode"`
+	PublicBaseURL  string `json:"public_base_url"`
+	IdleTimeoutMin int    `json:"idle_timeout_min"`
 
 	OIDCIssuer        string `json:"oidc_issuer"`
 	OIDCClientID      string `json:"oidc_client_id"`
@@ -100,13 +101,23 @@ type AuthSettings struct {
 }
 
 type PublicAuthMethods struct {
-	Mode        string          `json:"mode"`
-	OIDCReady   bool            `json:"oidc_ready"`
-	LDAPReady   bool            `json:"ldap_ready"`
-	SAMLReady   bool            `json:"saml_ready"`
-	SAMLIdPs    []PublicSAMLIdP `json:"saml_idps"`
-	RADIUSReady bool            `json:"radius_ready"`
-	OAuthReady  bool            `json:"oauth_ready"`
+	Mode           string          `json:"mode"`
+	OIDCReady      bool            `json:"oidc_ready"`
+	LDAPReady      bool            `json:"ldap_ready"`
+	SAMLReady      bool            `json:"saml_ready"`
+	SAMLIdPs       []PublicSAMLIdP `json:"saml_idps"`
+	RADIUSReady    bool            `json:"radius_ready"`
+	OAuthReady     bool            `json:"oauth_ready"`
+	IdleTimeoutMin int             `json:"idle_timeout_min"`
+}
+
+// NormalizeIdleTimeoutMin clamps an admin-configured idle timeout to 1..30 minutes.
+// Out-of-range values fall back to the default of 5 minutes.
+func NormalizeIdleTimeoutMin(n int) int {
+	if n < 1 || n > 30 {
+		return 5
+	}
+	return n
 }
 
 type Service struct {
@@ -146,6 +157,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 			COALESCE(radius_radsec_ca_pem, ''), COALESCE(radius_radsec_client_pem, ''),
 			COALESCE(oauth_authorize_url, ''), COALESCE(oauth_token_url, ''), COALESCE(oauth_userinfo_url, ''),
 			COALESCE(oauth_username_claim, 'iin'), COALESCE(oauth_email_claim, 'email'), COALESCE(oauth_name_claim, 'name'),
+			COALESCE(idle_timeout_min, 5),
 			updated_at
 		FROM auth_settings WHERE id=1`).Scan(
 		&out.Mode, &out.PublicBaseURL,
@@ -166,6 +178,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 		&out.RADIUSEAPInsecureTLS, &out.RADIUSRadsec, &out.RADIUSRadsecCAPEM, &out.RADIUSRadsecClientPEM,
 		&out.OAuthAuthorizeURL, &out.OAuthTokenURL, &out.OAuthUserinfoURL,
 		&out.OAuthUsernameClaim, &out.OAuthEmailClaim, &out.OAuthNameClaim,
+		&out.IdleTimeoutMin,
 		&updatedAt,
 	)
 	if err != nil {
@@ -180,6 +193,7 @@ func (s *Service) Get(ctx context.Context) (AuthSettings, []byte, []byte, error)
 	if out.SAMLGroupRoleMap == nil {
 		out.SAMLGroupRoleMap = map[string]string{}
 	}
+	out.IdleTimeoutMin = NormalizeIdleTimeoutMin(out.IdleTimeoutMin)
 	s.fillSAMLDerived(&out)
 	s.fillSCIMDerived(&out)
 	return out, oidcSec, ldapSec, nil
@@ -262,14 +276,24 @@ func (s *Service) PublicMethods(ctx context.Context) (PublicAuthMethods, error) 
 	_ = ldapSec
 	idps := s.PublicSAMLIdPs(ctx, cfg)
 	return PublicAuthMethods{
-		Mode:        cfg.Mode,
-		OIDCReady:   cfg.Mode == "oidc" && cfg.OIDCIssuer != "" && cfg.OIDCClientID != "" && len(oidcSec) > 0,
-		LDAPReady:   cfg.Mode == "ldap" && cfg.LDAPURL != "" && cfg.LDAPUserBaseDN != "",
-		SAMLReady:   cfg.Mode == "saml" && cfg.HasSAMLSPKey && len(idps) > 0,
-		SAMLIdPs:    idps,
-		RADIUSReady: RADIUSReady(cfg),
-		OAuthReady:  OAuthReady(cfg),
+		Mode:           cfg.Mode,
+		OIDCReady:      cfg.Mode == "oidc" && cfg.OIDCIssuer != "" && cfg.OIDCClientID != "" && len(oidcSec) > 0,
+		LDAPReady:      cfg.Mode == "ldap" && cfg.LDAPURL != "" && cfg.LDAPUserBaseDN != "",
+		SAMLReady:      cfg.Mode == "saml" && cfg.HasSAMLSPKey && len(idps) > 0,
+		SAMLIdPs:       idps,
+		RADIUSReady:    RADIUSReady(cfg),
+		OAuthReady:     OAuthReady(cfg),
+		IdleTimeoutMin: cfg.IdleTimeoutMin,
 	}, nil
+}
+
+func (s *Service) IdleTimeoutMin(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `SELECT COALESCE(idle_timeout_min, 5) FROM auth_settings WHERE id=1`).Scan(&n)
+	if err != nil {
+		return 5, err
+	}
+	return NormalizeIdleTimeoutMin(n), nil
 }
 
 func SAMLConfigured(cfg AuthSettings) bool {
@@ -417,6 +441,12 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		}
 		scimEnc = enc
 	}
+	if in.IdleTimeoutMin == 0 {
+		in.IdleTimeoutMin = cur.IdleTimeoutMin
+	}
+	if in.IdleTimeoutMin < 1 || in.IdleTimeoutMin > 30 {
+		return AuthSettings{}, fmt.Errorf("idle_timeout_min must be between 1 and 30")
+	}
 	publicURL := strings.TrimRight(strings.TrimSpace(in.PublicBaseURL), "/")
 	if publicURL == "" {
 		publicURL = cur.PublicBaseURL
@@ -472,7 +502,8 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 			radius_eap_insecure_tls=$51, radius_radsec=$52, radius_radsec_ca_pem=$53, radius_radsec_client_pem=$54,
 			oauth_authorize_url=$55, oauth_token_url=$56, oauth_userinfo_url=$57,
 			oauth_username_claim=$58, oauth_email_claim=$59, oauth_name_claim=$60,
-			updated_at=NOW(), updated_by=$61
+			idle_timeout_min=$61,
+			updated_at=NOW(), updated_by=$62
 		WHERE id=1`,
 		1, mode, publicURL,
 		strings.TrimSpace(in.OIDCIssuer), strings.TrimSpace(in.OIDCClientID), oidcSec, strings.TrimSpace(in.OIDCScopes),
@@ -492,6 +523,7 @@ func (s *Service) Update(ctx context.Context, actorID uuid.UUID, in AuthSettings
 		in.RADIUSEAPInsecureTLS, in.RADIUSRadsec, strings.TrimSpace(in.RADIUSRadsecCAPEM), strings.TrimSpace(in.RADIUSRadsecClientPEM),
 		strings.TrimSpace(in.OAuthAuthorizeURL), strings.TrimSpace(in.OAuthTokenURL), strings.TrimSpace(in.OAuthUserinfoURL),
 		strings.TrimSpace(in.OAuthUsernameClaim), strings.TrimSpace(in.OAuthEmailClaim), strings.TrimSpace(in.OAuthNameClaim),
+		in.IdleTimeoutMin,
 		actorID,
 	)
 	if err != nil {

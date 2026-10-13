@@ -709,8 +709,8 @@
   },
   {
     "key": "config.eidasTitle",
-    "ru": "Qualified PDF (eIDAS / ФСТЭК)",
-    "en": "Qualified PDF (eIDAS / FSTEC)",
+    "ru": "Qualified PDF (eIDAS)",
+    "en": "Qualified PDF (eIDAS)",
     "kk": "Qualified PDF"
   },
   {

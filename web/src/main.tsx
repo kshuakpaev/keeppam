@@ -47,6 +47,7 @@ createRoot(document.getElementById("root")!).render(
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/setup" element={<SetupPage />} />
+            <Route path="/sessions/:id/player" element={<SessionReplayPage />} />
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomePage />} />
               <Route path="/help" element={<HelpPage />} />

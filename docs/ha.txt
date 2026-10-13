@@ -118,7 +118,20 @@ docker compose -f docker-compose.yml -f compose.ha.yml --profile pg-ha up -d
 
 ## Multi-site
 
-Два DC с async PG + fencing — **SOW-GEO-HA** (`docs/geo-ha.txt`). Внутри сайта: fencing = один writer PG.
+Два ЦОД: async replica + fencing + witness. Штатный стек, не отдельный SOW.
+
+```bash
+# Site A — HA 2+2 + Postgres failover
+KEEPPAM_HA=1 KEEPPAM_PGHA=1 ./scripts/keeppam-ha-up.sh
+
+# Site B — streaming replica, fence writes until promote
+export KEEPPAM_GEO_PRIMARY_HOST=<site-a-pg>
+KEEPPAM_GEO=1 KEEPPAM_SITE_ID=site-b KEEPPAM_SITE_ROLE=standby \
+  docker compose -f docker-compose.yml -f compose.geo-standby.yml up -d
+```
+
+Playbook: `docs/geo-ha.txt` (фазы 1–4: identity, recordings sync, cutover, witness).
+Внутри сайта fencing = один writer PG (Pgpool/repmgr или CloudNativePG).
 
 ## Чего нет
 

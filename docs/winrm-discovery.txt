@@ -1,4 +1,4 @@
-# KeepPAM: WinRM / SAM account discovery (SOW-WINRM-DISC)
+# KeepPAM: WinRM / SAM account discovery
 
 ## Назначение
 

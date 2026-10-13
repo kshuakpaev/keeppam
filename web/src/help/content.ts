@@ -476,8 +476,8 @@ export const HELP_TOPICS: HelpTopic[] = [
     ),
     body: [
       t(
-        "Управление: Play/Pause, перемотка. Для RDP — WebM/MP4 (если guacenc обработал запись), OCR по кадрам при настройке политики. PCAP — исходный pcap native mstsc или синтетическая обёртка HTML5/SSH записи. Файлы SCP/SFTP и RDP drive/clipboard — в списке файлов сессии при capture.",
-        "Controls: Play/Pause, seek. For RDP — WebM/MP4 when guacenc processed the recording, OCR frames when policy enables it. PCAP is a native mstsc capture or a synthetic wrapper around HTML5/SSH bytes. SCP/SFTP and RDP drive/clipboard files appear when capture is on.",
+        "Управление: Play/Pause, 1×/2×/4× (SSH и RDP/VNC). «Открыть в плеере» — киоск без бокового меню, watermark, без экспорта. Для RDP — WebM/MP4 (если guacenc обработал запись), OCR по кадрам. PCAP — native mstsc, живой ICA Citrix или синтетическая обёртка HTML5/SSH. Citrix JSONL — события connect/HDX ingest.",
+        "Controls: Play/Pause, 1×/2×/4× (SSH and RDP/VNC). “Open in player” is a kiosk view (no sidebar, watermark, no export). For RDP — WebM/MP4 when guacenc processed the recording, OCR frames when policy enables it. PCAP is native mstsc, live Citrix ICA, or a synthetic wrapper around HTML5/SSH bytes.",
         "Басқару: Play/Pause. RDP үшін WebM/MP4 (guacenc өңдесе), OCR саясат бойынша. PCAP — native mstsc немесе HTML5/SSH жазбасының синтетикалық орамы.",
       ),
     ],
@@ -754,6 +754,11 @@ export const HELP_TOPICS: HelpTopic[] = [
         "Раздел требует settings.write. Лицензия .lic: SKU assets / users (concurrent) / both. Auth-провайдеры определяют вход на /login. SIEM/UEBA кормят Аналитику; eIDAS — PDF в Compliance; Firewall/NAC — сетевой контур активов.",
         "Requires settings.write. The .lic license SKU is assets, users (concurrent), or both. Auth providers drive /login. SIEM/UEBA feed Analytics; eIDAS feeds Compliance PDFs; Firewall/NAC cover the asset network edge.",
         "settings.write керек. .lic лицензиясы актив шегін анықтайды. Auth провайдерлері /login-ді басқарады.",
+      ),
+      t(
+        "Таймаут бездействия в блоке «Авторизация»: от 1 до 30 минут, по умолчанию 5. Если пользователь ничего не делает, сессия портала завершается и снова открывается экран входа с текстом «Вы отключены из-за длительного бездействия».",
+        "Idle timeout in Authentication: 1 to 30 minutes, default 5. If the user is idle, the portal session ends and the sign-in screen says they were signed out because of inactivity.",
+        "«Аутентификация» блогындағы әрекетсіздік таймауты: 1–30 минут, әдепкі 5. Пайдаланушы әрекет етпесе, портал сеансы жабылып, кіру экраны ашылады.",
       ),
     ],
     related: ["compliance", "analytics", "discovery", "users", "ai-copilot"],

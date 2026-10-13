@@ -608,7 +608,7 @@ export function AssetEditPage() {
       const body = {
         username: accForm.username,
         auth_method: accForm.auth_method,
-        secret: accForm.secret || undefined,
+        secret: accForm.auth_method === "user_ssh_key" ? undefined : accForm.secret || undefined,
         description: accForm.description,
         token_request_enabled: accForm.token_request_enabled,
         k8s_sa_namespace: accForm.k8s_sa_namespace,
@@ -2144,7 +2144,12 @@ export function AssetEditPage() {
             <option value="gssapi">gssapi (Kerberos)</option>
             <option value="kubeconfig">kubeconfig</option>
             <option value="sa_token">sa_token</option>
+            <option value="user_ssh_key">{t("assets.userSSHKey")}</option>
           </select>
+          {accForm.auth_method === "user_ssh_key" ? (
+            <p className="muted">{t("assets.userSSHKeyHint")}</p>
+          ) : (
+          <>
           <label>
             {accForm.auth_method === "ssh_key"
               ? t("assets.privateKey")
@@ -2171,6 +2176,8 @@ export function AssetEditPage() {
               onChange={(e) => setAccForm({ ...accForm, secret: e.target.value })}
               autoComplete="off"
             />
+          )}
+          </>
           )}
           <label>{t("common.description")}</label>
           <input

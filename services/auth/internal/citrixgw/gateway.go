@@ -19,6 +19,7 @@ import (
 	"github.com/keeppam/auth/internal/audit"
 	"github.com/keeppam/auth/internal/citrix"
 	"github.com/keeppam/auth/internal/dbproxy"
+	"github.com/keeppam/auth/internal/pcapx"
 	"github.com/keeppam/auth/internal/sessionsvc"
 )
 
@@ -102,6 +103,8 @@ func (g *Gateway) handle(client net.Conn) {
 	var row sessionsvc.Session
 	var creds assets.TargetCreds
 
+	tap := &citrix.Tap{}
+	var pcapF *os.File
 	err := citrix.ServeSOCKS(client,
 		func(user, pass string) bool {
 			id, err := uuid.Parse(strings.TrimSpace(user))
@@ -145,6 +148,23 @@ func (g *Gateway) handle(client net.Conn) {
 				"t": time.Now().UTC().Format(time.RFC3339Nano),
 				"event": "connect", "host": host, "port": port,
 			})
+			if row.RecordingPath == "" {
+				return
+			}
+			pcapPath := recordingPCAP(row.RecordingPath)
+			_ = os.MkdirAll(filepath.Dir(pcapPath), 0o750)
+			f, err := os.OpenFile(pcapPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+			if err != nil {
+				return
+			}
+			lw, err := pcapx.NewLiveWriter(f, 1081, uint16(port))
+			if err != nil {
+				_ = f.Close()
+				return
+			}
+			pcapF = f
+			tap.Client = lw.Client()
+			tap.Server = lw.Server()
 		},
 		func(user, host string, port int, bytesUp, bytesDown int64) {
 			_ = g.sessions.AddEvent(ctx, sessionID, "citrix_disconnect", map[string]any{
@@ -155,7 +175,12 @@ func (g *Gateway) handle(client net.Conn) {
 				"event": "disconnect", "host": host, "port": port,
 				"bytes_up": bytesUp, "bytes_down": bytesDown,
 			})
+			if pcapF != nil {
+				_ = pcapF.Close()
+				pcapF = nil
+			}
 		},
+		tap,
 	)
 	if err != nil {
 		slog.Debug("citrix socks", "err", err)
@@ -189,6 +214,14 @@ func destAllowed(a assets.Asset, host string, port int) bool {
 		}
 	}
 	return false
+}
+
+func recordingPCAP(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return path + ".pcap"
+	}
+	return strings.TrimSuffix(path, ext) + ".pcap"
 }
 
 func appendRec(path string, row map[string]any) {

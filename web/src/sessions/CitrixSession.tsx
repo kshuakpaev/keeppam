@@ -81,10 +81,11 @@ export function CitrixSession({ id, title, visible, onClose }: Props) {
         </button>
       </div>
       <div className="card" style={{ maxWidth: 640, margin: "1rem" }}>
-        <h2>Citrix via SOCKS (MVP)</h2>
+        <h2>Citrix via SOCKS</h2>
         <p className="muted">
           KeepPAM выдаёт <code>.ica</code> с ProxyType=Socks на шлюз. ICA/CGP байты
-          проксируются на VDA; HDX-decode, STA и запись экрана — отдельный SOW.
+          пишутся в pcap рядом с JSONL; пиксельный HDX — OEM-плагин (
+          <code>citrix_transport=hdx</code>).
         </p>
         <ol>
           <li>

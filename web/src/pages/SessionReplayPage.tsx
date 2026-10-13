@@ -1,8 +1,9 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { Terminal } from "xterm";
 import { api, type PamSession, type TranscriptLine, type SessionFile, type AISummary } from "../api";
+import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 import { openSessionRecording } from "../guacRecording";
 import { recordElementToWebM } from "../webmExport";
@@ -23,9 +24,21 @@ function formatMs(ms: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+type CitrixRec = {
+  t?: string;
+  event?: string;
+  host?: string;
+  port?: number;
+  bytes_up?: number;
+  bytes_down?: number;
+  meta?: Record<string, unknown>;
+};
+
 export function SessionReplayPage() {
   const { t, te } = useI18n();
+  const { user, loading } = useAuth();
   const { id } = useParams<{ id: string }>();
+  const kiosk = useLocation().pathname.endsWith("/player");
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const [meta, setMeta] = useState("");
@@ -50,6 +63,7 @@ export function SessionReplayPage() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
   const [aiSum, setAiSum] = useState<AISummary | null>(null);
+  const [citrixEvents, setCitrixEvents] = useState<CitrixRec[]>([]);
   const recordingRef = useRef<{
     play: () => void;
     pause: () => void;
@@ -129,6 +143,23 @@ export function SessionReplayPage() {
 
         if (isNativeRdp) {
           if (!cancelled) setReady(true);
+          return;
+        }
+
+        if (sess.protocol === "citrix") {
+          const text = await res.text();
+          if (cancelled) return;
+          const rows: CitrixRec[] = [];
+          for (const line of text.trim().split("\n")) {
+            if (!line) continue;
+            try {
+              rows.push(JSON.parse(line) as CitrixRec);
+            } catch {
+              /* skip */
+            }
+          }
+          setCitrixEvents(rows);
+          setReady(true);
           return;
         }
 
@@ -391,6 +422,12 @@ export function SessionReplayPage() {
   }
 
   const isGuac = (protocol === "rdp" || protocol === "vnc" || isolated) && !nativeRdp;
+  const isCitrix = protocol === "citrix";
+
+  if (kiosk) {
+    if (loading) return <p className="muted">…</p>;
+    if (!user) return <Navigate to="/login" replace />;
+  }
 
   function seekToMs(ms: number) {
     const rec = recordingRef.current;
@@ -436,13 +473,18 @@ export function SessionReplayPage() {
         }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", minHeight: 0 }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", height: "100vh", minHeight: 0, position: "relative" }}
+      onContextMenu={kiosk ? (e) => e.preventDefault() : undefined}
+    >
       <div className="toolbar" style={{ flexShrink: 0 }}>
         <div>
-          <p className="muted" style={{ marginBottom: "0.35rem" }}>
-            <Link to="/sessions">{t("nav.sessions")}</Link> / replay
-          </p>
-          <h1 style={{ margin: 0 }}>{t("replay.title")}</h1>
+          {!kiosk && (
+            <p className="muted" style={{ marginBottom: "0.35rem" }}>
+              <Link to="/sessions">{t("nav.sessions")}</Link> / replay
+            </p>
+          )}
+          <h1 style={{ margin: 0 }}>{kiosk ? t("replay.player") : t("replay.title")}</h1>
           <p className="muted">
             {meta || "…"}
             {protocol ? ` · ${protocol}` : ""}
@@ -473,15 +515,17 @@ export function SessionReplayPage() {
               ))}
             </span>
           )}
-          <button
-            className="btn secondary"
-            type="button"
-            disabled={!ready || exporting || exportingMp4}
-            onClick={() => void exportWebM()}
-          >
-            {exporting ? t("replay.encoding") : t("replay.exportWebm")}
-          </button>
-          {isGuac && (
+          {!kiosk && (
+            <button
+              className="btn secondary"
+              type="button"
+              disabled={!ready || exporting || exportingMp4 || isCitrix}
+              onClick={() => void exportWebM()}
+            >
+              {exporting ? t("replay.encoding") : t("replay.exportWebm")}
+            </button>
+          )}
+          {!kiosk && isGuac && (
             <button
               className="btn secondary"
               type="button"
@@ -491,25 +535,30 @@ export function SessionReplayPage() {
               {exportingMp4 ? t("replay.mp4Busy") : t("replay.exportMp4")}
             </button>
           )}
-          {isGuac && (
+          {!kiosk && isGuac && (
             <button className="btn secondary" type="button" disabled={ocrBusy || indexBusy} onClick={() => void ocrScreen()}>
               {ocrBusy ? "OCR…" : t("replay.ocr")}
             </button>
           )}
-          {id && (protocol === "ssh" || isGuac) && (
+          {!kiosk && id && (protocol === "ssh" || isGuac) && (
             <button className="btn secondary" type="button" disabled={indexBusy || ocrBusy} onClick={() => void indexTranscript()}>
               {indexBusy ? "…" : t("replay.index")}
             </button>
           )}
-          {id && (
+          {!kiosk && id && (
             <a className="btn secondary" href={api.getRecordingUrl(id)}>
               {t("sess.download")}
             </a>
           )}
-          {id && (
+          {!kiosk && id && (
             <a className="btn secondary" href={api.getRecordingPcapUrl(id)}>
               {t("replay.exportPcap")}
             </a>
+          )}
+          {!kiosk && id && (
+            <Link className="btn secondary" to={`/sessions/${id}/player`}>
+              {t("replay.openPlayer")}
+            </Link>
           )}
           <Link className="btn secondary" to="/sessions">
             {t("common.back")}
@@ -517,6 +566,23 @@ export function SessionReplayPage() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
+      {kiosk && (
+        <div
+          style={{
+            position: "absolute",
+            top: 72,
+            right: 24,
+            zIndex: 2,
+            color: "rgba(255,255,255,0.45)",
+            fontSize: 12,
+            pointerEvents: "none",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
+          {user?.username} · {t("watch.watermark")}
+        </div>
+      )}
       {nativeRdp && (
         <p className="muted" style={{ padding: "0 1rem" }}>
           {t("replay.nativeHint")}
@@ -579,12 +645,14 @@ export function SessionReplayPage() {
           )}
         </div>
       ) : null}
-      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" || isGuac ? "0.75rem" : 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: protocol === "ssh" || isGuac || isCitrix ? "0.75rem" : 0 }}>
       <div
         ref={hostRef}
-        className={isGuac ? undefined : "terminal-host card"}
+        className={isGuac ? undefined : isCitrix ? undefined : "terminal-host card"}
         style={
-          isGuac
+          isCitrix
+            ? { display: "none" }
+            : isGuac
             ? {
                 flex: 1,
                 minHeight: 0,
@@ -595,6 +663,28 @@ export function SessionReplayPage() {
             : { flex: 1, minHeight: 0 }
         }
       />
+      {isCitrix && (
+        <div className="card" style={{ flex: 1, minHeight: 0, overflow: "auto", margin: "0 1rem 1rem" }}>
+          <h2 style={{ marginTop: 0 }}>{t("replay.citrixEvents")}</h2>
+          <p className="muted">{t("replay.citrixHint")}</p>
+          {citrixEvents.length === 0 ? (
+            <p className="muted">{t("replay.emptyCitrix")}</p>
+          ) : (
+            <ul className="plain-list">
+              {citrixEvents.map((ev, i) => (
+                <li key={`${ev.t}-${i}`}>
+                  <span className="mono muted">{ev.t ? new Date(ev.t).toLocaleTimeString() : ""}</span>{" "}
+                  <strong>{ev.event || "event"}</strong>
+                  {ev.host ? ` ${ev.host}${ev.port ? `:${ev.port}` : ""}` : ""}
+                  {ev.bytes_up != null || ev.bytes_down != null
+                    ? ` ↑${ev.bytes_up ?? 0} ↓${ev.bytes_down ?? 0}`
+                    : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {protocol === "ssh" && (
         <aside className="card" style={{ width: 320, flexShrink: 0, overflow: "auto", margin: "0 1rem 1rem 0" }}>
           <h2 style={{ marginTop: 0 }}>{t("replay.commands")}</h2>

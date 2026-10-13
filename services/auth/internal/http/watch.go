@@ -26,6 +26,11 @@ func (s *Server) handleSessionWatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if err := s.touchOrExpire(r, c.Value, &authSess); err != nil {
+		s.clearCookies(w)
+		writeErr(w, http.StatusUnauthorized, "idle timeout")
+		return
+	}
 	if u, err := s.auth.Me(r.Context(), authSess.UserID); err == nil {
 		authSess.Roles = u.Roles
 		authSess.Permissions = u.Permissions

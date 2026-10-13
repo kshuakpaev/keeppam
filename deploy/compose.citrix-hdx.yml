@@ -1,0 +1,40 @@
+# Overlay: Citrix HDX plugin stub (terminate + OCR/keystroke ingest, no pixel decode).
+#
+#   docker compose -f docker-compose.yml -f compose.citrix-hdx.yml up -d
+#
+# Asset: protocol=citrix, citrix_transport=hdx.
+# Replace citrix-hdx-plugin with a real OEM binary for XenApp/XenDesktop pixels.
+# SOCKS ICA/CGP recording (pcap next to jsonl) works without this overlay.
+# See docs/citrix-hdx-oem.txt.
+
+services:
+  citrix-hdx-plugin:
+    image: deploy-api:latest
+    user: "0:0"
+    volumes:
+      - ../deploy/auth-server:/app/auth-server:ro
+    command: ["hdx-mock"]
+    environment:
+      ADDR: ":14950"
+      LISTEN_ADDR: "citrix-hdx-plugin:14940"
+    ports:
+      - "14950:14950"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:14950/healthz | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    environment:
+      KEEPPAM_CITRIX_HDX_PLUGIN_URL: "http://citrix-hdx-plugin:14950"
+      KEEPPAM_CITRIX_HDX_CALLBACK_BASE: "http://api:8080"
+    depends_on:
+      citrix-hdx-plugin:
+        condition: service_started
+
+  session-worker:
+    environment:
+      KEEPPAM_CITRIX_HDX_PLUGIN_URL: "http://citrix-hdx-plugin:14950"
+      KEEPPAM_CITRIX_HDX_CALLBACK_BASE: "http://api:8080"

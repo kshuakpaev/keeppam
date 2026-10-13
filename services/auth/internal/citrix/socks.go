@@ -32,8 +32,14 @@ type AllowFunc func(user, host string, port int) bool
 // CloseFunc is called after the relay ends (bytes are best-effort counts).
 type CloseFunc func(user, host string, port int, bytesUp, bytesDown int64)
 
+// Tap optionally copies ICA/CGP bytes (set Client/Server from onConnect).
+type Tap struct {
+	Client io.Writer
+	Server io.Writer
+}
+
 // ServeSOCKS handles one client connection (already Accepted).
-func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(user, host string, port int), onClose CloseFunc) error {
+func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(user, host string, port int), onClose CloseFunc, tap *Tap) error {
 	defer client.Close()
 	_ = client.SetDeadline(time.Now().Add(60 * time.Second))
 
@@ -132,12 +138,12 @@ func ServeSOCKS(client net.Conn, auth AuthFunc, allow AllowFunc, onConnect func(
 	var bytesUp, bytesDown atomic.Int64
 	done := make(chan struct{}, 2)
 	go func() {
-		n, _ := io.Copy(up, client)
+		n, _ := io.Copy(copyDst(up, tapClient(tap)), client)
 		bytesUp.Store(n)
 		done <- struct{}{}
 	}()
 	go func() {
-		n, _ := io.Copy(client, up)
+		n, _ := io.Copy(copyDst(client, tapServer(tap)), up)
 		bytesDown.Store(n)
 		done <- struct{}{}
 	}()
@@ -194,4 +200,25 @@ func socksFail(c net.Conn, code byte) error {
 
 func strconvPort(p int) string {
 	return fmt.Sprintf("%d", p)
+}
+
+func tapClient(t *Tap) io.Writer {
+	if t == nil {
+		return nil
+	}
+	return t.Client
+}
+
+func tapServer(t *Tap) io.Writer {
+	if t == nil {
+		return nil
+	}
+	return t.Server
+}
+
+func copyDst(dst io.Writer, tap io.Writer) io.Writer {
+	if tap == nil {
+		return dst
+	}
+	return io.MultiWriter(dst, tap)
 }

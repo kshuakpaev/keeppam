@@ -76,9 +76,24 @@ func writePacket(w io.Writer, tsSec uint32, frame []byte) error {
 }
 
 func dummyFrame(payload []byte, seq uint32, fin bool) []byte {
+	return dummyFrameEx(payload, seq, fin, true, 4822, 3389)
+}
+
+func dummyFrameEx(payload []byte, seq uint32, fin, c2s bool, srcPort, dstPort uint16) []byte {
+	srcMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+	dstMAC := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
+	srcIP := []byte{10, 0, 0, 1}
+	dstIP := []byte{10, 0, 0, 2}
+	sp, dp := srcPort, dstPort
+	if !c2s {
+		srcMAC, dstMAC = dstMAC, srcMAC
+		srcIP, dstIP = dstIP, srcIP
+		sp, dp = dstPort, srcPort
+	}
+
 	eth := make([]byte, 14)
-	copy(eth[0:6], []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02})
-	copy(eth[6:12], []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01})
+	copy(eth[0:6], dstMAC)
+	copy(eth[6:12], srcMAC)
 	eth[12], eth[13] = 0x08, 0x00
 
 	ipLen := 20 + 20 + len(payload)
@@ -87,13 +102,13 @@ func dummyFrame(payload []byte, seq uint32, fin bool) []byte {
 	binary.BigEndian.PutUint16(ip[2:4], uint16(ipLen))
 	ip[8] = 64
 	ip[9] = 6
-	copy(ip[12:16], []byte{10, 0, 0, 1})
-	copy(ip[16:20], []byte{10, 0, 0, 2})
+	copy(ip[12:16], srcIP)
+	copy(ip[16:20], dstIP)
 	binary.BigEndian.PutUint16(ip[10:12], ipChecksum(ip))
 
 	tcp := make([]byte, 20)
-	binary.BigEndian.PutUint16(tcp[0:2], 4822)
-	binary.BigEndian.PutUint16(tcp[2:4], 3389)
+	binary.BigEndian.PutUint16(tcp[0:2], sp)
+	binary.BigEndian.PutUint16(tcp[2:4], dp)
 	binary.BigEndian.PutUint32(tcp[4:8], seq)
 	tcp[12] = 5 << 4
 	flags := byte(0x18) // PSH+ACK

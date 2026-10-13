@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -43,6 +45,11 @@ func (s *Server) handleExportPCAP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
+	if side := pcapSibling(path); side != path {
+		if st, err := os.Stat(side); err == nil && st.Size() > 24 {
+			path = side
+		}
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "recording not found")
@@ -72,6 +79,14 @@ func (s *Server) handleExportPCAP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+}
+
+func pcapSibling(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return path + ".pcap"
+	}
+	return strings.TrimSuffix(path, ext) + ".pcap"
 }
 
 func isPCAP(b []byte) bool {

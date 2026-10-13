@@ -17,10 +17,18 @@ import (
 type Service struct {
 	db    *store.DB
 	audit *audit.Service
+	env   *crypto.Envelope
 }
 
 func New(db *store.DB, auditSvc *audit.Service) *Service {
 	return &Service{db: db, audit: auditSvc}
+}
+
+// SetEnvelope enables encryption of per-user vault SSH private keys.
+func (s *Service) SetEnvelope(env *crypto.Envelope) {
+	if s != nil {
+		s.env = env
+	}
 }
 
 type CreateInput struct {

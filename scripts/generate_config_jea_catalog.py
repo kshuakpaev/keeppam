@@ -57,7 +57,7 @@ def build() -> None:
     a('config.eidasQualified', 'qualified (QES/КЭП + B-LTA)', 'qualified (QES + B-LTA)', 'qualified QES')
     a('config.eidasSaveFailed', 'Ошибка сохранения eIDAS', 'eIDAS save failed', 'eIDAS сақтау қатесі')
     a('config.eidasSaved', 'Qualified PDF (eIDAS) сохранён', 'Qualified PDF (eIDAS) saved', 'Qualified PDF (eIDAS) сақталды')
-    a('config.eidasTitle', 'Qualified PDF (eIDAS / ФСТЭК)', 'Qualified PDF (eIDAS / FSTEC)', 'Qualified PDF')
+    a('config.eidasTitle', 'Qualified PDF (eIDAS)', 'Qualified PDF (eIDAS)', 'Qualified PDF')
     a('config.emptyNoChange', 'пусто = не менять', 'empty = do not change', 'бос = өзгертпеу')
     a('config.enable', 'Включить', 'Enable', 'Enable')
     a('config.enableEmail', 'Включить почту', 'Enable email', 'Email')

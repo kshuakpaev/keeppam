@@ -6,7 +6,12 @@ credentials, and pushes recording/OCR metadata into KeepPAM.
 ## Enable
 
 ```bash
+# mock as compose overlay (uses auth-server hdx-mock)
+docker compose -f docker-compose.yml -f compose.citrix-hdx.yml up -d
+
+# or standalone
 go run ./services/auth/cmd/citrix-hdx-mock   # :14950
+# equivalent: /app/auth-server hdx-mock
 
 export KEEPPAM_CITRIX_HDX_PLUGIN_URL=http://127.0.0.1:14950
 export KEEPPAM_CITRIX_HDX_CALLBACK_BASE=http://127.0.0.1:8080   # or KEEPPAM_PUBLIC_URL / CORSOrigin

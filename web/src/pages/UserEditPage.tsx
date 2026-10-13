@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, hasPerm, type PamGroup, type Role, type User, type UserSSHKey } from "../api";
+import { api, hasPerm, type Asset, type PamGroup, type Role, type User, type UserSSHKey, type UserVaultSSHKey } from "../api";
 import { useAuth } from "../auth";
 import { useI18n } from "../i18n";
 
@@ -14,6 +14,13 @@ export function UserEditPage() {
   const [pamGroups, setPamGroups] = useState<PamGroup[]>([]);
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [sshKeys, setSshKeys] = useState<UserSSHKey[]>([]);
+  const [vaultKeys, setVaultKeys] = useState<UserVaultSSHKey[]>([]);
+  const [vaultName, setVaultName] = useState("");
+  const [vaultPriv, setVaultPriv] = useState("");
+  const [installFor, setInstallFor] = useState("");
+  const [sshAssets, setSshAssets] = useState<Asset[]>([]);
+  const [installAsset, setInstallAsset] = useState("");
+  const [installAccount, setInstallAccount] = useState("");
   const [passkeys, setPasskeys] = useState<{ id: string; name: string; created_at: string }[]>([]);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -30,10 +37,16 @@ export function UserEditPage() {
 
   const canWrite = hasPerm(me, "users.write");
   const canResetMfa = hasPerm(me, "users.reset_mfa");
+  const canInstall = canWrite && hasPerm(me, "assets.write");
 
   async function loadKeys(userId: string) {
     const res = await api.listUserSSHKeys(userId);
     setSshKeys(res.keys || []);
+  }
+
+  async function loadVaultKeys(userId: string) {
+    const res = await api.listUserVaultSSHKeys(userId);
+    setVaultKeys(res.keys || []);
   }
 
   async function loadPasskeys(userId: string) {
@@ -44,8 +57,8 @@ export function UserEditPage() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([api.getUser(id), api.listRoles(), api.listGroups(), api.listUserSSHKeys(id), api.listUserWebAuthn(id)])
-      .then(([u, r, g, keys, wa]) => {
+    Promise.all([api.getUser(id), api.listRoles(), api.listGroups(), api.listUserSSHKeys(id), api.listUserWebAuthn(id), api.listUserVaultSSHKeys(id)])
+      .then(([u, r, g, keys, wa, vault]) => {
         setTarget(u);
         setEmail(u.email);
         setDisplayName(u.display_name || "");
@@ -57,6 +70,7 @@ export function UserEditPage() {
         setRoles(r.roles || []);
         setPamGroups(g.groups || []);
         setSshKeys(keys.keys || []);
+        setVaultKeys(vault.keys || []);
         setPasskeys(wa.credentials || []);
       })
       .catch((err) => setError(te(err, "userEdit.loadError")))
@@ -142,6 +156,87 @@ export function UserEditPage() {
       await loadKeys(id);
     } catch (err) {
       setError(te(err, "userEdit.sshKeyDeleteError"));
+    }
+  }
+
+  async function onAddVault(e: FormEvent) {
+    e.preventDefault();
+    if (!id || !canWrite) return;
+    setError("");
+    try {
+      await api.addUserVaultSSHKey(id, { name: vaultName || undefined, private_key: vaultPriv });
+      setVaultName("");
+      setVaultPriv("");
+      setMsg(t("userEdit.vaultKeyAdded"));
+      await loadVaultKeys(id);
+    } catch (err) {
+      setError(te(err, "userEdit.vaultKeyAddError"));
+    }
+  }
+
+  async function onDeleteVault(key: UserVaultSSHKey) {
+    if (!id || !canWrite) return;
+    if (!confirm(t("userEdit.deleteKeyConfirm", { name: key.name }))) return;
+    try {
+      await api.deleteUserVaultSSHKey(id, key.id);
+      if (installFor === key.id) setInstallFor("");
+      setMsg(t("userEdit.vaultKeyDeleted"));
+      await loadVaultKeys(id);
+    } catch (err) {
+      setError(te(err, "userEdit.vaultKeyDeleteError"));
+    }
+  }
+
+  async function onActivateVault(key: UserVaultSSHKey) {
+    if (!id || !canWrite) return;
+    setError("");
+    try {
+      await api.activateUserVaultSSHKey(id, key.id);
+      setMsg(t("userEdit.vaultKeyActive"));
+      await loadVaultKeys(id);
+    } catch (err) {
+      setError(te(err, "common.error"));
+    }
+  }
+
+  async function onOpenInstall(keyId: string) {
+    setInstallFor(keyId);
+    setInstallAsset("");
+    setInstallAccount("");
+    if (sshAssets.length > 0 || !hasPerm(me, "assets.read")) return;
+    try {
+      const res = await api.listAllAssets({ status: "listed" });
+      setSshAssets((res.assets || []).filter((a) => a.protocol === "ssh" && a.status === "active"));
+    } catch (err) {
+      setError(te(err, "userEdit.installError"));
+    }
+  }
+
+  async function onPickInstallAsset(assetId: string) {
+    setInstallAsset(assetId);
+    setInstallAccount("");
+    if (!assetId) return;
+    try {
+      const asset = await api.getAsset(assetId);
+      const accounts = (asset.accounts || []).filter(
+        (acc) => acc.status === "active" && (acc.auth_method === "password" || acc.auth_method === "ssh_key") && acc.has_secret,
+      );
+      setSshAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, accounts } : a)));
+    } catch (err) {
+      setError(te(err, "userEdit.installError"));
+    }
+  }
+
+  async function onInstallVault(e: FormEvent) {
+    e.preventDefault();
+    if (!id || !canInstall || !installFor || !installAsset || !installAccount) return;
+    setError("");
+    try {
+      await api.installUserVaultSSHKey(id, installFor, { asset_id: installAsset, account_id: installAccount });
+      setMsg(t("userEdit.installDone"));
+      setInstallFor("");
+    } catch (err) {
+      setError(te(err, "userEdit.installError"));
     }
   }
 
@@ -388,6 +483,106 @@ export function UserEditPage() {
               rows={3}
               placeholder="ssh-ed25519 AAAA… comment"
               style={{ width: "100%", fontFamily: "monospace" }}
+            />
+            <button className="btn" type="submit" style={{ marginTop: "0.5rem" }}>
+              {t("userEdit.addKey")}
+            </button>
+          </form>
+        )}
+      </div>
+
+      <div className="card" style={{ maxWidth: 640, marginTop: "1.25rem" }}>
+        <h2>{t("userEdit.vaultKeysTitle")}</h2>
+        <p className="muted">{t("userEdit.vaultKeysHint")}</p>
+        {vaultKeys.length === 0 ? (
+          <p className="muted">{t("userEdit.noKeys")}</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>{t("common.name")}</th>
+                <th>{t("userEdit.fingerprint")}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {vaultKeys.map((k) => (
+                <tr key={k.id}>
+                  <td>
+                    {k.name}{" "}
+                    {k.active ? <span className="muted">({t("userEdit.vaultKeyActive")})</span> : null}
+                    <div className="mono muted" style={{ wordBreak: "break-all", marginTop: "0.25rem" }}>
+                      {k.public_key}
+                    </div>
+                  </td>
+                  <td className="mono" style={{ wordBreak: "break-all" }}>
+                    {k.fingerprint}
+                  </td>
+                  <td>
+                    {canWrite && !k.active && (
+                      <button className="btn" type="button" onClick={() => void onActivateVault(k)}>
+                        {t("userEdit.vaultKeyMakeActive")}
+                      </button>
+                    )}{" "}
+                    {canInstall && (
+                      <button className="btn" type="button" onClick={() => void onOpenInstall(k.id)}>
+                        {t("userEdit.installOnServer")}
+                      </button>
+                    )}{" "}
+                    {canWrite && (
+                      <button className="btn danger" type="button" onClick={() => void onDeleteVault(k)}>
+                        {t("common.delete")}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {installFor && canInstall && (
+          <form onSubmit={onInstallVault} style={{ marginTop: "1rem" }}>
+            <p className="muted">{t("userEdit.installHint")}</p>
+            <label>{t("common.name")}</label>
+            <select value={installAsset} onChange={(e) => void onPickInstallAsset(e.target.value)} required>
+              <option value="" />
+              {sshAssets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <label>{t("assets.loginOnTarget")}</label>
+            <select value={installAccount} onChange={(e) => setInstallAccount(e.target.value)} required>
+              <option value="" />
+              {(sshAssets.find((a) => a.id === installAsset)?.accounts || []).map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.username}
+                </option>
+              ))}
+            </select>
+            <button className="btn" type="submit" style={{ marginTop: "0.5rem" }}>
+              {t("userEdit.install")}
+            </button>
+          </form>
+        )}
+        {canWrite && (
+          <form onSubmit={onAddVault} style={{ marginTop: "1rem" }}>
+            <label>{t("common.name")}</label>
+            <input
+              value={vaultName}
+              onChange={(e) => setVaultName(e.target.value)}
+              placeholder={t("userEdit.keyNamePlaceholder")}
+            />
+            <label>{t("userEdit.privateKey")}</label>
+            <textarea
+              value={vaultPriv}
+              onChange={(e) => setVaultPriv(e.target.value)}
+              required
+              rows={6}
+              placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
+              style={{ width: "100%", fontFamily: "monospace" }}
+              autoComplete="off"
             />
             <button className="btn" type="submit" style={{ marginTop: "0.5rem" }}>
               {t("userEdit.addKey")}

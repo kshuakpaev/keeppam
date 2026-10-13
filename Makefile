@@ -21,14 +21,31 @@ geoip-mmdb:
 	mkdir -p deploy/geoip
 	export PATH=/usr/local/go/bin:$$PATH && cd services/auth && go run ./cmd/geoip-mmdb ../../deploy/geoip/country-demo.mmdb
 
-# Сборка на хосте — без pull golang/node из Docker Hub (офлайн / IPv6).
+# Сборка на хосте — без pull golang/node из Docker Hub.
+# Есть доступ к реестру — базовые образы берутся оттуда. Нет — только локальные.
 up: api-build web-build
-	docker compose -f deploy/docker-compose.yml build web demo-ssh
-	docker compose -f deploy/docker-compose.yml --profile build build iso-browser rdp-jump
-	docker compose -f deploy/docker-compose.yml --profile obs up -d
+	@if ./scripts/keeppam-online.sh; then \
+	  echo "== Docker Hub reachable: pull base images and build =="; \
+	  docker compose -f deploy/docker-compose.yml build --pull web demo-ssh; \
+	  docker compose -f deploy/docker-compose.yml --profile build build --pull iso-browser rdp-jump; \
+	  docker compose -f deploy/docker-compose.yml --profile obs up -d; \
+	else \
+	  echo "== no internet: local images only, registry is not contacted =="; \
+	  docker compose -f deploy/docker-compose.yml build web demo-ssh; \
+	  missing=""; \
+	  for img in keeppam-iso-browser:local keeppam-rdp-jump:local; do \
+	    docker image inspect "$$img" >/dev/null 2>&1 || missing="$$missing $$img"; \
+	  done; \
+	  if [ -n "$$missing" ]; then \
+	    echo "missing local images:$$missing" >&2; \
+	    exit 1; \
+	  fi; \
+	  echo "using local keeppam-iso-browser:local and keeppam-rdp-jump:local"; \
+	  docker compose -f deploy/docker-compose.yml --profile obs up -d --pull never; \
+	fi
 	docker compose -f deploy/docker-compose.yml --profile obs restart api session-worker
 	# nginx caches upstream IPs unless using Docker DNS variables — recreate web after api restart
-	docker compose -f deploy/docker-compose.yml up -d --force-recreate web
+	docker compose -f deploy/docker-compose.yml up -d --force-recreate --pull never web
 
 logs:
 	docker compose -f deploy/docker-compose.yml logs -f api session-worker web

@@ -36,8 +36,8 @@ import (
 	"github.com/keeppam/auth/internal/discovery"
 	"github.com/keeppam/auth/internal/dr"
 	"github.com/keeppam/auth/internal/eidas"
-	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/filevault"
+	"github.com/keeppam/auth/internal/filexfer"
 	"github.com/keeppam/auth/internal/firewall"
 	"github.com/keeppam/auth/internal/geoip"
 	"github.com/keeppam/auth/internal/health"
@@ -64,9 +64,10 @@ import (
 )
 
 const (
-	sessionCookie = "kp_session"
-	csrfCookie    = "kp_csrf"
-	csrfHeader    = "X-CSRF-Token"
+	sessionCookie  = "kp_session"
+	csrfCookie     = "kp_csrf"
+	csrfHeader     = "X-CSRF-Token"
+	activityHeader = "X-User-Activity"
 )
 
 type Server struct {
@@ -109,6 +110,9 @@ type Server struct {
 	didLab     *digitalidlab.Lab
 	licenseMu  sync.RWMutex
 	license    license.File
+	idleMu     sync.Mutex
+	idleAt     time.Time
+	idleDur    time.Duration
 }
 
 func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, assetsSvc *assets.Service, policySvc *policy.Service, sessSvc *sessionsvc.Service, auditSvc *audit.Service, sessions *session.Store, live *sessionsvc.LiveHub, settingsSvc *settings.Service, siemSvc *siem.Service, discoverySvc *discovery.Service, analyticsSvc *analytics.Service, appsSvc *appaccess.Service, complianceSvc *compliance.Service, drSvc *dr.Service, dbEph *dbephemeral.Service, attackSim *attacksim.Service, sshCA *sshca.Service, itsmSvc *itsm.Service, notifySvc *notify.Service, k8sGw *k8sproxy.Gateway, ops *opapprove.Service, scimSvc *scim.Service, firewallSvc *firewall.Service, nacSvc *nac.Service, eidasSvc *eidas.Service, uebamlSvc *uebaml.Service, archiveSvc *recarch.Service, filesSvc *filexfer.Service, life *health.State, rdpBroker *rdpgw.Broker, castIdx *castindex.Service, aiSvc *ai.Service) http.Handler {
@@ -209,6 +213,7 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 					r.Use(s.requireSession)
 					r.Use(s.requireCSRF)
 					r.Post("/logout", s.handleLogout)
+					r.Post("/activity", s.handleActivity)
 					r.Get("/me", s.handleMe)
 					r.Post("/password", s.handleChangePassword)
 					r.Post("/mfa/setup", s.handleMFASetup)
@@ -297,6 +302,11 @@ func New(cfg config.Config, authSvc *auth.Service, usersSvc *users.Service, asse
 				r.With(s.requirePerm("users.read")).Get("/users/{id}/ssh-keys", s.handleListUserSSHKeys)
 				r.With(s.requirePerm("users.write")).Post("/users/{id}/ssh-keys", s.handleAddUserSSHKey)
 				r.With(s.requirePerm("users.write")).Delete("/users/{id}/ssh-keys/{keyId}", s.handleDeleteUserSSHKey)
+				r.With(s.requirePerm("users.read")).Get("/users/{id}/vault-ssh-keys", s.handleListUserVaultSSHKeys)
+				r.With(s.requirePerm("users.write")).Post("/users/{id}/vault-ssh-keys", s.handleAddUserVaultSSHKey)
+				r.With(s.requirePerm("users.write")).Post("/users/{id}/vault-ssh-keys/{keyId}/active", s.handleActivateUserVaultSSHKey)
+				r.With(s.requirePerm("users.write")).Post("/users/{id}/vault-ssh-keys/{keyId}/install", s.handleInstallUserVaultSSHKey)
+				r.With(s.requirePerm("users.write")).Delete("/users/{id}/vault-ssh-keys/{keyId}", s.handleDeleteUserVaultSSHKey)
 				r.With(s.requirePerm("users.read")).Get("/users/{id}/webauthn", s.handleListUserWebAuthn)
 				r.With(s.requirePerm("users.read")).Get("/roles", s.handleListRoles)
 				r.With(s.requirePerm("users.read")).Get("/groups", s.handleListGroups)
@@ -528,6 +538,11 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if err := s.touchOrExpire(r, c.Value, &sess); err != nil {
+			s.clearCookies(w)
+			writeErr(w, http.StatusUnauthorized, "idle timeout")
+			return
+		}
 		// Refresh roles/permissions from DB so RBAC changes apply without re-login.
 		if u, err := s.auth.Me(r.Context(), sess.UserID); err == nil {
 			sess.Roles = u.Roles
@@ -709,6 +724,51 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) touchOrExpire(r *http.Request, token string, sess *session.Session) error {
+	now := time.Now().UTC()
+	if session.IdleExpired(sess.LastActivity, now, s.idleTimeout(r.Context())) {
+		_ = s.sessions.Delete(r.Context(), token)
+		return errors.New("idle timeout")
+	}
+	if sess.LastActivity.IsZero() || r.Header.Get(activityHeader) == "1" {
+		sess.LastActivity = now
+		_ = s.sessions.Update(r.Context(), token, *sess)
+	}
+	return nil
+}
+
+func (s *Server) idleTimeout(ctx context.Context) time.Duration {
+	s.idleMu.Lock()
+	defer s.idleMu.Unlock()
+	if !s.idleAt.IsZero() && time.Since(s.idleAt) < 15*time.Second && s.idleDur > 0 {
+		return s.idleDur
+	}
+	mins := 5
+	if s.settings != nil {
+		if n, err := s.settings.IdleTimeoutMin(ctx); err == nil {
+			mins = n
+		}
+	}
+	mins = settings.NormalizeIdleTimeoutMin(mins)
+	s.idleDur = time.Duration(mins) * time.Minute
+	s.idleAt = time.Now()
+	return s.idleDur
+}
+
+func (s *Server) invalidateIdleCache() {
+	s.idleMu.Lock()
+	s.idleAt = time.Time{}
+	s.idleMu.Unlock()
+}
+
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	mins := int(s.idleTimeout(r.Context()) / time.Minute)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"idle_timeout_min": mins,
+	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -925,6 +985,139 @@ func (s *Server) handleDeleteUserSSHKey(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListUserVaultSSHKeys(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	keys, err := s.users.ListVaultSSHKeys(r.Context(), id)
+	if err != nil {
+		if users.IsNotFound(err) {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
+}
+
+func (s *Server) handleAddUserVaultSSHKey(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in users.AddVaultSSHKeyInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	key, err := s.users.AddVaultSSHKey(r.Context(), sess.UserID, id, in, s.clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, key)
+}
+
+func (s *Server) handleActivateUserVaultSSHKey(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	keyID, err := uuid.Parse(chi.URLParam(r, "keyId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid key id")
+		return
+	}
+	if err := s.users.SetActiveVaultSSHKey(r.Context(), sess.UserID, id, keyID, s.clientIP(r), r.UserAgent()); err != nil {
+		if users.IsNotFound(err) || err.Error() == "not found" {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleDeleteUserVaultSSHKey(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	keyID, err := uuid.Parse(chi.URLParam(r, "keyId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid key id")
+		return
+	}
+	if err := s.users.DeleteVaultSSHKey(r.Context(), sess.UserID, id, keyID, s.clientIP(r), r.UserAgent()); err != nil {
+		if err.Error() == "not found" {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleInstallUserVaultSSHKey(w http.ResponseWriter, r *http.Request) {
+	sess := mustSess(r)
+	if !rbac.HasPermission(sess.Permissions, "assets.write") {
+		writeErr(w, http.StatusForbidden, "assets.write required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	keyID, err := uuid.Parse(chi.URLParam(r, "keyId"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid key id")
+		return
+	}
+	var body struct {
+		AssetID   string `json:"asset_id"`
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	assetID, err := uuid.Parse(body.AssetID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid asset_id")
+		return
+	}
+	accountID, err := uuid.Parse(body.AccountID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid account_id")
+		return
+	}
+	pub, err := s.users.VaultPublicKey(r.Context(), id, keyID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.assets.InstallAuthorizedPubkey(r.Context(), assetID, accountID, pub); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	_ = s.audit.Record(r.Context(), &sess.UserID, "user.vault_ssh_key.installed", "user", id.String(), s.clientIP(r), r.UserAgent(), map[string]any{
+		"key_id": keyID.String(), "asset_id": assetID.String(), "account_id": accountID.String(),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

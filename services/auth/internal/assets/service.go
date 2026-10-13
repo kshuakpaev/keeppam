@@ -805,13 +805,14 @@ func (s *Service) CreateAccount(ctx context.Context, actorID, assetID uuid.UUID,
 	if in.AuthMethod == "" {
 		in.AuthMethod = "password"
 	}
-	switch in.AuthMethod {
-	case "password", "ssh_key", "gssapi", "kubeconfig", "sa_token":
-	default:
-		return Account{}, fmt.Errorf("invalid auth_method")
+	if err := validateAuthMethod(in.AuthMethod); err != nil {
+		return Account{}, err
+	}
+	if in.AuthMethod == "user_ssh_key" && in.Secret != "" {
+		return Account{}, fmt.Errorf("user_ssh_key does not store an account secret")
 	}
 	var secretEnc []byte
-	if in.Secret != "" {
+	if in.Secret != "" && in.AuthMethod != "user_ssh_key" {
 		enc, err := s.env.Encrypt([]byte(in.Secret))
 		if err != nil {
 			return Account{}, err
@@ -869,6 +870,12 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 	}
 	if in.AuthMethod != nil {
 		authMethod = *in.AuthMethod
+	}
+	if err := validateAuthMethod(authMethod); err != nil {
+		return Account{}, err
+	}
+	if authMethod == "user_ssh_key" && in.Secret != nil && *in.Secret != "" {
+		return Account{}, fmt.Errorf("user_ssh_key does not store an account secret")
 	}
 	if in.Description != nil {
 		description = *in.Description
@@ -969,6 +976,11 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, accountID uuid.UUI
 			rotateAfter, rotateOnCheckin, interval, nextRotate, dual, trOn, saNS, saName, ttlSec, impOn, impPrefix, bindUser, adUserDN, now)
 		if err != nil {
 			return Account{}, err
+		}
+		if authMethod == "user_ssh_key" {
+			if _, err = s.db.Pool.Exec(ctx, `UPDATE asset_accounts SET secret_enc=NULL WHERE id=$1`, accountID); err != nil {
+				return Account{}, err
+			}
 		}
 	}
 	_ = s.aud.Record(ctx, &actorID, "asset.account.updated", "asset_account", accountID.String(), ip, ua, map[string]any{
@@ -1177,6 +1189,50 @@ func canonImpersonatePrefix(p string) string {
 	return p
 }
 
+func validateAuthMethod(method string) error {
+	switch method {
+	case "password", "ssh_key", "gssapi", "kubeconfig", "sa_token", "user_ssh_key":
+		return nil
+	default:
+		return fmt.Errorf("invalid auth_method")
+	}
+}
+
+// InstallAuthorizedPubkey appends pubLine to $HOME/.ssh/authorized_keys of the account login.
+// The account must already authenticate with password or ssh_key.
+func (s *Service) InstallAuthorizedPubkey(ctx context.Context, assetID, accountID uuid.UUID, pubLine string) error {
+	pubLine = strings.TrimSpace(pubLine)
+	if pubLine == "" {
+		return fmt.Errorf("public key required")
+	}
+	if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubLine)); err != nil {
+		return fmt.Errorf("invalid public key")
+	}
+	creds, err := s.GetTargetCreds(ctx, assetID, accountID)
+	if err != nil {
+		return err
+	}
+	defer creds.WipeSecret()
+	if creds.Asset.Protocol != "ssh" {
+		return fmt.Errorf("asset is not ssh")
+	}
+	if creds.AuthMethod != "password" && creds.AuthMethod != "ssh_key" {
+		return fmt.Errorf("account must use password or ssh_key to install authorized_keys")
+	}
+	if creds.Secret == "" {
+		return fmt.Errorf("account has no secret")
+	}
+	client, err := s.DialSSH(ctx, creds)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if err := installAuthorizedKey(client, pubLine); err != nil {
+		return err
+	}
+	return nil
+}
+
 // TargetCreds returns decrypted credentials for a session proxy (never expose via HTTP).
 type TargetCreds struct {
 	Account    Account
@@ -1214,8 +1270,9 @@ func (s *Service) GetTargetCreds(ctx context.Context, assetID, accountID uuid.UU
 	acc.HasSecret = len(secretEnc) > 0
 	certMode := asset.Protocol == "ssh" && s.sshCA != nil && s.sshCA.Mode(ctx) == "ssh_cert"
 	httpsNoVault := asset.Protocol == "https"
+	userKey := acc.AuthMethod == "user_ssh_key"
 	if len(secretEnc) == 0 {
-		if !certMode && !httpsNoVault {
+		if !certMode && !httpsNoVault && !userKey {
 			return TargetCreds{}, fmt.Errorf("account has no secret")
 		}
 		return TargetCreds{Account: acc, Asset: asset, AuthMethod: acc.AuthMethod}, nil

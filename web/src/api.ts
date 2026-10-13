@@ -45,6 +45,16 @@ export type UserSSHKey = {
   created_at: string;
 };
 
+export type UserVaultSSHKey = {
+  id: string;
+  user_id: string;
+  name: string;
+  public_key: string;
+  fingerprint: string;
+  active: boolean;
+  created_at: string;
+};
+
 export type AuditEvent = {
   id: string;
   ts: string;
@@ -382,6 +392,7 @@ export type AuthSettings = {
   has_scim_token: boolean;
   scim_default_role: string;
   scim_base_url?: string;
+  idle_timeout_min: number;
   updated_at?: string;
 };
 
@@ -926,6 +937,17 @@ export type AnalyticsSLO = {
   breached: boolean;
 };
 
+let idleLogoutStarted = false;
+
+export function redirectIdleLogout() {
+  if (idleLogoutStarted) return;
+  if (window.location.pathname === "/login" && new URLSearchParams(window.location.search).get("idle") === "1") {
+    return;
+  }
+  idleLogoutStarted = true;
+  window.location.assign("/login?idle=1");
+}
+
 function csrfToken(): string {
   const match = document.cookie.match(/(?:^|; )kp_csrf=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : "";
@@ -953,7 +975,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw ApiError.fromResponse(res.status, data);
+    const err = ApiError.fromResponse(res.status, data);
+    if (err.status === 401 && err.code === "idle_timeout") {
+      redirectIdleLogout();
+    }
+    throw err;
   }
   return data as T;
 }
@@ -1097,8 +1123,14 @@ export const api = {
       radius_ready?: boolean;
       cert_login?: boolean;
       cert_presented?: boolean;
+      idle_timeout_min?: number;
       saml_idps?: { slug: string; name: string }[];
     }>("/api/v1/auth/methods"),
+  touchActivity: () =>
+    request<{ status: string; idle_timeout_min: number }>("/api/v1/auth/activity", {
+      method: "POST",
+      headers: { "X-User-Activity": "1" },
+    }),
   listSAMLIdPs: () => request<{ idps: SAMLIdP[] }>("/api/v1/admin/settings/saml/idps"),
   createSAMLIdP: (body: Partial<SAMLIdP>) =>
     request<SAMLIdP>("/api/v1/admin/settings/saml/idps", { method: "POST", body: JSON.stringify(body) }),
@@ -1405,6 +1437,22 @@ export const api = {
     }),
   deleteUserSSHKey: (id: string, keyId: string) =>
     request<{ status: string }>(`/api/v1/admin/users/${id}/ssh-keys/${keyId}`, { method: "DELETE" }),
+  listUserVaultSSHKeys: (id: string) =>
+    request<{ keys: UserVaultSSHKey[] }>(`/api/v1/admin/users/${id}/vault-ssh-keys`),
+  addUserVaultSSHKey: (id: string, body: { name?: string; private_key: string; active?: boolean }) =>
+    request<UserVaultSSHKey>(`/api/v1/admin/users/${id}/vault-ssh-keys`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  activateUserVaultSSHKey: (id: string, keyId: string) =>
+    request<{ status: string }>(`/api/v1/admin/users/${id}/vault-ssh-keys/${keyId}/active`, { method: "POST" }),
+  deleteUserVaultSSHKey: (id: string, keyId: string) =>
+    request<{ status: string }>(`/api/v1/admin/users/${id}/vault-ssh-keys/${keyId}`, { method: "DELETE" }),
+  installUserVaultSSHKey: (id: string, keyId: string, body: { asset_id: string; account_id: string }) =>
+    request<{ status: string }>(`/api/v1/admin/users/${id}/vault-ssh-keys/${keyId}/install`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listRoles: () => request<{ roles: Role[] }>("/api/v1/admin/roles"),
   listGroups: () => request<{ groups: PamGroup[] }>("/api/v1/admin/groups"),
   getGroup: (id: string) => request<PamGroup>(`/api/v1/admin/groups/${id}`),
