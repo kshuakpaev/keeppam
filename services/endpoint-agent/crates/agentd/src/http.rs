@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -277,17 +277,24 @@ async fn recordings_page(State(state): State<AppState>, headers: HeaderMap) -> R
     }
 }
 
+#[derive(Deserialize)]
+struct ReplayQuery {
+    solo: Option<String>,
+}
+
 async fn recording_page(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<ReplayQuery>,
 ) -> Response<Body> {
     if !authorized(&state, &headers) {
         return redirect("/", None);
     }
+    let solo = matches!(query.solo.as_deref(), Some(value) if value != "0" && value != "false");
     let view = state.store.lock().expect("store").recording(&id);
     match view {
-        Ok(Some(view)) => page(html::replay_page(&view.row, &view.frames, view.truncated)),
+        Ok(Some(view)) => page(html::replay_page(&view.row, &view.frames, view.truncated, solo)),
         Ok(None) => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")

@@ -491,8 +491,16 @@ fn clear_putty() -> Result<usize, AgentError> {
 }
 
 #[cfg(windows)]
+fn hidden_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(0x08000000);
+    command
+}
+
+#[cfg(windows)]
 fn putty_command(key: &str) -> Option<String> {
-    let output = std::process::Command::new("reg")
+    let output = hidden_command("reg")
         .args(["query", key, "/v", "ProxyTelnetCommand"])
         .output()
         .ok()?;
@@ -511,7 +519,7 @@ fn putty_command(key: &str) -> Option<String> {
 #[cfg(windows)]
 fn putty_session_keys() -> Vec<String> {
     let fallback = || vec![r"HKCU\Software\SimonTatham\PuTTY\Sessions\Default%20Settings".to_string()];
-    let output = match std::process::Command::new("reg")
+    let output = match hidden_command("reg")
         .args(["query", r"HKCU\Software\SimonTatham\PuTTY\Sessions"])
         .output()
     {
@@ -534,7 +542,7 @@ fn putty_session_keys() -> Vec<String> {
 
 #[cfg(windows)]
 fn run_reg(args: &[&str]) -> Result<(), AgentError> {
-    let output = std::process::Command::new("reg")
+    let output = hidden_command("reg")
         .args(args)
         .output()
         .map_err(|err| AgentError::Proxy(err.to_string()))?;

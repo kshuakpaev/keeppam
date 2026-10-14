@@ -239,9 +239,16 @@ pub fn run_from_env() -> Result<(), AgentError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("proxy") => proxy::run_proxy(&args[1..]),
-        Some("install-proxy") => proxy::run_install(&args[1..]),
-        Some("uninstall-proxy") => proxy::run_uninstall(&args[1..]),
+        Some("install-proxy") => {
+            attach_parent_console();
+            proxy::run_install(&args[1..])
+        }
+        Some("uninstall-proxy") => {
+            attach_parent_console();
+            proxy::run_uninstall(&args[1..])
+        }
         Some("stop") => {
+            attach_parent_console();
             #[cfg(unix)]
             {
                 return resident::stop(&args[1..]);
@@ -390,8 +397,25 @@ pub fn hostname() -> String {
     "unknown".into()
 }
 
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn command_hostname() -> Option<String> {
-    let output = std::process::Command::new("hostname").output().ok()?;
+    let mut command = std::process::Command::new("hostname");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

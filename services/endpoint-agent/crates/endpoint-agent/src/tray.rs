@@ -5,7 +5,6 @@ use windows_sys::Win32::Graphics::Gdi::{
     CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
     DIB_RGB_COLORS, RGBQUAD,
 };
-use windows_sys::Win32::System::Console::GetConsoleWindow;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::UI::Shell::{
@@ -116,10 +115,6 @@ fn server_flag_present() -> bool {
 }
 
 unsafe fn ui_main(live: Arc<Mutex<LiveSettings>>) -> Result<(), AgentError> {
-    let console = GetConsoleWindow();
-    if !console.is_null() {
-        ShowWindow(console, SW_HIDE);
-    }
     let instance = GetModuleHandleW(std::ptr::null());
     SetProcessDPIAware();
     let fallback = LoadIconW(std::ptr::null_mut(), IDI_SHIELD);

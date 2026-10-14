@@ -310,7 +310,7 @@ pub fn recordings_page(rows: &[RecordingRow]) -> String {
     )
 }
 
-pub fn replay_page(row: &RecordingRow, frames: &[RecordingFrame], truncated: bool) -> String {
+pub fn replay_page(row: &RecordingRow, frames: &[RecordingFrame], truncated: bool, solo: bool) -> String {
     let note = if truncated {
         r#"<p class="hint">Показана только первая часть записи.</p>"#
     } else {
@@ -325,14 +325,14 @@ pub fn replay_page(row: &RecordingRow, frames: &[RecordingFrame], truncated: boo
         .ended_at
         .map(|ts| format_unix(ts))
         .unwrap_or_else(|| "идёт".into());
-    layout(
-        "Запись",
-        &format!(
+    let intro = if solo {
+        String::new()
+    } else {
+        format!(
             r#"<p><a href="/recordings">Все записи</a></p>
 <h1>{}:{}</h1>
 <p class="lead">{} · {} · {} · {} — {} · <code>{}</code></p>
-{note}
-{screen}"#,
+{note}"#,
             esc(&row.destination),
             row.port,
             protocol_label(&row.kind),
@@ -341,8 +341,13 @@ pub fn replay_page(row: &RecordingRow, frames: &[RecordingFrame], truncated: boo
             esc(&format_unix(row.started_at)),
             esc(&ended),
             esc(&row.agent_id)
-        ),
+        )
+    };
+    document(
+        "Запись",
+        &format!("{intro}{screen}"),
         true,
+        if solo { "solo" } else { "" },
     )
 }
 
@@ -383,6 +388,8 @@ fn video_markup(recording_id: &str, frames: &[RecordingFrame]) -> String {
 <span id="play-time">00:00 / 00:00</span>
 <label>Разрешение <select id="play-size" aria-label="Разрешение просмотра"><option value="fit" selected>По ширине</option><option value="800">800 px</option><option value="1024">1024 px</option><option value="1280">1280 px</option><option value="1600">1600 px</option><option value="1920">1920 px</option><option value="native">Исходное</option></select></label>
 <label>Скорость <select id="play-speed"><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+<button type="button" id="play-pop">Отдельное окно</button>
+<button type="button" id="play-full">На весь экран</button>
 </div>
 </div>
 <script type="application/json" id="recording-frames">{json}</script>
@@ -677,7 +684,23 @@ const VIDEO_JS: &str = r####"
     playing = !playing;
     chrome();
   });
+  const player = document.getElementById("recording-player");
+  const pop = document.getElementById("play-pop");
+  const full = document.getElementById("play-full");
+  function fullscreenOn() {
+    return document.fullscreenElement === player || document.webkitFullscreenElement === player;
+  }
   function applySize() {
+    const fitted = fullscreenOn() || (document.body.classList.contains("solo") && (!sizeBox || sizeBox.value === "fit"));
+    if (fitted) {
+      host.style.width = "auto";
+      host.style.height = "auto";
+      host.style.maxWidth = "100%";
+      host.style.maxHeight = fullscreenOn() ? "calc(100vh - 64px)" : "calc(100vh - 58px)";
+      if (full) full.textContent = fullscreenOn() ? "Свернуть" : "На весь экран";
+      return;
+    }
+    if (full) full.textContent = "На весь экран";
     const value = sizeBox ? sizeBox.value : "fit";
     if (value === "native") {
       host.style.width = host.naturalWidth ? host.naturalWidth + "px" : "auto";
@@ -716,6 +739,21 @@ const VIDEO_JS: &str = r####"
     });
   }
   host.addEventListener("load", () => { labelSizes(); applySize(); });
+  if (pop) pop.addEventListener("click", () => {
+    const opened = window.open(location.pathname + "?solo=1", "keeppam-rdp-" + recordingId, "popup=yes,width=1280,height=800,resizable=yes,scrollbars=yes");
+    if (opened) opened.focus();
+  });
+  if (full && player) full.addEventListener("click", () => {
+    if (fullscreenOn()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document);
+      return;
+    }
+    const enter = player.requestFullscreen || player.webkitRequestFullscreen;
+    if (enter) enter.call(player);
+  });
+  document.addEventListener("fullscreenchange", applySize);
+  document.addEventListener("webkitfullscreenchange", applySize);
   applySize();
   if (seek) seek.addEventListener("input", () => show(duration * Number(seek.value) / 1000));
   if (speedBox) speedBox.addEventListener("change", () => { speed = Number(speedBox.value) || 1; });
@@ -874,6 +912,10 @@ fn short_id(value: &str) -> String {
 }
 
 fn layout(title: &str, body: &str, logged_in: bool) -> String {
+    document(title, body, logged_in, "")
+}
+
+fn document(title: &str, body: &str, logged_in: bool, body_class: &str) -> String {
     let nav = if logged_in {
         r#"<nav>
 <a href="/agents">Агенты</a>
@@ -928,11 +970,18 @@ img.screen {{ display: block; width: 100%; max-width: 100%; height: auto; max-he
 .controls button, .controls select {{ width: auto; }}
 .controls input[type="range"] {{ width: auto; flex: 1; padding: 0; }}
 .controls label {{ font-weight: 500; display: flex; gap: 8px; align-items: center; }}
+.player:fullscreen, .player:-webkit-full-screen {{ width: 100%; height: 100%; border-radius: 0; display: flex; flex-direction: column; background: #000; }}
+.player:fullscreen .stage, .player:-webkit-full-screen .stage {{ flex: 1; max-height: none; display: flex; align-items: center; justify-content: center; }}
+body.solo {{ background: #0c0c0c; }}
+body.solo header {{ display: none; }}
+body.solo main {{ max-width: none; height: 100vh; padding: 0; box-sizing: border-box; }}
+body.solo .player {{ margin: 0; min-height: 100vh; border-radius: 0; display: flex; flex-direction: column; }}
+body.solo .stage {{ flex: 1; max-height: none; display: flex; align-items: center; justify-content: center; }}
 .error {{ color: #9b1c1c; }}
 .notice {{ padding: 12px; border: 1px solid #ccc; margin: 12px 0; }}
 </style>
 </head>
-<body>
+<body class="{body_class}">
 <header>
 <div><strong>KeepPAM Endpoint Agent</strong><span>отдельный сервис, не консоль KeepPAM</span></div>
 {nav}
@@ -1047,12 +1096,13 @@ mod tests {
                 text: "second line\n".into(),
             },
         ];
-        let page = replay_page(&row, &frames, false);
+        let page = replay_page(&row, &frames, false, false);
         assert!(page.contains("id=\"recording-player\""));
         assert!(page.contains("id=\"session-screen\""));
         assert!(page.contains("id=\"play-seek\""));
         assert!(page.contains("hello-session"));
         assert!(!page.contains("id=\"play-size\""));
+        assert!(!page.contains("id=\"play-full\""));
         assert!(!page.contains("<pre id=\"session-screen\" class=\"screen\">hello-session"));
     }
 
@@ -1081,11 +1131,19 @@ mod tests {
                 text: "1".into(),
             },
         ];
-        let page = replay_page(&row, &frames, false);
+        let page = replay_page(&row, &frames, false, false);
         assert!(page.contains("class=\"screen video\""));
         assert!(page.contains("id=\"play-size\""));
+        assert!(page.contains("id=\"play-pop\""));
+        assert!(page.contains("id=\"play-full\""));
+        assert!(page.contains("Отдельное окно"));
+        assert!(page.contains("На весь экран"));
         assert!(page.contains("По ширине"));
         assert!(page.contains("Исходное"));
+        let solo = replay_page(&row, &frames, false, true);
+        assert!(solo.contains("<body class=\"solo\">"));
+        assert!(solo.contains("id=\"play-full\""));
+        assert!(!solo.contains("Все записи"));
         assert!(page.contains("data-id=\"11111111-1111-1111-1111-111111111111\""));
         assert!(page.contains("/frame/"));
         assert!(page.contains(">RDP<") || page.contains("RDP"));

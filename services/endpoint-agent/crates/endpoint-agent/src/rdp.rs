@@ -390,32 +390,61 @@ unsafe fn grab(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<Vec<u8>> {
     DeleteObject(dib);
     DeleteDC(mem);
     ReleaseDC(hwnd, window_dc);
-    let (rgb, dw, dh) = fit_rgb(&bgra, width as u32, height as u32);
+    let (rgb, dw, dh) = fit_rgb(&bgra, width as u32, height as u32, 1920, 1080);
+    if let Some(jpeg) = encode_jpeg(&rgb, dw, dh) {
+        return Some(jpeg);
+    }
+    let (rgb, dw, dh) = fit_rgb(&bgra, width as u32, height as u32, 1280, 720);
     encode_jpeg(&rgb, dw, dh)
 }
 
-#[cfg(windows)]
-fn fit_rgb(bgra: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
-    let mut dw = width.max(1);
-    let mut dh = height.max(1);
-    let max_w = 1280u32;
-    let max_h = 720u32;
-    if dw > max_w || dh > max_h {
-        let scale = (max_w as f64 / dw as f64).min(max_h as f64 / dh as f64);
-        dw = ((dw as f64) * scale).round().max(1.0) as u32;
-        dh = ((dh as f64) * scale).round().max(1.0) as u32;
+#[cfg(any(windows, test))]
+fn output_size(width: u32, height: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+    let max_w = max_w.max(1);
+    let max_h = max_h.max(1);
+    if width <= max_w && height <= max_h {
+        return (width, height);
     }
+    let scale = (max_w as f64 / width as f64).min(max_h as f64 / height as f64);
+    let dw = ((width as f64) * scale).round().max(1.0) as u32;
+    let dh = ((height as f64) * scale).round().max(1.0) as u32;
+    (dw.min(max_w).max(1), dh.min(max_h).max(1))
+}
+
+#[cfg(any(windows, test))]
+fn fit_rgb(bgra: &[u8], width: u32, height: u32, max_w: u32, max_h: u32) -> (Vec<u8>, u32, u32) {
+    let (dw, dh) = output_size(width, height, max_w, max_h);
+    let width = width.max(1);
+    let height = height.max(1);
     let mut rgb = vec![0u8; (dw as usize) * (dh as usize) * 3];
     for y in 0..dh {
-        let sy = (y as u64 * height as u64 / dh as u64) as u32;
+        let y0 = y as u64 * height as u64 / dh as u64;
+        let y1 = ((y as u64 + 1) * height as u64 / dh as u64).max(y0 + 1).min(height as u64);
         for x in 0..dw {
-            let sx = (x as u64 * width as u64 / dw as u64) as u32;
-            let i = ((sy as usize) * (width as usize) + sx as usize) * 4;
-            let o = ((y as usize) * (dw as usize) + x as usize) * 3;
-            if i + 2 < bgra.len() {
-                rgb[o] = bgra[i + 2];
-                rgb[o + 1] = bgra[i + 1];
-                rgb[o + 2] = bgra[i];
+            let x0 = x as u64 * width as u64 / dw as u64;
+            let x1 = ((x as u64 + 1) * width as u64 / dw as u64).max(x0 + 1).min(width as u64);
+            let mut red = 0u64;
+            let mut green = 0u64;
+            let mut blue = 0u64;
+            let mut count = 0u64;
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = (sy as usize * width as usize + sx as usize) * 4;
+                    if i + 2 < bgra.len() {
+                        blue += bgra[i] as u64;
+                        green += bgra[i + 1] as u64;
+                        red += bgra[i + 2] as u64;
+                        count += 1;
+                    }
+                }
+            }
+            if count > 0 {
+                let o = (y as usize * dw as usize + x as usize) * 3;
+                rgb[o] = (red / count) as u8;
+                rgb[o + 1] = (green / count) as u8;
+                rgb[o + 2] = (blue / count) as u8;
             }
         }
     }
@@ -424,17 +453,43 @@ fn fit_rgb(bgra: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
 
 #[cfg(windows)]
 fn encode_jpeg(rgb: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    use jpeg_encoder::SamplingFactor;
+    for (quality, sampling) in [
+        (90u8, SamplingFactor::F_1_1),
+        (82, SamplingFactor::F_1_1),
+        (74, SamplingFactor::F_1_1),
+        (66, SamplingFactor::F_2_2),
+    ] {
+        let encoded = encode_at(rgb, width, height, quality, sampling)?;
+        if encoded.len() <= 1024 * 1024 {
+            return Some(encoded);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn encode_at(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    sampling: jpeg_encoder::SamplingFactor,
+) -> Option<Vec<u8>> {
     if width == 0 || height == 0 || width > u16::MAX as u32 || height > u16::MAX as u32 {
         return None;
     }
     let mut out = Vec::new();
-    jpeg_encoder::Encoder::new(&mut out, 55)
+    let mut encoder = jpeg_encoder::Encoder::new(&mut out, quality);
+    encoder.set_sampling_factor(sampling);
+    encoder
         .encode(rgb, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
         .ok()?;
-    if out.is_empty() || out.len() > 1024 * 1024 {
-        return None;
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
     }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -486,5 +541,22 @@ mod tests {
         assert_eq!(chosen[0].address, "10.1.1.9");
         assert_eq!(chosen[1].pid, 12);
         assert_eq!(chosen[1].port, 3391);
+    }
+
+    #[test]
+    fn rdp_frame_stays_full_hd_and_does_not_upscale() {
+        assert_eq!(output_size(1920, 1080, 1920, 1080), (1920, 1080));
+        assert_eq!(output_size(2560, 1440, 1920, 1080), (1920, 1080));
+        assert_eq!(output_size(1280, 800, 1920, 1080), (1280, 800));
+    }
+
+    #[test]
+    fn downscale_averages_neighbor_pixels() {
+        let bgra = [
+            0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255,
+        ];
+        let (rgb, width, height) = fit_rgb(&bgra, 2, 2, 1, 1);
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(rgb, vec![127, 0, 127]);
     }
 }
